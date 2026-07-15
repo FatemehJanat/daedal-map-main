@@ -16,6 +16,15 @@ def build_confirmed_order_response_payload(
         "type": result.get("type", "data"),
         "data_type": result.get("data_type"),
         "source_id": result.get("source_id"),
+        # These are display semantics, not optional UI hints.  They must
+        # survive dedupe/confirmed-order shaping so a fresh browser can render
+        # the same layer from an otherwise cached backend result.
+        "geographic_level": result.get("geographic_level"),
+        "metric_key": result.get("metric_key"),
+        "available_metrics": result.get("available_metrics", []),
+        "metric_time_ranges": result.get("metric_time_ranges") or result.get("metric_year_ranges", {}),
+        "popup_family": result.get("popup_family"),
+        "point_display": result.get("point_display"),
         "available_geo_levels": result.get("available_geo_levels", []),
         "geojson": geojson,
         "summary": result.get("summary", ""),
@@ -39,9 +48,6 @@ def build_confirmed_order_response_payload(
         response["time_data"] = year_data if year_data else result.get("time_data", {})
         response["multi_year"] = True
         response["year_range"] = result["year_range"]
-        response["metric_key"] = result.get("metric_key")
-        response["available_metrics"] = result.get("available_metrics", [])
-        response["metric_time_ranges"] = result.get("metric_time_ranges") or result.get("metric_year_ranges", {})
         response["metric_year_ranges"] = result.get("metric_year_ranges", {})
         response["year_data"] = year_data if year_data else {}
     return response

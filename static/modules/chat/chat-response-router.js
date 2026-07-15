@@ -123,6 +123,14 @@ export function handleResponse(ctx, response, deps = {}) {
       break;
 
     case 'metric_warning': {
+      const pendingSignature = JSON.stringify(response.pending_order || response.full_order || {});
+      const existingSignature = JSON.stringify(ctx.pendingMetricOrder?.order || ctx.pendingMetricOrder?.full_order || {});
+      // Streaming/retry paths can surface the same warning more than once.
+      // Keep one pending decision and one pair of buttons rather than making
+      // the user answer identical confirmation cards repeatedly.
+      if (ctx.pendingMetricOrder && pendingSignature === existingSignature) {
+        break;
+      }
       ctx.pendingDisplayOrder = null;
       ctx.pendingResearchDisplayWarning = null;
       ctx.pendingMetricOrder = {

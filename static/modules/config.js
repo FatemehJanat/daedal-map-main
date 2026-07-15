@@ -30,7 +30,8 @@ export const CONFIG = {
   viewport: {
     debounceMs: 300,        // Short debounce to batch rapid pan/zoom (300ms)
     cacheExpiryMs: 120000,  // Keep features cached for 2 minutes (was 60s)
-    maxFeatures: 100000,    // Increased cache for smoother panning (was 50k)
+    maxFeatures: 20000,     // Bound browser geometry memory; deep requests are viewport-scoped
+    geometryBatchSize: 500, // Must remain below the server's selection request limit
     spinnerDelayMs: 500     // Show spinner after 500ms if still loading
   },
 

@@ -116,6 +116,32 @@ A response may carry:
 
 The browser owns presentation, but it should not invent data semantics.
 
+### Popup-family contract
+
+Every map-ready source must declare one popup family. The renderer may share a
+shell, but it must not apply event language, metric values, or cached source
+facts from a different family to the selected feature.
+
+| Family | Typical data | Required behavior |
+| --- | --- | --- |
+| `location_geometry` | Administrative boundaries and choropleths | Show the place hierarchy, geometry facts and provenance; show a metric only when it belongs to the clicked `loc_id`. |
+| `point_collection` | Durable locations such as facilities, sensors, and buoys | Show a compact record popup from declared fields; use the default pin unless the source supplies an icon; cluster nearby points while zoomed out. |
+| `event` | Time-bounded events, disasters, alerts, and tracks | Show event-specific time, severity/impact, lifecycle, and related records where available. |
+| `point_lookup` | A click on otherwise empty map space | Resolve and show the coordinate's `loc_id` hierarchy; yield to a feature popup when a rendered feature was clicked. It may also include contextual raster/grid samples at that coordinate. |
+
+For source onboarding, define the GeoJSON shape, popup family, provenance and
+units, then the safe title/field list. Point collections also define optional
+clustering and icon settings; events define their time/lifecycle fields. Raster
+or gridded sources that contribute to point lookup must provide the sampled
+value, units, observation/effective time, source/provenance, and coverage or
+resolution where known. Those samples are contextual coordinate facts, not a
+metric belonging to the resolved `loc_id`. Test both an overview click and a
+detail click before publishing.
+
+`point_display` is the source extension for `point_collection`. It may provide
+`cluster_max_zoom`, `cluster_radius`, `icon`, and `popup` (`title_prop` plus a
+list of `{prop, label, unit}` fields). No icon means the shared default pin.
+
 ## Map layers
 
 Common display families include:
@@ -160,4 +186,3 @@ should remain shared.
 
 Fix the earliest incorrect deterministic stage rather than compensating in the
 response text.
-

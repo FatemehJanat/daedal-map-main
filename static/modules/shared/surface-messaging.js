@@ -100,8 +100,8 @@ export const SURFACE_MESSAGE_PROFILES = {
     singular: 'country value',
     plural: 'country values',
     exploreActiveDescription: 'World Bank country indicator data',
-    exploreHints: 'Ask chat to switch indicators, compare countries, or use the most recent year.',
-    exploreExamples: ['show GDP current USD', 'compare life expectancy by country'],
+    exploreHints: 'Ask for economy, health, education, environment, debt, infrastructure, or social indicators; you can also compare countries or choose a year.',
+    exploreExamples: ['show GDP current USD', 'compare life expectancy by country', 'show internet access by country'],
   },
   distributed_manufacturing: {
     label: 'Distributed Manufacturing',

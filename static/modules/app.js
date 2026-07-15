@@ -18,6 +18,7 @@ import { SelectionManager, setDependencies as setSelectionDeps } from './selecti
 import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurricane-handler.js';
 import { OverlaySelector, setDependencies as setOverlayDeps } from './overlay-selector.js';
 import { ModelRegistry } from './models/model-registry.js';
+import { PointCollectionModel, setDependencies as setPointCollectionDeps } from './models/model-point-collection.js';
 import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
 import { TickerController } from './ticker-controller.js';
 import { AuroraOverlay } from './overlay-aurora.js';
@@ -745,6 +746,7 @@ export const App = {
     setHurricaneDeps({ TimeSlider, MapAdapter });
     setOverlayDeps({ MapAdapter, ModelRegistry });
     ModelRegistry.setDependencies({ MapAdapter, TimeSlider });
+    setPointCollectionDeps({ MapAdapter });
     setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider, ChatManager });
     setDisasterPopupDeps({ MapAdapter });
     setGeometryDeps({ MapAdapter });
@@ -1925,6 +1927,30 @@ export const App = {
     this.renderMetricDisplayRegistryLayers(normalizedLane);
   },
 
+  removeMetricDisplaysForSources(lane = ChatManager?.mode || this.currentCanvasMode || 'explore', sourceIds = []) {
+    const normalizedLane = normalizeChatMapLane(lane);
+    const wanted = new Set((Array.isArray(sourceIds) ? sourceIds : [sourceIds])
+      .map((sourceId) => String(sourceId || '').trim())
+      .filter(Boolean));
+    if (!wanted.size) return;
+    for (const display of MetricDisplayRegistry.getLaneDisplays(normalizedLane)) {
+      if (wanted.has(String(display.source_id || '').trim())) {
+        MetricDisplayRegistry.removeDisplay(normalizedLane, display.display_id);
+      }
+    }
+    MapAdapter?.renderMetricDisplayLayers?.(MetricDisplayRegistry.getLaneDisplays(normalizedLane), {
+      currentDisplayId: this.getCurrentMetricDisplayId()
+    });
+    this.refreshSelectedDisplayLegend(normalizedLane);
+  },
+
+  clearPointCollectionsForSources(sourceIds = []) {
+    for (const sourceId of (Array.isArray(sourceIds) ? sourceIds : [sourceIds])) {
+      const normalized = String(sourceId || '').trim();
+      if (normalized) PointCollectionModel.clear(normalized);
+    }
+  },
+
   setMetricDisplayVisibility(lane = ChatManager?.mode || this.currentCanvasMode || 'explore', displayId, visible) {
     const normalizedLane = normalizeChatMapLane(lane);
     if (displayId && displayId === this.getCurrentMetricDisplayId()) {
@@ -2349,8 +2375,21 @@ export const App = {
    */
   handleFeatureHover(feature, lngLat) {
     const properties = this.getPopupProperties(feature);
-    const popupHtml = PopupBuilder.build(properties, this.currentData);
+    const popupHtml = PopupBuilder.build(properties, this.getPopupSourceData(feature));
     MapAdapter.showPopup([lngLat.lng, lngLat.lat], popupHtml);
+  },
+
+  getPopupSourceData(feature) {
+    // Viewport geometry is refreshed independently of App.currentData.  Do
+    // not let an old world/country payload describe a newly loaded feature.
+    if (this.currentData?.data_type !== 'metrics') return null;
+    const locId = feature?.properties?.loc_id;
+    if (!locId || !this.currentData?.geojson?.features) return null;
+    const currentFeature = this.currentData.geojson.features.find((candidate) => {
+      const candidateLocId = candidate?.properties?.loc_id || candidate?.id;
+      return candidateLocId === locId;
+    });
+    return currentFeature ? this.currentData : null;
   },
 
   getPopupProperties(feature) {
@@ -2581,6 +2620,14 @@ export const App = {
 
     this.currentData = data;
 
+    // Point collections are independent layers (rather than the shared
+    // choropleth source), so clear a previous location registry when the
+    // display moves on to another dataset.
+    const activePointCollectionId = data.popup_family === 'point_collection'
+      ? String(data.source_id || '').trim()
+      : null;
+    PointCollectionModel.clearAllExcept(activePointCollectionId || null);
+
     // Suspend viewport loading when displaying order data
     // This prevents viewport API from overwriting our ordered data
     ViewportLoader.orderMode = true;
@@ -2665,6 +2712,37 @@ export const App = {
 
     // Check if this is geometry overlay data (ZCTA, tribal, watersheds, etc.)
     if (data.data_type === 'geometry') {
+      const geometryFeatures = data.geojson?.features || [];
+      const pointCollectionId = String(data.source_id || '').trim();
+      const isPointCollection = (data.popup_family === 'point_collection'
+          // Compatibility for the already-published manufacturing artifact.
+          || data.source_id === 'distributed_manufacturing')
+        && pointCollectionId
+        && geometryFeatures.length > 0
+        && geometryFeatures.every((feature) => feature?.geometry?.type === 'Point');
+
+      // This is a location registry, not an area overlay.  The generic
+      // geometry path below creates fill layers, which correctly fits the
+      // map but cannot draw Point features.  Keep its geometry contract and
+      // render it through the shared point model instead.
+      if (isPointCollection) {
+        TimeSlider.reset();
+        ChoroplethManager.reset();
+        PointCollectionModel.render(pointCollectionId, data.geojson, {
+          popup: data.point_display?.popup || { titleProp: 'name' },
+          clusterColor: '#087fb8',
+          clusterMaxZoom: data.point_display?.cluster_max_zoom ?? 10,
+          clusterRadius: data.point_display?.cluster_radius ?? 46,
+          icon: data.point_display?.icon || null,
+        });
+        if (!skipFit) MapAdapter.fitToBounds(data.geojson);
+        const summaryEl = document.getElementById('queryStatus');
+        if (summaryEl) {
+          summaryEl.textContent = data.summary || `${geometryFeatures.length.toLocaleString()} locations`;
+        }
+        return;
+      }
+
       // Determine geometry type early
       let geometryType = 'geometry';
       if (data.source_id) {
@@ -3237,7 +3315,7 @@ export const App = {
       const locationInfo = popupProperties?.loc_id ? await LocationInfoCache.fetch(popupProperties.loc_id) : null;
       if (MapAdapter.popupLocked) {
         MapAdapter.updateSelectedPopupLocationInfo?.(locationInfo || {});
-        const popupHtml = PopupBuilder.build(popupProperties, this.currentData, locationInfo || {});
+        const popupHtml = PopupBuilder.build(popupProperties, this.getPopupSourceData(feature), locationInfo || {});
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
         MapAdapter.setupPopupTabHandlers?.();
       }

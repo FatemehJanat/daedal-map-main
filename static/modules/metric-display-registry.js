@@ -118,13 +118,28 @@ export const MetricDisplayRegistry = {
     };
 
     const laneDisplays = this.displaysByLane[normalizedLane] || [];
-    const existingIndex = laneDisplays.findIndex((display) => display.display_id === displayId);
-    if (existingIndex >= 0) {
-      laneDisplays.splice(existingIndex, 1, nextDisplay);
-    } else {
-      laneDisplays.push(nextDisplay);
+    // A response that previously lost geographic_level created a legacy
+    // source|metric|"" display.  Once the canonical scoped response arrives,
+    // remove that placeholder rather than showing its stale N/A popup beside
+    // the real metric display.
+    const canonicalSourceId = String(payload.source_id || '').trim();
+    const canonicalMetricKey = String(payload.metric_key || '').trim();
+    const canonicalGeographicLevel = String(payload.geographic_level || '').trim();
+    if (canonicalSourceId && canonicalMetricKey && canonicalGeographicLevel) {
+      this.displaysByLane[normalizedLane] = laneDisplays.filter((display) => !(
+        String(display.source_id || '').trim() === canonicalSourceId
+        && String(display.metric_key || '').trim() === canonicalMetricKey
+        && !String(display.geographic_level || '').trim()
+      ));
     }
-    this.displaysByLane[normalizedLane] = laneDisplays;
+    const nextLaneDisplays = this.displaysByLane[normalizedLane] || [];
+    const existingIndex = nextLaneDisplays.findIndex((display) => display.display_id === displayId);
+    if (existingIndex >= 0) {
+      nextLaneDisplays.splice(existingIndex, 1, nextDisplay);
+    } else {
+      nextLaneDisplays.push(nextDisplay);
+    }
+    this.displaysByLane[normalizedLane] = nextLaneDisplays;
     // Newly added displays become the default legend selection (most
     // recently added instance owns the single visible legend). Passive
     // re-upserts of an existing display do not steal a user's selection.

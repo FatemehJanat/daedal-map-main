@@ -3605,7 +3605,19 @@ export const OverlayController = {
   hideOverlay(overlayId) {
     this.clearExactEventFilter?.(overlayId);
 
+    const configuredSourceIds = OverlaySelector?.getOverlayConfig?.(overlayId)?.sourceIds || [];
+    // Point collections are rendered by their dedicated model rather than the
+    // standard OverlayController model registry. Clear them explicitly when
+    // the owning overlay is disabled, while leaving their data available for
+    // a future cache-backed re-enable.
+    window.App?.clearPointCollectionsForSources?.(configuredSourceIds);
+
     if (isSharedMetricOverlay(overlayId)) {
+      // Additive metric-display layers are distinct from the shared base
+      // choropleth visibility flag. Remove this overlay's instances so a
+      // disabled FEMA/WDI layer cannot reappear when another metric turns the
+      // shared choropleth back on.
+      window.App?.removeMetricDisplaysForSources?.('explore', configuredSourceIds);
       const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
       const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
       MapAdapter?.setChoroplethVisible?.(anyMetricActive);

@@ -45,6 +45,18 @@ def shape_confirmed_order_delta_response(result: dict, cache) -> dict | None:
     delta_count = len(new_features)
 
     if delta_count == 0 and original_count > 0:
+        if is_geometry:
+            # Backend session dedupe outlives the disposable browser view.
+            # Geometry/point layers do not have a universal OverlayController
+            # cache to rebuild from, so return the canonical payload for a
+            # renderer recovery rather than strand a fresh map with an
+            # `already_loaded` acknowledgement and no visible layer.
+            logger.debug("Dedup: restoring %s cached geometry features to the browser", original_count)
+            return build_confirmed_order_response_payload(
+                result,
+                geojson=geojson,
+                count=original_count,
+            )
         logger.debug("Dedup: all %s features already sent, returning already_loaded", original_count)
         return {
             "type": "already_loaded",

@@ -241,6 +241,11 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
   }
 
   const normalizedQuery = String(query || '').trim();
+  // A selected popup is useful only when the user deliberately refers to it.
+  // Sending every old click as active context silently turns broad follow-up
+  // requests (for example, "FEMA declarations from 2010 to present") into a
+  // single-county query.
+  const queryUsesSelectedPopup = /\b(this|that|these|those|here|there|nearby|around\s+here)\b/i.test(normalizedQuery);
   const sourceHistory = Array.isArray(ctx.modeHistories?.[modeOverride])
     ? ctx.modeHistories[modeOverride]
     : (modeOverride === ctx.mode ? ctx.history : []);
@@ -308,7 +313,7 @@ export function buildPayload(ctx, query, resolvedLocation = null, extraOptions =
     savedOrderNames: SavedOrders?.getNames?.() || [],
     loadedData: getLoadedDataList(),
     selectedAddress: ctx.addressContext,
-    selectedPopup: MapAdapter?.getSelectedPopupContext?.() || null,
+    selectedPopup: queryUsesSelectedPopup ? (MapAdapter?.getSelectedPopupContext?.() || null) : null,
     tutorialMode: { enabled: TutorialMode.enabled },
     ...(modeOverride === 'ops'
       ? {

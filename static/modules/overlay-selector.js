@@ -474,7 +474,11 @@ function buildCategoriesFromTree(overlayTree) {
         overlays.push(overlay);
       }
 
-      if ((categoryId === 'global_indicators' || allChildrenAreChoropleths) && overlays.length && categoryId !== 'climate') {
+      // A choropleth is not necessarily global.  In particular FEMA is a
+      // USA-scoped county layer authored under us_context; do not promote it
+      // merely because every child happens to use the choropleth model.
+      if ((categoryId === 'global_indicators' || allChildrenAreChoropleths) &&
+          overlays.length && categoryId !== 'climate' && categoryId !== 'us_context') {
         globalIndicatorOverlays.push(...overlays);
         continue;
       }
@@ -513,7 +517,7 @@ function buildCategoriesFromTree(overlayTree) {
         packIds: deriveOverlayPackIds(categoryId, categoryData.sources)
       };
 
-      if (model === 'choropleth') {
+      if (model === 'choropleth' && categoryId !== 'us_context') {
         globalIndicatorOverlays.push(overlay);
         continue;
       }

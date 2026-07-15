@@ -1174,6 +1174,10 @@ export const MapAdapter = {
 
     const click = async (e) => {
       if (!e.features?.length) return;
+      // The shared empty-map inspector is also bound at canvas level. Mark
+      // this as a feature click before it settles so a metric display popup
+      // cannot be replaced by a point lookup.
+      this.registerFeaturePopupClick();
       const feature = e.features[0];
       const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
       this.popupLocked = true;
@@ -1189,7 +1193,7 @@ export const MapAdapter = {
       if (locationInfo && this.popupLocked) {
         this.lockedPopupLocationInfo = locationInfo;
         this.updateSelectedPopupLocationInfo(locationInfo);
-        const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
+        const popupHtml = PopupBuilder?.build(popupProperties, App?.getPopupSourceData?.(feature), locationInfo);
         this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
         this.setupPopupTabHandlers?.();
       }
@@ -1221,11 +1225,11 @@ export const MapAdapter = {
           return; // Let event layer handler deal with this click
         }
 
-        if (this.isEmptyMapPointInspectorEnabled()) {
-          return;
-        }
-
         if (e.features.length > 0) {
+          // A geometry feature takes priority over the shared point
+          // inspector.  The latter is scheduled from a canvas handler and
+          // checks this marker before opening its own popup.
+          this.registerFeaturePopupClick();
           const feature = e.features[0];
           const popupProperties = App?.getPopupProperties ? App.getPopupProperties(feature) : feature.properties;
           this.popupLocked = true;
@@ -1244,7 +1248,7 @@ export const MapAdapter = {
               this.lockedPopupLocationInfo = locationInfo;
               this.updateSelectedPopupLocationInfo(locationInfo);
               // Update popup with enriched data
-              const popupHtml = PopupBuilder?.build(popupProperties, App?.currentData, locationInfo);
+              const popupHtml = PopupBuilder?.build(popupProperties, App?.getPopupSourceData?.(feature), locationInfo);
               this.showPopup([e.lngLat.lng, e.lngLat.lat], popupHtml);
               // Wire up tab click delegation for tabbed popups
               this.setupPopupTabHandlers();
@@ -1656,7 +1660,7 @@ export const MapAdapter = {
       : feature.properties;
     const popupHtml = PopupBuilder?.build(
       popupProperties,
-      App?.currentData,
+      App?.getPopupSourceData?.(feature),
       this.lockedPopupLocationInfo || {}
     );
     this.showPopup(this.currentFocusLngLat, popupHtml);

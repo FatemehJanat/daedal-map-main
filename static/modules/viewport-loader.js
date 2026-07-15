@@ -105,9 +105,9 @@ export const ViewportLoader = {
     level0: 3000,   // > 3000 sq deg = countries (world/continent view, zoom ~2-4)
     level1: 300,    // > 300 sq deg = states (large country view, zoom ~4-6)
     level2: 30,     // > 30 sq deg = counties (state/region view, zoom ~6-8)
-    level3: 0.25,   // > 0.25 sq deg = census tracts (single county view, zoom ~9)
-    level4: 0.01,   // > 0.01 sq deg = block groups (city/district view, zoom ~12-13)
-    level5: 0.001   // > 0.001 sq deg = blocks (neighborhood, zoom ~14-15)
+    level3: 3,      // > 3 sq deg = census tracts (single county view, zoom ~9)
+    level4: 0.3,    // > 0.3 sq deg = block groups (city/district view, zoom ~12-13)
+    level5: 0.001   // Reserved for a future level below blocks
                     // < 0.001 sq deg = (reserved for future deeper levels)
   },
 
@@ -352,11 +352,19 @@ export const ViewportLoader = {
 
       GeometryCache.markLocIdsInFlight(adminLevel, missingLocIds);
       console.log(`[${thisRequestId}] Fetching ${missingLocIds.length} missing geometry ids at level ${adminLevel}`);
-      const data = await postMsgpack(
-        '/geometry/selection',
-        { loc_ids: missingLocIds },
-        { signal: this.abortController.signal }
-      );
+      const batchSize = CONFIG.viewport.geometryBatchSize || 500;
+      const features = [];
+      for (let offset = 0; offset < missingLocIds.length; offset += batchSize) {
+        const batch = missingLocIds.slice(offset, offset + batchSize);
+        const batchData = await postMsgpack(
+          '/geometry/selection',
+          { loc_ids: batch },
+          { signal: this.abortController.signal }
+        );
+        if (batchData.features?.length) features.push(...batchData.features);
+        if (thisRequestId !== this.requestId || adminLevel !== this.currentAdminLevel) break;
+      }
+      const data = { type: 'FeatureCollection', features };
 
       if (data.features?.length) {
         GeometryCache.add(data.features);

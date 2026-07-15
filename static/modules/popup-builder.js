@@ -88,7 +88,7 @@ export const PopupBuilder = {
     // Geometry metadata
     'centroid_lon', 'centroid_lat', 'Longitude', 'Latitude',
     'bbox_min_lon', 'bbox_min_lat', 'bbox_max_lon', 'bbox_max_lat',
-    'has_polygon', 'timezone',
+    'has_polygon', 'timezone', 'geometry_source',
     // Children counts (shown via enriched info)
     'children_count', 'children_by_level', 'descendants_count', 'descendants_by_level',
     // Categorization
@@ -125,9 +125,13 @@ export const PopupBuilder = {
 
     // Check if we have actual data fields (from a chat query)
     // Pass fromQuery=true when sourceData is present to include ALL numeric fields
-    const hasSourceData = sourceData !== null;
+    // Geometry can be refreshed independently of a previously displayed
+    // metric/global layer.  Treat sourceData as current only when it is an
+    // actual metric payload; otherwise land/water metadata must remain
+    // geometry information, not inherited query data.
+    const hasSourceData = sourceData?.data_type === 'metrics';
     const dataFields = this.getRelevantFields(properties, hasSourceData);
-    const hasQueryData = dataFields.length > 0;
+    const hasQueryData = hasSourceData && dataFields.length > 0;
 
     // Debug mode: show coverage info
     if (App?.debugMode && properties.coverage !== undefined) {
@@ -223,6 +227,13 @@ export const PopupBuilder = {
 
         lines.push(`${fieldName}: ${formattedValue}${yearSuffix}`);
       }
+    }
+
+    // Geometry provenance is supplied with the feature itself.  In
+    // particular, Census blocks must never inherit the Natural Earth label
+    // from an earlier global-country render.
+    if (!hasQueryData && properties?.geometry_source) {
+      lines.push(`<span style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Geometry: ${properties.geometry_source}</span>`);
     }
 
     // Compact hint for zoom navigation (no leading break)
@@ -416,12 +427,29 @@ export const PopupBuilder = {
       }
     }
 
+    // Census and other local geometry stores land/water areas in square
+    // metres.  Present the same human-scale km² units used by country
+    // popups, rather than exposing raw storage values as if they were
+    // ordinary metrics.
+    const landArea = Number(info.land_area);
+    const waterArea = Number(info.water_area);
+    if (Number.isFinite(landArea)) {
+      parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">Land: ${this.formatAreaM2(landArea)}</span>`);
+    }
+    if (Number.isFinite(waterArea) && waterArea > 0) {
+      parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">Water: ${this.formatAreaM2(waterArea)}</span>`);
+    }
+
     // Subdivisions - compact, one line with dataset counts
     if (info.children_count > 0 || info.descendants_count > 0) {
       const subdivisionLines = this.formatSubdivisions(info);
       for (const line of subdivisionLines) {
         parts.push(`<span style="color: rgba(230, 243, 255, 0.66); font-size: 11px;">${line}</span>`);
       }
+    }
+
+    if (info.geometry_source) {
+      parts.push(`<span style="color: rgba(230, 243, 255, 0.62); font-size: 10px;">Geometry: ${info.geometry_source}</span>`);
     }
 
     return parts.join('<br>');
@@ -433,6 +461,15 @@ export const PopupBuilder = {
       return `${(value / 1000000).toFixed(2).replace(/\.00$/, '')}M sq km`;
     }
     return `${Math.round(value).toLocaleString()} sq km`;
+  },
+
+  formatAreaM2(value) {
+    if (!Number.isFinite(value)) return 'N/A';
+    const km2 = value / 1_000_000;
+    if (km2 >= 1_000_000) return `${(km2 / 1_000_000).toFixed(2).replace(/\.00$/, '')}M km²`;
+    if (km2 >= 1) return `${Math.round(km2).toLocaleString()} km²`;
+    if (km2 >= 0.01) return `${km2.toFixed(2)} km²`;
+    return `${Math.round(value).toLocaleString()} m²`;
   },
 
   formatDistanceKm(value) {
