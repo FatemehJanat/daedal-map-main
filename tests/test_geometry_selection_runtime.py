@@ -4,13 +4,70 @@ from unittest.mock import patch
 import pandas as pd
 
 from mapmover.geometry_handlers import (
+    _load_deep_geometry_index_rows,
+    _load_subcounty_rows_by_loc_ids,
     _direct_family_bank_path,
+    df_to_geojson,
     get_selection_geometries,
     load_geometry_rows_by_loc_ids,
 )
 
 
 class GeometrySelectionRuntimeTests(unittest.TestCase):
+    def test_usa_admin5_selection_carries_census_geometry_provenance(self):
+        frame = pd.DataFrame(
+            [{
+                "loc_id": "USA-NE-021-963200-1-1062",
+                "iso_a3": "USA",
+                "admin_level": 5,
+                "geometry": '{"type":"Polygon","coordinates":[]}',
+            }]
+        )
+
+        payload = df_to_geojson(frame)
+
+        self.assertEqual(
+            payload["features"][0]["properties"]["geometry_source"],
+            "U.S. Census Bureau TIGER/Line 2024 TABBLOCK20",
+        )
+
+    def test_deep_selection_passes_exact_ids_to_partition_reader(self):
+        requested = ["USA-DE-001-000101-1-1000", "USA-DE-001-000101-1-1001"]
+        returned = pd.DataFrame(
+            [{"loc_id": loc_id, "geometry": "{}"} for loc_id in requested]
+        )
+
+        with patch(
+            "mapmover.geometry_handlers.load_subcounty_geometry",
+            return_value=returned,
+        ) as load_subcounty:
+            result = _load_subcounty_rows_by_loc_ids("USA", requested)
+
+        self.assertEqual(set(result["loc_id"]), set(requested))
+        self.assertEqual(load_subcounty.call_count, 1)
+        self.assertEqual(load_subcounty.call_args.kwargs["loc_ids"], requested)
+        self.assertEqual(load_subcounty.call_args.kwargs["state_abbrev"], "DE")
+
+    def test_deep_index_requests_bbox_projection_not_polygon_payload(self):
+        index_df = pd.DataFrame(
+            [{"loc_id": "USA-DE-001-000101-1-1000", "admin_level": 5}]
+        )
+
+        with patch(
+            "mapmover.geometry_handlers.get_regions_in_bbox",
+            return_value=["DE"],
+        ), patch(
+            "mapmover.geometry_handlers.load_subcounty_geometry",
+            return_value=index_df,
+        ) as load_subcounty:
+            result = _load_deep_geometry_index_rows(
+                "USA", admin_level=5, bbox=(-75.7, 38.4, -75.5, 38.6)
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(load_subcounty.call_args.kwargs["bbox"], (-75.7, 38.4, -75.5, 38.6))
+        self.assertNotIn("geometry", load_subcounty.call_args.kwargs["columns"])
+
     def test_direct_family_bank_registry_maps_known_overlay_families(self):
         regional_path = _direct_family_bank_path("regional_base", "DEU")
         self.assertIsNotNone(regional_path)
@@ -115,6 +172,9 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
         with patch(
             "mapmover.geometry_handlers._prefer_local_geometry_reads",
             return_value=False,
+        ), patch(
+            "mapmover.geometry_handlers.is_cloud_mode",
+            return_value=True,
         ), patch(
             "mapmover.geometry_handlers._resolve_geometry_source",
             return_value=("dummy.parquet", {"mappings": {"USA-CA": "USA-G123456"}}),

@@ -16,7 +16,7 @@
 
   "_comment_north_america": "North America",
   "USA": {
-    "1": ["states", "state", "commonwealth", "district", "territory"],
+    "1": ["states and territories", "state", "commonwealth", "district", "territory"],
     "2": ["counties", "county", "parish", "borough", "census area", "independent city"],
     "3": ["places", "cities", "towns", "municipalities", "CDPs", "townships", "county subdivisions"],
     "4": ["census tracts", "tracts"],

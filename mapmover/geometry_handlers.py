@@ -655,12 +655,13 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
 
     frames = []
     for (admin_level, state_abbrev), group_ids in grouped.items():
-        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        df = load_subcounty_geometry(
+            iso3, admin_level=admin_level, state_abbrev=state_abbrev,
+            loc_ids=group_ids,
+        )
         if df is None or df.empty:
             continue
-        filtered = df[df["loc_id"].isin(group_ids)]
-        if not filtered.empty:
-            frames.append(filtered)
+        frames.append(df)
 
     if not frames:
         return pd.DataFrame()
@@ -681,15 +682,21 @@ def _load_deep_geometry_index_rows(
     that stop at admin_2 for countries like USA.
     """
     frames = []
+    index_columns = [
+        "loc_id", "parent_id", "admin_level", "name", "code",
+        "bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat",
+        "centroid_lon", "centroid_lat",
+    ]
 
     if parent_loc_id:
         parts = parent_loc_id.split("-")
         state_abbrev = parts[1] if len(parts) >= 2 else None
-        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        df = load_subcounty_geometry(
+            iso3, admin_level=admin_level, state_abbrev=state_abbrev,
+            parent_loc_id=parent_loc_id, columns=index_columns,
+        )
         if df is None or df.empty:
             return pd.DataFrame()
-        if "parent_id" in df.columns:
-            df = df[df["parent_id"] == parent_loc_id]
         return df
 
     if bbox is None:
@@ -697,12 +704,13 @@ def _load_deep_geometry_index_rows(
 
     regions = get_regions_in_bbox(iso3, *bbox)
     for region_code in regions:
-        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=region_code)
+        df = load_subcounty_geometry(
+            iso3, admin_level=admin_level, state_abbrev=region_code,
+            bbox=bbox, columns=index_columns,
+        )
         if df is None or df.empty:
             continue
-        df = _filter_df_by_bbox(df, bbox)
-        if df is not None and not df.empty:
-            frames.append(df)
+        frames.append(df)
 
     if not frames:
         return pd.DataFrame()
@@ -968,7 +976,10 @@ def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=N
     parent_scope = admin2_local or admin1_local
 
     for admin_level in deep_levels:
-        df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev)
+        df = load_subcounty_geometry(
+            iso3, admin_level=admin_level, state_abbrev=state_abbrev,
+            bbox=(lon, lat, lon, lat),
+        )
         if df is None or df.empty:
             continue
 
@@ -1168,6 +1179,12 @@ def df_to_geojson(df, polygon_only=False):
         # Build properties - only include non-null values
         properties = {col: row[col] for col in prop_cols
                       if row.get(col) is not None and not (isinstance(row[col], float) and pd.isna(row[col]))}
+        # USA Admin 5 rows are converted directly from the locally staged
+        # Census 2024 TABBLOCK20 source.  Preserve that provenance on the
+        # returned feature so a popup never borrows a stale source label from
+        # whatever global layer was displayed before viewport loading.
+        if properties.get("iso_a3") == "USA" and int(properties.get("admin_level") or -1) == 5:
+            properties["geometry_source"] = "U.S. Census Bureau TIGER/Line 2024 TABBLOCK20"
 
         features.append({
             "type": "Feature",
@@ -1637,6 +1654,35 @@ def _get_selection_feature_for_loc_id(loc_id: str) -> dict | None:
 def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
     props = feature.get("properties") or {}
     family = classify_loc_id_family(loc_id)
+    # Deep local rows live in state-partitioned files, so the normal
+    # country-parquet parent lookup cannot see them.  Resolve this compact
+    # exact-ID ancestor chain for the same human-readable "Part of" context
+    # used by Admin 0–2 popups.
+    ancestor_ids = []
+    current_id = str(props.get("parent_id") or "").strip()
+    while current_id:
+        ancestor_ids.append(current_id)
+        if "-" not in current_id:
+            break
+        current_id = current_id.rsplit("-", 1)[0]
+    ancestor_features = get_selection_geometries(ancestor_ids).get("features", []) if ancestor_ids else []
+    ancestor_names = {
+        str(item.get("properties", {}).get("loc_id") or ""): item.get("properties", {}).get("name")
+        for item in ancestor_features
+    }
+    for parent_id in ancestor_ids:
+        if ancestor_names.get(parent_id):
+            continue
+        # The legacy Admin 1 bridge can translate a local USA state ID to a
+        # GeoBoundaries row, while selection intentionally avoids loading a
+        # full state frame.  Its normal location-info lookup is exact and
+        # gives the same human label without exposing the raw local ID.
+        parent_info = get_location_info(parent_id)
+        if parent_info.get("name"):
+            ancestor_names[parent_id] = parent_info["name"]
+    memberships = [
+        f"Part of: {', '.join(str(ancestor_names.get(parent_id) or parent_id) for parent_id in ancestor_ids)}"
+    ] if ancestor_ids else []
     return {
         "loc_id": props.get("local_loc_id") or loc_id,
         "name": props.get("name"),
@@ -1648,13 +1694,16 @@ def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
         "descendants_count": props.get("descendants_count") or 0,
         "descendants_by_level": props.get("descendants_by_level", "{}"),
         "has_children": bool(props.get("children_count")),
-        "memberships": [],
+        "memberships": memberships,
         "dataset_count": 0,
         "dataset_counts": {},
         "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
         "bbox": _bbox_from_feature_props(props),
         "has_polygon": bool(props.get("has_polygon")),
         "iso3": props.get("iso_a3"),
+        "land_area": props.get("land_area"),
+        "water_area": props.get("water_area"),
+        "geometry_source": props.get("geometry_source"),
     }
 
 
@@ -1674,7 +1723,62 @@ DEFAULT_LEVEL_NAMES = {
 _subcounty_geometry_cache = {}
 
 
-def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = None):
+def _read_subcounty_geometry(
+    file_path: Path,
+    *,
+    loc_ids: list[str] | None = None,
+    parent_loc_id: str | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """Read only the deep-geometry rows needed by the current request.
+
+    State block files can contain millions of features.  They must never be
+    loaded into an application-wide DataFrame cache merely to serve a viewport
+    or selection request.  Both local PyArrow reads and cloud DuckDB/R2 reads
+    receive the same predicates and projection here.
+    """
+    exact_filters = {"parent_id": parent_loc_id} if parent_loc_id else None
+    in_filters = {"loc_id": loc_ids} if loc_ids else None
+    compare_filters = None
+    if bbox:
+        min_lon, min_lat, max_lon, max_lat = bbox
+        compare_filters = [
+            ("bbox_max_lon", ">=", min_lon),
+            ("bbox_min_lon", "<=", max_lon),
+            ("bbox_max_lat", ">=", min_lat),
+            ("bbox_min_lat", "<=", max_lat),
+        ]
+
+    if _prefer_local_geometry_reads() and file_path.exists():
+        filters = []
+        if parent_loc_id:
+            filters.append(("parent_id", "==", parent_loc_id))
+        if loc_ids:
+            filters.append(("loc_id", "in", loc_ids))
+        if compare_filters:
+            filters.extend(compare_filters)
+        return pd.read_parquet(file_path, columns=columns, filters=filters or None)
+
+    return select_rows(
+        file_path,
+        columns=columns,
+        exact_filters=exact_filters,
+        in_filters=in_filters,
+        compare_filters=compare_filters,
+    )
+
+
+def load_subcounty_geometry(
+    iso3: str,
+    admin_level: int,
+    state_abbrev: str = None,
+    *,
+    loc_ids: list[str] | None = None,
+    parent_loc_id: str | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+    columns: list[str] | None = None,
+):
     """
     Load canonical deep-admin geometry for admin_3+.
 
@@ -1712,7 +1816,8 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
     if not is_partitioned:
         # National file
         cache_key = f"{iso3}_{geom_type}"
-        if cache_key in _subcounty_geometry_cache:
+        filtered_request = bool(loc_ids or parent_loc_id or bbox or columns)
+        if not filtered_request and cache_key in _subcounty_geometry_cache:
             return _subcounty_geometry_cache[cache_key]
 
         file_path = countries_dir / "geometry" / f"{geom_type}.parquet"
@@ -1721,10 +1826,12 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
             return None
 
         try:
-            df = select_rows(file_path)
-            if df.empty:
-                df = pd.read_parquet(file_path)
-            _subcounty_geometry_cache[cache_key] = df
+            df = _read_subcounty_geometry(
+                file_path, loc_ids=loc_ids, parent_loc_id=parent_loc_id,
+                bbox=bbox, columns=columns,
+            )
+            if not filtered_request:
+                _subcounty_geometry_cache[cache_key] = df
             logger.debug(f"Loaded {len(df)} features from {file_path}")
             return df
         except Exception as e:
@@ -1738,22 +1845,17 @@ def load_subcounty_geometry(iso3: str, admin_level: int, state_abbrev: str = Non
             return None
 
         subdir = geom_type  # e.g., "tract", "blockgroup", "block"
-        cache_key = f"{iso3}_geometry_{subdir}_{state_abbrev}"
-
-        if cache_key in _subcounty_geometry_cache:
-            return _subcounty_geometry_cache[cache_key]
-
         file_path = countries_dir / "geometry" / subdir / f"{iso3}-{state_abbrev}.parquet"
         if not is_cloud_mode() and not file_path.exists():
             logger.debug(f"Sub-county geometry not found: {file_path}")
             return None
 
         try:
-            df = select_rows(file_path)
-            if df.empty:
-                df = pd.read_parquet(file_path)
-            _subcounty_geometry_cache[cache_key] = df
-            logger.debug(f"Loaded {len(df)} features for {state_abbrev} level {admin_level}")
+            df = _read_subcounty_geometry(
+                file_path, loc_ids=loc_ids, parent_loc_id=parent_loc_id,
+                bbox=bbox, columns=columns,
+            )
+            logger.debug(f"Loaded {len(df)} requested features for {state_abbrev} level {admin_level}")
             return df
         except Exception as e:
             logger.error(f"Error loading sub-county geometry: {e}")
@@ -1916,15 +2018,17 @@ def _load_subcounty_for_viewport(iso3: str, admin_level: int, buffered_bbox: tup
 
         if regions:
             for region_code in regions:
-                df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=region_code)
+                df = load_subcounty_geometry(
+                    iso3, admin_level=admin_level, state_abbrev=region_code,
+                    bbox=buffered_bbox,
+                )
                 if df is None or len(df) == 0:
                     logger.debug(f"No data for {iso3}-{region_code} level {admin_level}")
                     continue
 
                 logger.info(f"Loaded {len(df)} features for {iso3}-{region_code} level {admin_level}")
-                df_filtered = _filter_df_by_bbox(df, buffered_bbox)
-                logger.info(f"After bbox filter: {len(df_filtered)} features")
-                geojson = df_to_geojson(df_filtered, polygon_only=True)
+                logger.info(f"Viewport query returned {len(df)} features")
+                geojson = df_to_geojson(df, polygon_only=True)
                 if debug:
                     for feature in geojson.get("features", []):
                         feature["properties"]["current_admin_level"] = admin_level

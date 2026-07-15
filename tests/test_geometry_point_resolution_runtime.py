@@ -2,9 +2,20 @@ import unittest
 from unittest.mock import patch
 
 from mapmover.geometry_handlers import resolve_point_to_location
+from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
 class GeometryPointResolutionRuntimeTests(unittest.TestCase):
+    def test_california_block_point_resolves_through_admin5_spine(self):
+        """Regression: audited CA Admin 5 must not stop at legacy geometry admin2."""
+        result = resolve_point_to_loc_id_stack(-116.710700, 34.320563, include_geometry=False)
+
+        self.assertEqual(result["deepest_resolved_admin_level"], "admin_5")
+        self.assertEqual(result["deepest_resolved_loc_id"], "USA-CA-071-010424-3-3009")
+        self.assertEqual(result["matches"]["admin_2"]["loc_id"], "USA-CA-071")
+        self.assertEqual(result["matches"]["admin_3"]["loc_id"], "USA-CA-071-010424")
+        self.assertEqual(result["matches"]["admin_4"]["loc_id"], "USA-CA-071-010424-3")
+
     def test_resolve_point_to_location_prefers_admin2_without_series_truthiness(self):
         class _Frame:
             empty = False

@@ -10,6 +10,7 @@ from ..geometry_handlers import (
     get_selection_geometries,
     load_country_parquet,
     load_global_countries_frame,
+    load_subcounty_geometry,
     resolve_point_to_location as legacy_resolve_point_to_location,
 )
 from ..name_standardizer import NameStandardizer
@@ -354,6 +355,37 @@ def _build_match_entry(
         "canonical_match": bool(canonical_match),
         "source_loc_id": source_loc_id or canonical_loc_id,
     }
+
+
+def _resolve_local_deep_geometry_name(loc_id: str, admin_level: int) -> str | None:
+    """Read one canonical Admin 3+ row to label a derived point-result parent.
+
+    Deep point resolution deliberately derives its parent chain from the
+    canonical loc_id rather than loading whole state files.  That made the
+    parent IDs correct but left their display names blank in the point popup.
+    This is a projected, exact-ID read of a single partition row.
+    """
+    if admin_level < 3:
+        return None
+    parts = canonicalize_loc_id(loc_id).split("-")
+    if len(parts) < 2:
+        return None
+    iso3 = parts[0]
+    state_abbrev = parts[1] if iso3 == "USA" else None
+    try:
+        frame = load_subcounty_geometry(
+            iso3,
+            admin_level=admin_level,
+            state_abbrev=state_abbrev,
+            loc_ids=[loc_id],
+            columns=["loc_id", "name"],
+        )
+    except Exception:
+        return None
+    if frame is None or frame.empty:
+        return None
+    value = frame.iloc[0].get("name")
+    return str(value).strip() if isinstance(value, str) and value.strip() else None
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -750,6 +782,7 @@ def resolve_point_to_loc_id_stack(
             matches[key] = _build_match_entry(
                 loc_id_value,
                 admin_level=level_value,
+                name=_resolve_local_deep_geometry_name(loc_id_value, level_value),
                 method="derived_parent_chain",
                 canonical_match=True,
             )

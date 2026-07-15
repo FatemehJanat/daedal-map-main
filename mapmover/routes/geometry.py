@@ -21,6 +21,7 @@ from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
 router = APIRouter()
+MAX_SELECTION_LOC_IDS = 1_000
 
 
 async def decode_request_body(request: Request) -> dict:
@@ -132,6 +133,11 @@ async def get_selection_geometry_endpoint(req: Request):
         loc_ids = body.get("loc_ids", [])
         if not loc_ids:
             return msgpack_response({"type": "FeatureCollection", "features": []})
+        if not isinstance(loc_ids, list) or len(loc_ids) > MAX_SELECTION_LOC_IDS:
+            return msgpack_error(
+                f"loc_ids must be a list of at most {MAX_SELECTION_LOC_IDS} ids",
+                413,
+            )
 
         result = get_selection_geometries_handler(loc_ids)
         return msgpack_response(result)
