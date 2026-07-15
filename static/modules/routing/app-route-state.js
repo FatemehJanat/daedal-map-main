@@ -14,7 +14,9 @@
 
 const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
-const ROUTE_INTENT_PARAMS = ['pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'msg', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
+import { resolveRouteViewPreset } from './view-presets.js';
+
+const ROUTE_INTENT_PARAMS = ['view', 'pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'msg', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
 const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
@@ -475,7 +477,7 @@ export function buildShareStateUrl(shareState, { absolute = false } = {}) {
  * the lane from the first path segment; the remaining fields are placeholders
  * the later phases fill in.
  * @param {Location} [loc]
- * @returns {{lane: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, event_id: string|null, exact_id_key: string|null,
+ * @returns {{lane: string|null, view_id: string|null, view_label: string|null, pack_id: string|null, pack_ids: string[], source_id: string|null, feed_id: string|null, feed_ids: string[], event_id: string|null, exact_id_key: string|null,
  *   focus: object|null, prefill_query: string|null, route_message: string|null, share_state: object|null, requires_auth: boolean, invalid_reason: string|null}}
  */
 export function parseRouteIntent(loc = window.location) {
@@ -502,13 +504,24 @@ export function parseRouteIntent(loc = window.location) {
   const normalizedExactId = genericEventId || stormId || null;
   const exactIdKey = genericEventId ? 'event_id' : (stormId ? 'storm_id' : null);
   const shareStateFromQuery = decodeSimpleShareState(params, lane || DEFAULT_LANE);
-  const focusFromQuery = parseFocusQueryParam(pick('focus'));
+  const viewId = pick('view');
+  const viewPreset = resolveRouteViewPreset(lane || DEFAULT_LANE, viewId);
+  const explicitPackId = pick('pack');
+  const explicitPackIds = pickList('packs');
+  const explicitSourceId = pick('source');
+  const explicitFeedId = pick('feed');
+  const focusFromQuery = parseFocusQueryParam(pick('focus')) || viewPreset?.focus || null;
   return {
     lane: lane || null,
-    pack_id: pick('pack'),         // Explore deep link: ?pack=<pack_id>
-    pack_ids: pickList('packs'),   // Research deep link: ?packs=<pack_id_1>,<pack_id_2>
-    source_id: pick('source'),     // optional ?source=<source_id>
-    feed_id: pick('feed'),         // Ops deep link: ?feed=<collector_name>
+    view_id: viewPreset?.id || viewId,
+    view_label: viewPreset?.label || null,
+    pack_id: explicitPackId,       // Explore deep link: ?pack=<pack_id>
+    pack_ids: (explicitPackId || explicitSourceId || explicitPackIds.length)
+      ? explicitPackIds
+      : (viewPreset?.pack_ids || []),
+    source_id: explicitSourceId,   // optional ?source=<source_id>
+    feed_id: explicitFeedId,       // Ops deep link: ?feed=<collector_name>
+    feed_ids: explicitFeedId ? [explicitFeedId] : (viewPreset?.feed_ids || []),
     event_id: normalizedExactId,   // Exact event deep link: ?event_id=<stable_event_id> or native alias like ?storm_id=
     exact_id_key: exactIdKey,
     focus: focusFromQuery,

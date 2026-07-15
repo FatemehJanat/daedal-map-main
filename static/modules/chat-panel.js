@@ -906,22 +906,30 @@ export const ChatManager = {
     const eventId = String(routeIntent?.event_id || '').trim();
     const sourceId = String(routeIntent?.source_id || '').trim();
     const feedId = String(routeIntent?.feed_id || '').trim();
+    const feedIds = Array.from(new Set([
+      ...((Array.isArray(routeIntent?.feed_ids) ? routeIntent.feed_ids : [])),
+      feedId
+    ].map((value) => String(value || '').trim()).filter(Boolean)));
     const packId = String(routeIntent?.pack_id || '').trim()
       || (sourceId ? resolvePackIdFromSourceId(sourceId) : '');
+    const packIds = Array.from(new Set([
+      packId,
+      ...((Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : []))
+    ].map((value) => String(value || '').trim()).filter(Boolean)));
 
-    if (lane === 'explore' && !packId && !sourceId && !eventId) {
+    if (lane === 'explore' && !packIds.length && !sourceId && !eventId) {
       return false;
     }
-    if (lane === 'ops' && !feedId && !eventId) {
+    if (lane === 'ops' && !feedIds.length && !eventId) {
       return false;
     }
 
-    if (lane === 'ops' && feedId) {
+    if (lane === 'ops' && feedIds.length) {
       // A feed URL is an entry action, never a new runtime/watch boundary.
       // Load the target alongside the existing runtime universe (or the
       // normal account/public baseline on cold boot), then activate it below.
-      await this.loadOpsFeedSet(this.getOpsEntryFeedSet([feedId]), {
-        label: 'Ops deep link',
+      await this.loadOpsFeedSet(this.getOpsEntryFeedSet(feedIds), {
+        label: routeIntent?.view_label || 'Ops deep link',
         forceDisplayReplay: true,
         preserveWatchUniverse: true
       });
@@ -931,18 +939,28 @@ export const ChatManager = {
       eventId && lane === 'explore' && (packId || sourceId)
     );
 
+    if (lane === 'explore' && routeIntent?.view_id && !sourceId && !eventId && packIds.length > 1) {
+      return this.runDefaultLoad(
+        { presetId: `explore:${routeIntent.view_id}` },
+        { ...options, mode: lane, suppressResultMessage: true, skipEntityReflection: true }
+      );
+    }
+
     const handled = await this.runDefaultLoad(
       {
-        packId,
+        packId: packId || packIds[0] || '',
         sourceId,
-        feedId,
+        feedId: feedId || feedIds[0] || '',
         eventId,
         focus: routeIntent?.focus || null
       },
       {
         ...options,
         mode: lane,
-        suppressResultMessage
+        suppressResultMessage,
+        // Named views are durable public aliases. Do not replace `?view=` with
+        // the first underlying entity after the default load completes.
+        skipEntityReflection: Boolean(routeIntent?.view_id)
       }
     );
 

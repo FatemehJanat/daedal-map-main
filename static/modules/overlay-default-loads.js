@@ -10,6 +10,7 @@ import {
   resolveOverlayIdFromPackId,
   resolveOverlayIdFromSourceId
 } from './overlay-selector.js';
+import { resolveRouteViewPreset } from './routing/view-presets.js';
 
 const DISASTER_PACKS = new Set([
   'earthquakes',
@@ -453,6 +454,14 @@ function buildExactEventLoadAction({ lane = 'explore', packId = '', sourceId = '
 export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', packId = '', sourceId = '', feedId = '', presetId = '', eventId = '' } = {}) {
   const normalizedLane = String(lane || 'explore').trim().toLowerCase();
   const normalizedPresetId = String(presetId || '').trim();
+  if (normalizedPresetId.startsWith('explore:')) {
+    const viewPreset = resolveRouteViewPreset('explore', normalizedPresetId.slice('explore:'.length));
+    const presetAction = buildPresetActionFromPackDefaults(
+      viewPreset?.pack_ids || [],
+      viewPreset?.label ? `Loading ${viewPreset.label}` : 'Loading Explore view'
+    );
+    if (presetAction) return presetAction;
+  }
   if (normalizedPresetId === 'explore:disasters_2020_2025') {
     const presetAction = buildPresetActionFromPackDefaults(
       ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes', 'floods'],

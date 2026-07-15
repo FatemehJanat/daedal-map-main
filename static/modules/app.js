@@ -856,6 +856,7 @@ export const App = {
           pack_id: routeIntent?.pack_id || null,
           source_id: routeIntent?.source_id || null,
           feed_id: routeIntent?.feed_id || null,
+          feed_ids: Array.isArray(routeIntent?.feed_ids) ? routeIntent.feed_ids : [],
           pack_ids: Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : [],
           event_id: routeIntent?.event_id || null,
           focus: routeIntent?.focus || null
@@ -864,6 +865,7 @@ export const App = {
           intentSummary.pack_id
           || intentSummary.source_id
           || intentSummary.feed_id
+          || intentSummary.feed_ids.length
           || intentSummary.event_id
           || intentSummary.pack_ids.length
         );
@@ -964,7 +966,12 @@ export const App = {
     // Skip this when an Explore deep link (?pack= / ?source=) drove startup: the
     // preset above already loaded that entity's data into the shared choropleth,
     // and force-loading the world-countries view here would overwrite/cover it.
-    const hasExploreDeepLink = !!(routeIntent.pack_id || routeIntent.source_id || routeIntent.event_id);
+    const hasExploreDeepLink = !!(
+      routeIntent.pack_id
+      || routeIntent.source_id
+      || routeIntent.event_id
+      || (Array.isArray(routeIntent.pack_ids) && routeIntent.pack_ids.length)
+    );
     if (!researchStartup && !hasExploreDeepLink && OverlaySelector.getActiveOverlays().includes('demographics')) {
       ViewportLoader.load(ViewportLoader.currentAdminLevel);
     }
