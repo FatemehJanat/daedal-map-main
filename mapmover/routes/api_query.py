@@ -346,6 +346,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
 
     available_columns = get_api_source_columns(spec)
 
+    # Capture the source's own (pre-mixed-temporal) granularity before
+    # resolve_effective_time_spec can rewrite it to "timestamp" for query
+    # purposes. The bounds check below needs to know whether rows are
+    # genuinely yearly-stamped (year-start), which resolve_effective_time_spec's
+    # "timestamp" override does not change.
+    source_time_granularity = spec.time_granularity
+
     spec = resolve_effective_time_spec(spec, time_filter if isinstance(time_filter, dict) else None)
 
     if normalized_requested_granularity:
@@ -774,6 +781,23 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             requested_end_cmp = _coerce_temporal_bound_value(requested_end)
             available_start_cmp = _coerce_temporal_bound_value(available_start)
             available_end_cmp = _coerce_temporal_bound_value(available_end)
+            # Yearly-granularity sources are stamped at year-start (e.g. 2024-01-01),
+            # but a bare numeric year like `end: 2024` is expanded upstream to
+            # 2024-12-31T23:59:59 (see format_year_end in api_query_scope.py). Comparing
+            # those full timestamps against a year-start available_end would reject the
+            # source's own final published year. Fall back to a year-granular comparison
+            # for yearly sources only; timestamp/daily/weekly/monthly sources are unaffected.
+            # Use the source's original granularity (source_time_granularity), not the
+            # "effective" spec, since resolve_effective_time_spec may have already
+            # rewritten yearly sources to "timestamp" for mixed-temporal query handling
+            # without changing the fact that rows are still stamped at year-start.
+            if normalize_time_granularity(source_time_granularity) == "yearly":
+                if requested_start_cmp is not None and available_start_cmp is not None:
+                    requested_start_cmp = datetime(requested_start_cmp.year, 1, 1, tzinfo=timezone.utc)
+                    available_start_cmp = datetime(available_start_cmp.year, 1, 1, tzinfo=timezone.utc)
+                if requested_end_cmp is not None and available_end_cmp is not None:
+                    requested_end_cmp = datetime(requested_end_cmp.year, 1, 1, tzinfo=timezone.utc)
+                    available_end_cmp = datetime(available_end_cmp.year, 1, 1, tzinfo=timezone.utc)
             if requested_start is not None and (
                 (requested_start_cmp is not None and available_start_cmp is not None and requested_start_cmp < available_start_cmp)
                 or (requested_start_cmp is None or available_start_cmp is None) and requested_start < available_start
