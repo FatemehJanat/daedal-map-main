@@ -34,7 +34,9 @@ httpx==0.27.2  # used by mapmover/auth_context.py for async Supabase auth verifi
 pandas==2.3.3
 numpy==2.3.5
 duckdb==1.5.0
-pyarrow==21.0.0
+# CVE-2026-25087 is not reachable through this Python/Parquet runtime, but
+# 23.0.1 includes the upstream Arrow IPC memory-safety fix.
+pyarrow==23.0.1
 orjson==3.11.4  # Fast JSON parsing (3-10x faster than stdlib)
 msgpack==1.1.2  # MessagePack serialization (2-5x faster, 30-50% smaller)
 

@@ -343,7 +343,11 @@ async def static_no_cache(request: Request, call_next):
     path = request.url.path
     surface = _classify_route_surface(path)
     request.state.analytics_surface = surface
-    max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", "268435456"))
+    # Keep this conservative by default.  The public API only accepts small
+    # JSON/control payloads; larger uploads belong in the offline pipeline,
+    # not the request path.  Use the shared parser so a malformed deployment
+    # variable cannot turn a request into a middleware 500.
+    max_body_bytes = _parse_env_int("MAX_REQUEST_BODY_BYTES", 1_048_576)
     content_length = request.headers.get("content-length")
     if content_length:
         try:
