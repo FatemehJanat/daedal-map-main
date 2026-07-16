@@ -301,7 +301,11 @@ function buildExploreTenYearDisasterAction() {
       // preset send identical threshold filters.
       params: null
     })),
-    summary: `Loading seven global disaster layers (${startYear}-${endYear})`,
+    summary:
+      `Showing seven global disaster event layers for ${startYear}-${endYear}: ` +
+      'earthquakes (M5.5+), hurricanes (Cat1+), volcanoes (VEI 3+), ' +
+      'wildfires (500 km²+), tsunamis (3m+), tornadoes (EF2+), and floods (severity 2+). ' +
+      'Use the timeline to move through the available history, or ask to narrow by place, time, or event.',
     _requestedPackCount: overlayIds.length
   };
 }

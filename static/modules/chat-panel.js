@@ -1510,9 +1510,12 @@ export const ChatManager = {
 
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
-        const baseSummary = successCount === requestedCount
-          ? `Loaded ${successCount} defaults: ${labelText}.`
-          : `Loaded ${successCount}/${requestedCount} defaults: ${labelText}.`;
+        const configuredSummary = String(action.summary || '').trim();
+        const baseSummary = successCount === requestedCount && configuredSummary
+          ? configuredSummary
+          : successCount === requestedCount
+            ? `Loaded ${successCount} defaults: ${labelText}.`
+            : `Loaded ${successCount}/${requestedCount} layers: ${labelText}.`;
         const failedText = failedLabels.length
           ? ` Failed: ${joinLabelsForMessage(failedLabels)}.`
           : '';

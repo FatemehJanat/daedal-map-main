@@ -491,11 +491,13 @@ export function parseRouteIntent(loc = window.location) {
   const pickList = (key) => {
     const values = [];
     const seen = new Set();
-    for (const part of String(params.get(key) || '').split(',')) {
-      const value = String(part || '').trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      values.push(value);
+    for (const rawValue of params.getAll(key)) {
+      for (const part of String(rawValue || '').split(',')) {
+        const value = String(part || '').trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        values.push(value);
+      }
     }
     return values;
   };
@@ -509,7 +511,8 @@ export function parseRouteIntent(loc = window.location) {
   const explicitPackId = pick('pack');
   const explicitPackIds = pickList('packs');
   const explicitSourceId = pick('source');
-  const explicitFeedId = pick('feed');
+  const explicitFeedIds = pickList('feed');
+  const explicitFeedId = explicitFeedIds[0] || null;
   const focusFromQuery = parseFocusQueryParam(pick('focus')) || viewPreset?.focus || null;
   return {
     lane: lane || null,
@@ -521,7 +524,7 @@ export function parseRouteIntent(loc = window.location) {
       : (viewPreset?.pack_ids || []),
     source_id: explicitSourceId,   // optional ?source=<source_id>
     feed_id: explicitFeedId,       // Ops deep link: ?feed=<collector_name>
-    feed_ids: explicitFeedId ? [explicitFeedId] : (viewPreset?.feed_ids || []),
+    feed_ids: explicitFeedIds.length ? explicitFeedIds : (viewPreset?.feed_ids || []),
     event_id: normalizedExactId,   // Exact event deep link: ?event_id=<stable_event_id> or native alias like ?storm_id=
     exact_id_key: exactIdKey,
     focus: focusFromQuery,
