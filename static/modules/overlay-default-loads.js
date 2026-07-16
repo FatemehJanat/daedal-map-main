@@ -269,6 +269,43 @@ function buildPresetActionFromPackDefaults(packIds, fallbackSummary = '') {
   };
 }
 
+function buildExploreTenYearDisasterAction() {
+  // This is intentionally not a pack-default expansion. Explore's seven-
+  // disaster button is one bounded global event request per overlay, using the
+  // same endpoint defaults as the one-year overlay controls and Railway's
+  // startup prewarm. Pack defaults can include aggregates and regional source
+  // variants, which makes this particular UI action unexpectedly expensive.
+  const endYear = getCurrentUtcYear();
+  const startYear = Math.max(1900, endYear - 9);
+  const startMs = Date.UTC(startYear, 0, 1, 0, 0, 0, 0);
+  const endMs = Date.UTC(endYear, 11, 31, 23, 59, 59, 999);
+  const overlayIds = [
+    'earthquakes',
+    'hurricanes',
+    'volcanoes',
+    'wildfires',
+    'tsunamis',
+    'tornadoes',
+    'floods'
+  ];
+
+  return {
+    type: 'multi_default_load',
+    actions: overlayIds.map((overlayId) => ({
+      type: 'overlay_range_load',
+      overlayId,
+      startMs,
+      endMs,
+      // null means use OVERLAY_ENDPOINTS[overlayId].params. Keeping those
+      // defaults authoritative makes the one-year overlay and this ten-year
+      // preset send identical threshold filters.
+      params: null
+    })),
+    summary: `Loading seven global disaster layers (${startYear}-${endYear})`,
+    _requestedPackCount: overlayIds.length
+  };
+}
+
 export function resolveOverlayIdForOrderResult(response, order = null) {
   const directOverlayId = String(response?.overlay_id || '').trim();
   if (directOverlayId) return directOverlayId;
@@ -463,11 +500,7 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
     if (presetAction) return presetAction;
   }
   if (normalizedPresetId === 'explore:disasters_2020_2025') {
-    const presetAction = buildPresetActionFromPackDefaults(
-      ['earthquakes', 'hurricanes', 'volcanoes', 'wildfires', 'tsunamis', 'tornadoes', 'floods'],
-      'Loading disaster defaults'
-    );
-    return presetAction || null;
+    return buildExploreTenYearDisasterAction();
   }
 
   const exactEventAction = buildExactEventLoadAction({

@@ -299,8 +299,8 @@ function gardnerKnopoffTimeWindow(magnitude) {
 // - Earthquakes: M5.5+ (significant events)
 // - Hurricanes: Cat1+ (named hurricanes only, excludes TD/TS)
 // - Tornadoes: EF2+ (significant damage)
-// - Wildfires: 100km2+ (major fires)
-// - Volcanoes, Tsunamis, Floods: no filter (small datasets)
+// - Wildfires: 500km2+ (major fires)
+// - Volcanoes: VEI 3+; Tsunamis: 3m+ wave height; Floods: severity 2+
 //
 // Year-based lazy loading: Data is fetched per-year as user navigates time.
 // On overlay enable: fetch current year
@@ -327,7 +327,7 @@ const OVERLAY_ENDPOINTS = {
   },
   volcanoes: {
     baseUrl: '/api/eruptions/geojson',
-    params: { exclude_ongoing: 'true' },
+    params: { min_vei: '3', exclude_ongoing: 'true' },
     eventType: 'volcano',
     yearField: 'year'
   },
@@ -343,7 +343,7 @@ const OVERLAY_ENDPOINTS = {
   },
   tsunamis: {
     baseUrl: '/api/tsunamis/geojson',
-    params: {},
+    params: { min_height_m: '3' },
     animationEndpoint: '/api/tsunamis/{event_id}/animation',
     eventType: 'tsunami',
     yearField: 'year'
@@ -357,7 +357,7 @@ const OVERLAY_ENDPOINTS = {
   },
   floods: {
     baseUrl: '/api/floods/geojson',
-    params: { include_geometry: 'true' },
+    params: { min_severity: '2', include_geometry: 'true' },
     geometryEndpoint: '/api/floods/{event_id}/geometry',
     eventType: 'flood',
     yearField: 'year',
