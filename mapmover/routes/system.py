@@ -1924,14 +1924,22 @@ async def get_catalog_sources(req: Request):
     data_type, scope, topic_tags.  Full catalog metadata is not included to
     keep the response small.
     """
-    from mapmover.data_loading import load_catalog
+    from mapmover.catalog_surface import request_uses_wip_catalog
+    from mapmover.data_loading import load_catalog, load_full_catalog
 
+    auth_user = get_authenticated_user(req)
+    using_wip = request_uses_wip_catalog(req, auth_user)
     entitled = _get_entitled_packs(req)
-    all_sources = load_catalog().get("sources", [])
+    all_sources = (load_full_catalog() if using_wip else load_catalog()).get("sources", [])
 
     SUMMARY_KEYS = {"source_id", "pack_id", "source_name", "category", "data_type", "scope", "topic_tags"}
 
-    if entitled is None:
+    if using_wip:
+        # WIP is itself an admin/local testing surface. Draft sources commonly
+        # have no pack yet, so applying normal pack entitlements here would
+        # silently remove the very overlays an admin is testing.
+        sources = [{k: source.get(k) for k in SUMMARY_KEYS} for source in all_sources]
+    elif entitled is None:
         # Master / bypass: return everything
         sources = [{k: s.get(k) for k in SUMMARY_KEYS} for s in all_sources]
     elif not entitled:
@@ -2114,16 +2122,29 @@ async def get_v1_pack(pack_id: str):
 
 @router.get("/api/catalog/overlays")
 async def get_catalog_overlays(req: Request):
-    """Get overlay tree from the catalog, filtered to the user's entitled packs."""
-    from mapmover.data_loading import load_catalog
+    """Get overlay tree from the entitled catalog surface.
+
+    Draft/WIP sources are deliberately an admin-only testing surface.  They
+    are included only for the same local-or-admin callers allowed to request
+    the WIP catalog; ordinary users receive the published catalog and never
+    learn that the experimental overlay exists.
+    """
+    from mapmover.catalog_surface import request_uses_wip_catalog
+    from mapmover.data_loading import load_catalog, load_full_catalog
     from mapmover.pack_state import build_overlay_tree_for_sources
 
-    catalog = load_catalog()
+    auth_user = get_authenticated_user(req)
+    using_wip = request_uses_wip_catalog(req, auth_user)
+    catalog = load_full_catalog() if using_wip else load_catalog()
     entitled = _get_entitled_packs(req)
 
     all_sources = catalog.get("sources", [])
 
-    if entitled is None:
+    if using_wip:
+        # A draft source may not have a pack yet.  Its visibility is already
+        # protected by the local master/admin WIP gate above.
+        filtered_sources = all_sources
+    elif entitled is None:
         # No service key - dev/self-host mode, return everything
         filtered_sources = all_sources
     else:
@@ -2166,19 +2187,46 @@ async def get_catalog_overlays(req: Request):
             "default_question": src.get("default_question"),
             "default_response": src.get("default_response"),
         }
-        for src in all_sources
+        for src in filtered_sources
         if src.get("source_id") and src.get("default_load")
     }
 
     return msgpack_response(
         {
             "sources": filtered_sources,
-            "overlay_tree": build_overlay_tree_for_sources(all_sources),
+            # Build the tree from the exact same authorized source set.  This
+            # prevents a draft source from leaking through the tree while its
+            # row is correctly absent from ``sources``.
+            "overlay_tree": build_overlay_tree_for_sources(filtered_sources),
             "overlay_count": len(filtered_sources),
             "pack_defaults": pack_defaults,
             "source_defaults": source_defaults,
+            "catalog_surface": "wip" if using_wip else "published",
         }
     )
+
+
+@router.post("/api/local/catalog-surface")
+async def set_local_catalog_surface(req: Request):
+    """Switch published/WIP catalog only for a local runtime session."""
+    from mapmover.data_loading import clear_catalog_cache
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    if runtime_mode != "local":
+        return msgpack_error("Local catalog switching is unavailable in hosted runtime.", 404)
+    try:
+        body = msgpack.unpackb(await req.body(), raw=False)
+    except Exception:
+        try:
+            body = await req.json()
+        except Exception:
+            body = {}
+    use_wip = bool((body or {}).get("use_wip"))
+    os.environ["USE_WIP_CATALOG"] = "1" if use_wip else "0"
+    clear_catalog_cache()
+    return msgpack_response({"catalog_surface": "wip" if use_wip else "published"})
 
 
 @router.get("/api/runtime/packs/state")

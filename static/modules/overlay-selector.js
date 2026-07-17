@@ -817,6 +817,15 @@ export function applyOverlayCatalogResponse(response = {}) {
   PACK_DEFAULTS = response.pack_defaults || {};
   SOURCE_DEFAULTS = response.source_defaults || {};
   ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);
+  if (response.catalog_surface === 'wip') {
+    const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
+    if (usContext?.overlays) {
+      // WIP overlays are intentionally not part of the normal Explore
+      // visibility allowlist.  Mark this local/admin-only test entry visible
+      // once the server has already confirmed the WIP surface.
+      usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts (2020-25 test)', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
+    }
+  }
   CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
   ALL_OVERLAYS = getAllOverlaysFromCategories(ALL_CATEGORIES);
   VISIBLE_OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);

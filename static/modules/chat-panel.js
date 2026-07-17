@@ -1290,6 +1290,12 @@ export const ChatManager = {
 
     this.initModeToggle();
     this.updateCatalogSurfaceAccess();
+    // auth.js owns the local account-panel WIP checkbox. Keep chat's catalog
+    // surface in lockstep when that checkbox changes without reloading the
+    // page or rebuilding the chat session.
+    window.addEventListener('local-catalog-surface-changed', (event) => {
+      this.setCatalogSurface(event?.detail?.catalogSurface);
+    });
     App?.activateLaneMapView?.(this.mode, { force: true });
     if (this.mode === 'explore') {
       Promise.resolve(this.seedEmptyConversation(this.mode)).catch((error) => {
@@ -3049,7 +3055,16 @@ export const ChatManager = {
     if (!this.canUseWipCatalog) {
       this.catalogSurface = 'published';
     } else {
-      this.catalogSurface = this.normalizeCatalogSurface(this.catalogSurface);
+      const localWipPreference = typeof window !== 'undefined'
+        && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+        ? window.localStorage.getItem('useWipCatalog')
+        : null;
+      // On the local app the account-panel WIP toggle is the source of truth
+      // for both the overlay tray and chat/catalog discovery.  Outside local
+      // development, preserve the existing explicit chat surface selection.
+      this.catalogSurface = localWipPreference === null
+        ? this.normalizeCatalogSurface(this.catalogSurface)
+        : (localWipPreference === '1' ? 'wip' : 'published');
     }
     researchModeToggle?.setCatalogSurfaceAccess({
       canUse: this.canUseWipCatalog,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
+from pathlib import Path
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -135,14 +137,57 @@ def _is_loopback_host(value: str) -> bool:
 
 
 def request_can_use_wip_catalog(request, auth_user: dict | None) -> bool:
-    if not auth_user:
+    """Return whether this caller is allowed to inspect the WIP catalog.
+
+    Hosted requests must carry a verified bearer token whose account context is
+    master/admin.  The local wrapper intentionally has a second, loopback-only
+    proof: its browser sync writes the same account summary for the local app
+    shell.  Without this fallback, a locally signed-in master user can see the
+    account UI but the catalog request can race the browser token bootstrap and
+    be treated as anonymous.
+    """
+    if auth_user:
+        account_context = load_account_context(str(auth_user.get("id") or ""))
+        if account_context is not None:
+            return (
+                account_context.get("plan_id") == "master"
+                or bool(account_context.get("is_admin"))
+            )
+
+    deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
+    client = getattr(request, "client", None)
+    client_host = getattr(client, "host", "") if client else ""
+    if deployment != "local" or not _is_loopback_host(client_host):
         return False
 
-    account_context = load_account_context(str(auth_user.get("id") or ""))
-    if account_context is None:
-        deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
-        client = getattr(request, "client", None)
-        client_host = getattr(client, "host", "") if client else ""
-        return deployment == "local" and _is_loopback_host(client_host)
+    try:
+        from mapmover.paths import STATE_DIR
 
-    return account_context.get("plan_id") == "master" or bool(account_context.get("is_admin"))
+        state_path = Path(STATE_DIR) / "local_wrapper_auth_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    return bool(state.get("authenticated")) and (
+        state.get("plan_id") == "master" or bool(state.get("is_admin"))
+    )
+
+
+def request_uses_wip_catalog(request, auth_user: dict | None) -> bool:
+    """Return whether this request should serve WIP, not merely access it.
+
+    WIP selection is a local-only explicit switch.  Authorization alone must
+    not silently change a master's normal catalog to the draft catalog.
+    """
+    deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
+    client = getattr(request, "client", None)
+    client_host = getattr(client, "host", "") if client else ""
+    local_switch_enabled = str(os.getenv("USE_WIP_CATALOG", "")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return (
+        deployment == "local"
+        and _is_loopback_host(client_host)
+        and local_switch_enabled
+        and request_can_use_wip_catalog(request, auth_user)
+    )

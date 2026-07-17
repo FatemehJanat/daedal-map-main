@@ -27,6 +27,7 @@ let authBootSettled = false;
 let authBootWaiters = [];
 let runtimeSessionRefreshPromise = null;
 let localWrapperSyncPromise = null;
+let localCatalogSurfaceSyncValue = null;
 
 function isLocalLikeHost(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
@@ -67,6 +68,26 @@ async function syncLocalWrapperAuthState() {
     }
   })();
   return await localWrapperSyncPromise;
+}
+
+async function restoreLocalCatalogSurface() {
+  // The UI preference lives in browser storage, whereas the local Python
+  // process starts with the published catalog. Restore it before app startup
+  // reaches OverlaySelector, rather than waiting for the next checkbox click.
+  if (!isLocalLikeHost(window.location.hostname) || !isAuthenticated()) return;
+  const useWip = window.localStorage.getItem('useWipCatalog') === '1';
+  if (localCatalogSurfaceSyncValue === useWip) return;
+  try {
+    const response = await fetch('/api/local/catalog-surface', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ use_wip: useWip })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    localCatalogSurfaceSyncValue = useWip;
+  } catch (error) {
+    console.warn('Could not restore local catalog surface', error);
+  }
 }
 
 function getLocalLinkedSiteBase() {
@@ -493,12 +514,52 @@ function updateDom() {
     btn.textContent = 'Account';
     btn.disabled = false;
     btn.classList.add('logged-in');
-    status.innerHTML = `Signed in as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener" data-secure-account-link="1">Open account settings</a>`;
+    const localCatalogControl = isLocalLikeHost(window.location.hostname)
+      ? `<br><label style="display:block;margin-top:4px"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog</label>`
+      : '';
+    const accountLabel = isLocalLikeHost(window.location.hostname)
+      ? 'Open account settings (hosted sign-in may be required)'
+      : 'Open account settings';
+    status.innerHTML = `Signed in${isLocalLikeHost(window.location.hostname) ? ' locally' : ''} as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener" data-secure-account-link="1">${accountLabel}</a>${localCatalogControl}`;
     const accountLink = status.querySelector('[data-secure-account-link]');
     if (accountLink) {
       accountLink.addEventListener('click', async (event) => {
         event.preventDefault();
         await navigateToHostedAccount(accountUrl, { targetBlank: true });
+      });
+    }
+    const wipToggle = status.querySelector('[data-wip-catalog-toggle]');
+    if (wipToggle) {
+      wipToggle.checked = window.localStorage.getItem('useWipCatalog') === '1';
+      wipToggle.addEventListener('change', async () => {
+        const useWip = wipToggle.checked;
+        wipToggle.disabled = true;
+        try {
+          const response = await fetch('/api/local/catalog-surface', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ use_wip: useWip })
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          window.localStorage.setItem('useWipCatalog', useWip ? '1' : '0');
+          localCatalogSurfaceSyncValue = useWip;
+          // The local WIP switch is one runtime surface, not only an overlay
+          // tray preference.  Tell chat to use the same catalog on its next
+          // request so WIP sources can be discovered without being published.
+          window.dispatchEvent(new CustomEvent('local-catalog-surface-changed', {
+            detail: { catalogSurface: useWip ? 'wip' : 'published' }
+          }));
+          // Catalog membership is the only UI state that changed. Rebuild the
+          // overlay tray in place; do not discard the map/chat session.
+          await window.OverlaySelector?.init?.({ restoreState: true });
+        } catch (error) {
+          console.warn('Could not switch local catalog surface', error);
+          wipToggle.checked = !useWip;
+        } finally {
+          // The selector refresh normally re-renders this element, but keep
+          // the original control usable if that refresh is delayed or fails.
+          wipToggle.disabled = false;
+        }
       });
     }
   } else {
@@ -558,6 +619,7 @@ export const AuthManager = {
             clearLegacySharedCookies();
             await fetchProfile();
             await syncLocalWrapperAuthState();
+            await restoreLocalCatalogSurface();
             updateDom();
           }
           authClient.auth.onAuthStateChange(async (_event, session) => {
@@ -568,6 +630,7 @@ export const AuthManager = {
             clearLegacySharedCookies();
             await fetchProfile();
             await syncLocalWrapperAuthState();
+            await restoreLocalCatalogSurface();
             updateDom();
             if (userChanged && (_event === 'SIGNED_IN' || _event === 'SIGNED_OUT')) {
               emitAuthChanged();
@@ -586,6 +649,7 @@ export const AuthManager = {
 
       initialized = true;
       await syncLocalWrapperAuthState();
+      await restoreLocalCatalogSurface();
       updateDom();
       markAuthBootSettled();
       emitAuthChanged();
