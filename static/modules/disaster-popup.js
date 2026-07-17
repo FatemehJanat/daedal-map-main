@@ -1151,7 +1151,10 @@ const DisasterPopup = {
           lines.push(`<div class="detail-row"><span class="detail-label">Severity:</span> ${severityLabels[data.severity] || data.severity}</div>`);
         }
         if (data.has_geometry) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Extent:</span> Flood polygon available</div>`);
+          const extentLabel = data.source === 'GFD'
+            ? 'Satellite-observed flood footprint available'
+            : 'Affected region outline available (not a water extent)';
+          lines.push(`<div class="detail-row"><span class="detail-label">Extent:</span> ${extentLabel}</div>`);
         }
         break;
 
@@ -1511,7 +1514,8 @@ const DisasterPopup = {
           lines.push(`<div class="detail-row"><span class="detail-label">GLIDE Index:</span> ${data.glide_index}</div>`);
         }
         if (data.has_geometry) {
-          lines.push(`<div class="detail-row"><span class="detail-label">Flood Polygon:</span> Available</div>`);
+          const polyKind = data.source === 'GFD' ? 'Satellite footprint (GFD)' : 'Affected region outline (DFO)';
+          lines.push(`<div class="detail-row"><span class="detail-label">Flood Polygon:</span> ${polyKind}</div>`);
         }
         if (data.has_progression) {
           lines.push(`<div class="detail-row"><span class="detail-label">Progression Data:</span> Available</div>`);
@@ -1641,12 +1645,14 @@ const DisasterPopup = {
         return 'https://firms.modaps.eosdis.nasa.gov/map/';
       },
       flood: (id, data) => {
-        // DFO Flood Observatory - link to archive with year if available
-        const year = data.year || (data.timestamp ? new Date(data.timestamp).getUTCFullYear() : null);
-        if (year && year >= 1985) {
-          return `https://floodobservatory.colorado.edu/Archives/ArchiveNotes${year}.html`;
+        // Prefer a backend-provided durable link when present.
+        if (data.source_page_url || data.source_url) {
+          return data.source_page_url || data.source_url;
         }
-        return 'https://floodobservatory.colorado.edu/Archives/index.html';
+        // The old floodobservatory.colorado.edu/Archives pages were removed
+        // (HTTP 410) in the Jan 2026 DFO site redesign. The versioned Zenodo
+        // release is the durable archive for DFO/GFD flood records.
+        return 'https://zenodo.org/records/19288171';
       },
       drought: (id, data) => {
         // US Drought Monitor for US events, otherwise general

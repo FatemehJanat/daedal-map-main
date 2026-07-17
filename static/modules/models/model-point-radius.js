@@ -4780,6 +4780,18 @@ export const PointRadiusModel = {
           window.DisasterPopup.hide();
         }
 
+        // Open the linked event's own detail popup, even when its overlay is
+        // not loaded: fly to it and show the popup directly. handleSequence
+        // alone only fires animation notifications that need the target
+        // hazard's overlay to be active, which made linked events look inert.
+        const coords = feature.geometry?.coordinates;
+        if (Array.isArray(coords) && coords.length >= 2) {
+          MapAdapter?.flyTo?.(coords, 7);
+          if (window.DisasterPopup?.show) {
+            window.DisasterPopup.show(coords, props, targetType);
+          }
+        }
+
         await this.handleSequence(targetEventId, targetType, props);
       } catch (err) {
         console.error('Error opening related disaster:', err);
