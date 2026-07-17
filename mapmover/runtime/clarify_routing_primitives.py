@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .order_execution_policy import MAX_EVENT_LIMIT
 from .source_hints import get_routing_hints
 
 
@@ -65,7 +66,17 @@ def expand_full_pack_loads(
             expanded.append(item)
             continue
 
-        for source_id in pack.get("source_ids", []):
+        pack_source_ids = pack.get("source_ids", [])
+        event_source_ids = [
+            sid for sid in pack_source_ids
+            if source_supports_events_func(source_lookup.get(sid) or {})
+        ]
+        # Events-first: a full pack load on an event pack means "show the
+        # events", not one choropleth per aggregate metric. Only fan out to
+        # the non-event sources when the pack has no event source at all.
+        target_source_ids = event_source_ids or pack_source_ids
+
+        for source_id in target_source_ids:
             source = source_lookup.get(source_id) or {}
             new_item = {k: v for k, v in item.items() if k not in {"load_scope", "all_sources"}}
             new_item["source_id"] = source_id
@@ -73,6 +84,9 @@ def expand_full_pack_loads(
             if source_supports_events_func(source):
                 new_item.setdefault("mode", "events")
                 new_item.pop("metric", None)
+                # "Load all" should cover the full archive, not just the
+                # default slice of the most significant events.
+                new_item.setdefault("limit", MAX_EVENT_LIMIT)
             elif not new_item.get("metric") and source_has_metrics_func(source):
                 new_item["metric"] = "*"
             elif not source_has_metrics_func(source):
