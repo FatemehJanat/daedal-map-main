@@ -23,13 +23,19 @@ const PIN_IMAGE_PREFIX = 'nws-alert-pin';
 const LEGEND_ID = 'nws-alerts-legend';
 
 const ALERT_FAMILIES = {
-  tornado: { label: 'Tornado', color: '#b026ff', lineColor: '#f5d0fe' },
+  // Keep shared disaster identities from DISASTER_DISPLAY.md: flood is blue,
+  // fire is orange-red, and tornado/wind are storm-gray. The remaining
+  // families are NWS-specific operational-alert accents.
+  tornado: { label: 'Tornado', color: '#64748b', lineColor: '#cbd5e1' },
   thunderstorm: { label: 'Thunderstorm', color: '#facc15', lineColor: '#fef08a' },
   flood: { label: 'Flood', color: '#0284c7', lineColor: '#bae6fd' },
   winter: { label: 'Winter', color: '#38bdf8', lineColor: '#e0f2fe' },
   heat: { label: 'Heat', color: '#f97316', lineColor: '#fed7aa' },
-  fire: { label: 'Fire weather', color: '#dc2626', lineColor: '#fecaca' },
+  fire: { label: 'Fire weather', color: '#ea580c', lineColor: '#fed7aa' },
+  wind: { label: 'Wind', color: '#64748b', lineColor: '#cbd5e1' },
+  tropical: { label: 'Tropical', color: '#0ea5e9', lineColor: '#bae6fd' },
   marine: { label: 'Marine/coastal', color: '#0d9488', lineColor: '#99f6e4' },
+  fog: { label: 'Fog', color: '#94a3b8', lineColor: '#e2e8f0' },
   dust: { label: 'Dust', color: '#a16207', lineColor: '#fde68a' },
   other: { label: 'Other alerts', color: '#a3a3a3', lineColor: '#e5e7eb' },
 };
@@ -64,8 +70,16 @@ const LINE_WIDTH = [
 
 const PIN_SIZE = ['interpolate', ['linear'], ['zoom'], 1, 0.74, 4, 0.86, 8, 1.02];
 
-function normalizeAlertFamily(eventName) {
+function normalizeAlertFamily(eventName, phenomenonCode = '') {
   const text = String(eventName || '').trim().toLowerCase();
+  const code = String(phenomenonCode || '').trim().toUpperCase();
+  const codeFamily = {
+    TO: 'tornado', SV: 'thunderstorm', FF: 'flood', FA: 'flood', FL: 'flood',
+    DS: 'dust', MA: 'marine', FW: 'fire', WW: 'winter', WS: 'winter', BZ: 'winter',
+    HW: 'wind', WI: 'wind', EW: 'wind', SQ: 'wind', HT: 'heat', FG: 'fog',
+    SC: 'marine', GL: 'marine', HU: 'tropical', TR: 'tropical',
+  };
+  if (codeFamily[code]) return codeFamily[code];
   if (!text) return 'other';
   if (text.includes('tornado')) return 'tornado';
   if (text.includes('thunderstorm')) return 'thunderstorm';
@@ -79,6 +93,8 @@ function normalizeAlertFamily(eventName) {
   ) return 'winter';
   if (text.includes('heat')) return 'heat';
   if (text.includes('fire') || text.includes('red flag')) return 'fire';
+  if (text.includes('wind') || text.includes('squall')) return 'wind';
+  if (text.includes('hurricane') || text.includes('tropical storm')) return 'tropical';
   if (
     text.includes('marine') ||
     text.includes('coastal') ||
@@ -87,6 +103,7 @@ function normalizeAlertFamily(eventName) {
     text.includes('gale') ||
     text.includes('small craft')
   ) return 'marine';
+  if (text.includes('fog')) return 'fog';
   if (text.includes('dust')) return 'dust';
   return 'other';
 }
@@ -98,7 +115,7 @@ function decorateAlertFeatures(fc) {
     type: 'FeatureCollection',
     features: features.map((feature) => {
       const props = { ...(feature?.properties || {}) };
-      const alertFamily = String(props.alert_family || '').trim() || normalizeAlertFamily(props.event);
+      const alertFamily = String(props.alert_family || '').trim() || normalizeAlertFamily(props.event, props.phenomenon_code);
       return {
         ...feature,
         properties: {
@@ -111,11 +128,27 @@ function decorateAlertFeatures(fc) {
   };
 }
 
+function formatAlertTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(date);
+}
+
 let MapAdapter = null;
 
 export const NwsAlertsOverlay = {
   initialized: false,
   enabled: false,
+  historical: false,
   pollTimer: null,
   lastData: null,
   _clickBound: false,
@@ -123,6 +156,11 @@ export const NwsAlertsOverlay = {
   _mouseenterHandler: null,
   _mouseleaveHandler: null,
   _pinLoadPromise: null,
+  _historicalPendingTimestamp: null,
+  _historicalLoadPromise: null,
+  _historicalHistory: null,
+  _historicalHistories: new Map(),
+  _historicalTimelineIndex: null,
   _legendEl: null,
   _legendClickHandler: null,
 
@@ -147,6 +185,7 @@ export const NwsAlertsOverlay = {
   },
 
   async setEnabled(on) {
+    this.historical = false;
     this.enabled = Boolean(on);
     if (this.enabled) {
       await this._refresh();
@@ -155,6 +194,104 @@ export const NwsAlertsOverlay = {
       this._stopPolling();
       this._removeLayers();
     }
+  },
+
+  async setHistoricalEnabled(on, timestamp = Date.UTC(2025, 0, 1), range = {}) {
+    this.historical = Boolean(on);
+    this.enabled = Boolean(on);
+    this._stopPolling();
+    if (!on) {
+      this._historicalPendingTimestamp = null;
+      this._removeLayers();
+      return;
+    }
+    const startYear = Number(range.startYear) || new Date(timestamp).getUTCFullYear();
+    const endYear = Number(range.endYear) || startYear;
+    this._historicalTimelineIndex = null;
+    const historyKey = `${startYear}-${endYear}`;
+    if (!this._historicalHistories.has(historyKey)) {
+      try {
+        this._historicalHistories.set(historyKey, await fetchMsgpack(`/api/wip/nws-alerts/history?start_year=${startYear}&end_year=${endYear}`));
+      } catch (err) {
+        console.warn('NwsAlertsOverlay: historical bootstrap failed', err);
+        return;
+      }
+    }
+    this._historicalHistory = this._historicalHistories.get(historyKey);
+    await this.setHistoricalTime(timestamp);
+  },
+
+  _activeHistoricalAlerts(history, timestamp) {
+    if (!this._historicalTimelineIndex || this._historicalTimelineIndex.history !== history) {
+      const events = history.events;
+      this._historicalTimelineIndex = {
+        history,
+        starts: events.map((alert, index) => ({ at: alert.start, index })).sort((a, b) => a.at - b.at),
+        ends: events.map((alert, index) => ({ at: alert.end, index })).sort((a, b) => a.at - b.at),
+        nextStart: 0,
+        nextEnd: 0,
+        active: new Set(),
+        timestamp: null,
+      };
+    }
+    const index = this._historicalTimelineIndex;
+    let changed = false;
+    if (index.timestamp === null || timestamp < index.timestamp) {
+      index.nextStart = 0;
+      index.nextEnd = 0;
+      index.active.clear();
+      changed = true;
+    }
+    while (index.nextStart < index.starts.length && index.starts[index.nextStart].at <= timestamp) {
+      index.active.add(index.starts[index.nextStart++].index);
+      changed = true;
+    }
+    while (index.nextEnd < index.ends.length && index.ends[index.nextEnd].at <= timestamp) {
+      index.active.delete(index.ends[index.nextEnd++].index);
+      changed = true;
+    }
+    index.timestamp = timestamp;
+    return {
+      changed,
+      alerts: [...index.active].map((eventIndex) => history.events[eventIndex]),
+    };
+  },
+
+  async setHistoricalTime(timestamp) {
+    if (!this.enabled || !this.historical) return;
+    const history = this._historicalHistory;
+    if (!history || !Array.isArray(history.events)) return;
+    const counties = history.counties || {};
+    // TimeSlider owns the shared 30 fps clock and decides how much dataset
+    // time advances at each speed. This overlay only rebuilds when that
+    // playhead crosses an alert start/end boundary; fast playback naturally
+    // samples intervening states instead of running a parallel frame system.
+    const active = this._activeHistoricalAlerts(history, timestamp);
+    if (!active.changed) return;
+    const features = [];
+    for (const alert of active.alerts) {
+      const properties = {
+        ...(alert.properties || {}),
+        alert_id: alert.id,
+        severity: alert.properties?.is_emergency ? 'Extreme' : 'Severe',
+        urgency: alert.properties?.urgency || 'Immediate',
+      };
+      if (alert.geometry) {
+        features.push({ type: 'Feature', geometry: alert.geometry, properties: { ...properties, display: 'polygon' } });
+      } else {
+        for (const countyId of alert.county_ids || []) {
+          if (counties[countyId]) {
+            features.push({ type: 'Feature', geometry: counties[countyId], properties: { ...properties, display: 'county' } });
+          }
+        }
+      }
+      if (Array.isArray(alert.point) && alert.point.length === 2) {
+        features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: alert.point }, properties: { ...properties, display: 'marker' } });
+      }
+    }
+    const fc = decorateAlertFeatures({ type: 'FeatureCollection', features });
+    this.lastData = fc;
+    await this._render(fc);
   },
 
   getActiveAlertCount() {
@@ -333,13 +470,17 @@ export const NwsAlertsOverlay = {
           <summary>${label}</summary>
           <div class="nws-popup-detail-body">${text(value)}</div>
         </details>` : '';
+      const sourceUrl = typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)
+        ? p.alert_id
+        : (typeof p.source_product_url === 'string' && /^https?:/.test(p.source_product_url) ? p.source_product_url : '');
       const html = `<div class="nws-alert-popup">
         <div class="nws-popup-title">${esc(p.event)}</div>
         <div class="nws-popup-classification">${esc(p.alert_family_label || '')}${p.severity ? ` | ${esc(p.severity)}` : ''}</div>
         ${(p.urgency || p.certainty) ? `<div class="nws-popup-confidence">${esc(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${esc(p.certainty || '')}</div>` : ''}
         ${(p.instruction || p.description || p.area) ? `<div class="nws-popup-details">${detail('Instructions', p.instruction)}${detail('Description', p.description)}${detail('Areas', p.area)}</div>` : ''}
-        ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(p.expires)}</div>` : ''}
-        ${(typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)) ? `<a class="nws-popup-source" href="${esc(p.alert_id)}" target="_blank" rel="noopener" title="Opens the original machine-readable NWS alert record">Official NWS source (JSON) &rsaquo;</a>` : ''}
+        ${(p.start_time || p.issued_at) ? `<div class="nws-popup-expires"><span>Issued</span>${esc(formatAlertTime(p.start_time || p.issued_at))}</div>` : ''}
+        ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(formatAlertTime(p.expires))}</div>` : ''}
+        ${sourceUrl ? `<a class="nws-popup-source" href="${esc(sourceUrl)}" target="_blank" rel="noopener" title="Opens the archived original NWS text product">Archived NWS product &rsaquo;</a>` : ''}
       </div>`;
       MapAdapter?.registerFeaturePopupClick?.();
       MapAdapter?.showPopup?.([e.lngLat.lng, e.lngLat.lat], html);

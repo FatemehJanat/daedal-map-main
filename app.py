@@ -57,6 +57,7 @@ from mapmover.routes.disasters.earthquakes import router as earthquakes_router
 from mapmover.routes.disasters.floods import router as floods_router
 from mapmover.routes.disasters.hurricanes import router as hurricanes_router
 from mapmover.routes.disasters.landslides import router as landslides_router
+from mapmover.routes.disasters.nws_historical import router as nws_historical_router
 from mapmover.routes.disasters.related import router as related_events_router
 from mapmover.routes.disasters.tornadoes import router as tornadoes_router
 from mapmover.routes.disasters.tsunamis import router as tsunamis_router
@@ -546,6 +547,7 @@ app.include_router(earthquakes_router)
 app.include_router(related_events_router)
 app.include_router(volcanoes_router)
 app.include_router(landslides_router)
+app.include_router(nws_historical_router)
 app.include_router(tsunamis_router)
 app.include_router(hurricanes_router)
 app.include_router(tornadoes_router)

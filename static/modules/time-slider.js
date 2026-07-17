@@ -99,7 +99,12 @@ export const TIME_SYSTEM = {
     // At maximum (1460 steps/frame): 1460 * 6 * 15 = ~15yr/sec
     const hoursPerSecond = stepsPerFrame * 6 * this.MAX_FPS;
     if (hoursPerSecond < 1) return `${Math.round(hoursPerSecond * 60)}m/sec`;  // Minutes for slow speeds
-    if (hoursPerSecond < 24) return `${Math.round(hoursPerSecond)}h/sec`;
+    if (hoursPerSecond < 24) {
+      const shownHours = hoursPerSecond < 10
+        ? Math.round(hoursPerSecond * 10) / 10
+        : Math.round(hoursPerSecond);
+      return `${shownHours}h/sec`;
+    }
     if (hoursPerSecond < 168) return `${Math.round(hoursPerSecond / 24)}d/sec`;
     if (hoursPerSecond < 720) return `${Math.round(hoursPerSecond / 168)}w/sec`;
     if (hoursPerSecond < 8760) return `${Math.round(hoursPerSecond / 720)}mo/sec`;
@@ -768,6 +773,26 @@ export const TimeSlider = {
     }
 
     console.log(`TimeSlider: Speed set to ${this.getEffectiveSpeedLabel()} (${this.stepsPerFrame.toFixed(2)} steps/frame)`);
+  },
+
+  /**
+   * Apply a data source's authored playback default.
+   *
+   * `default_load.animation_speed` deliberately uses real hours per wall-clock
+   * second, rather than a slider position.  That keeps catalog metadata
+   * portable even if the slider's logarithmic range changes later.
+   * @param {{hours_per_second?: number}|null} animationSpeed
+   * @returns {boolean} whether a valid source default was applied
+   */
+  setSourceAnimationSpeed(animationSpeed) {
+    const hoursPerSecond = Number(animationSpeed?.hours_per_second);
+    if (!Number.isFinite(hoursPerSecond) || hoursPerSecond <= 0) return false;
+    const stepsPerFrame = hoursPerSecond / (6 * TIME_SYSTEM.MAX_FPS);
+    const sliderValue = TIME_SYSTEM.stepsPerFrameToSlider(stepsPerFrame);
+    this.setSpeedFromSlider(sliderValue);
+    if (this.speedSlider) this.speedSlider.value = sliderValue;
+    console.log(`TimeSlider: Applied source animation default (${this.getEffectiveSpeedLabel()})`);
+    return true;
   },
 
   getEffectiveSpeedLabel() {

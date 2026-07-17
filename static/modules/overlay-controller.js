@@ -11,7 +11,7 @@
 
 import { TrackAnimator, MultiTrackAnimator, setDependencies as setTrackAnimatorDeps } from './track-animator.js';
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
-import { resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
+import { getSourceDefaultOverride, resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import {
   buildRangeRequestSignature,
@@ -252,6 +252,16 @@ function emitOverlayStatusMessage(overlayId, isActive, options = {}) {
   ChatManager.addMessage(text, 'assistant', {
     mode
   });
+}
+
+function emitSourceDefaultStatusMessage(sourceId, isActive, options = {}) {
+  if (!isActive || options.suppressStatusMessage || options.categoryBatch) return;
+  const source = getSourceDefaultOverride(sourceId);
+  const text = String(source?.default_response || source?.default_load?.summary || '').trim();
+  if (!text || !ChatManager?.addMessage) return;
+  const mode = OverlaySelector?.currentLaneMode || 'explore';
+  if (shouldSuppressDuplicateStatusMessage(mode, text)) return;
+  ChatManager.addMessage(text, 'assistant', { mode });
 }
 
 function emitCategoryBatchStatusMessage(categoryBatch = {}) {
@@ -2488,6 +2498,14 @@ export const OverlayController = {
     const forceRerender = source === 'bounds';
 
     if (useLifecycleFiltering && isTimestamp) {
+      // Historical NWS owns a compact, local five-minute display frame index.
+      // Feed it every slider tick; the overlay itself discards duplicate
+      // buckets and incrementally updates active alerts. Other timestamp
+      // overlays retain the broad six-hour lifecycle throttle below.
+      const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+      if (activeOverlays.includes('nws_alerts_historical')) {
+        NwsAlertsOverlay.setHistoricalTime(time);
+      }
       // Timestamp lane: lifecycle filtering at the continuous playhead.
       // Throttle updates to avoid excessive re-renders (render every ~6 hours of slider time)
       const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -2810,6 +2828,14 @@ export const OverlayController = {
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
 
+      // The local historical NWS test is frame-backed, rather than a normal
+      // catalog endpoint.  Refresh it at each throttled timestamp change so
+      // warnings appear and expire during playback.
+      if (overlayId === 'nws_alerts_historical') {
+        NwsAlertsOverlay.setHistoricalTime(timestamp);
+        continue;
+      }
+
       // Handle weather grid overlays (same fetch policy: playback renders
       // the loaded year only; a deliberate scrub outside it loads that year)
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
@@ -2930,6 +2956,17 @@ export const OverlayController = {
    * @returns {Promise<boolean>}
    */
   async loadOverlayRange(overlayId, startMs, endMs, options = {}) {
+    // Frame-backed WIP overlays own their source-default time/filter contract
+    // instead of a normal event endpoint. Returning true lets the shared
+    // default-load executor show the authored question + response for
+    // ?source= deep-links and catalog presets.
+    if (overlayId === 'nws_alerts_historical') {
+      await this.handleOverlayChange(overlayId, true, {
+        ...options,
+        suppressStatusMessage: true,
+      });
+      return true;
+    }
     const endpointBase = OVERLAY_ENDPOINTS[overlayId];
     if (!endpointBase) return false;
 
@@ -2977,6 +3014,36 @@ export const OverlayController = {
       await NwsAlertsOverlay.setEnabled(isActive);
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
+      return;
+    }
+    if (overlayId === 'nws_alerts_historical') {
+      // The source owns its Explore default contract.  The current WIP source
+      // deliberately loads 2025 from a 2024-2025 archive, leaving the second
+      // year available for a later explicit filter/default change.
+      const sourceDefault = getSourceDefaultOverride('nws_alerts_historical')?.default_load || {};
+      const startYear = Number(sourceDefault.year_start) || 2025;
+      const endYear = Number(sourceDefault.year_end) || startYear;
+      // Apr 1 is an active initial frame; midnight Jan 1 is often validly empty.
+      const start = Date.UTC(startYear, 3, 1, 12);
+      const end = Date.UTC(endYear, 11, 31, 23, 0, 0);
+      if (isActive) {
+        // A warning archive has meaningful frames at arbitrary timestamps.
+        // Keep this slider linear instead of pretending that the two range
+        // endpoints are the only available frames.
+        TimeSlider?.setTimeRange?.({ min: Date.UTC(startYear, 0, 1), max: end, granularity: 'timestamp', available: [], replace: true });
+        TimeSlider?.resetTrimBounds?.();
+        // Source/pack defaults own their initial playback pace too.  Apply it
+        // after range setup, which otherwise selects a generic overview speed.
+        TimeSlider?.setSourceAnimationSpeed?.(sourceDefault.animation_speed);
+        TimeSlider?.setTime?.(start, 'api');
+      }
+      await NwsAlertsOverlay.setHistoricalEnabled(
+        isActive,
+        isActive ? start : (TimeSlider?.currentTime || start),
+        { startYear, endYear }
+      );
+      refreshTickerForOverlayState();
+      emitSourceDefaultStatusMessage('nws_alerts_historical', isActive, options);
       return;
     }
     // Reusable live point feeds (ocean buoys, weather stations, sensors): one
@@ -3996,6 +4063,10 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
+      if (overlayId === 'nws_alerts_historical') {
+        NwsAlertsOverlay.setHistoricalTime(TimeSlider?.currentTime);
+        continue;
+      }
       if (!dataCache[overlayId]) continue;
 
       const endpoint = OVERLAY_ENDPOINTS[overlayId];

@@ -371,13 +371,19 @@ _NWS_SEVERITY = {
 }
 
 _NWS_ALERT_FAMILY_COLORS = {
-    "tornado": "#b026ff",
+    # Shared with static/modules/overlay-nws-alerts.js. The first three match
+    # the base disaster families in DISASTER_DISPLAY.md; the rest are NWS
+    # operational-alert extensions.
+    "tornado": "#64748b",
     "thunderstorm": "#facc15",
     "flood": "#0284c7",
     "winter": "#38bdf8",
     "heat": "#f97316",
-    "fire": "#dc2626",
+    "fire": "#ea580c",
+    "wind": "#64748b",
+    "tropical": "#0ea5e9",
     "marine": "#0d9488",
+    "fog": "#94a3b8",
     "dust": "#a16207",
     "other": "#a3a3a3",
 }
@@ -405,6 +411,10 @@ def _nws_alert_family(event: object) -> str:
         return "heat"
     if "fire" in text or "red flag" in text:
         return "fire"
+    if "wind" in text or "squall" in text:
+        return "wind"
+    if "hurricane" in text or "tropical storm" in text:
+        return "tropical"
     if (
         "marine" in text
         or "coastal" in text
@@ -414,6 +424,8 @@ def _nws_alert_family(event: object) -> str:
         or "small craft" in text
     ):
         return "marine"
+    if "fog" in text:
+        return "fog"
     if "dust" in text:
         return "dust"
     return "other"
@@ -613,6 +625,7 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
             "area": alert.get("area"),
             "description": alert.get("description"),
             "instruction": alert.get("instruction"),
+            "issued_at": alert.get("issued_at"),
             "expires": alert.get("expires"),
         }
         # Area geometry: the exact warning polygon, or the affected counties.
