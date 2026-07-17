@@ -182,18 +182,65 @@ async def get_floods_geojson(
 
 @router.get("/api/floods/{event_id}/geometry")
 async def get_flood_geometry(event_id: str):
-    """Get the flood extent polygon for a specific flood event."""
+    """Get the flood extent polygon for a specific flood event.
+
+    The extent polygons live inline in the events parquet `perimeter` column
+    (GeoJSON strings, present for every DFO/GFD event). A legacy per-event
+    geometries/flood_{event_id}.geojson file wins if one exists.
+    """
     import json as json_lib
+    import pandas as pd
 
     try:
         geometry_dir = GLOBAL_DIR / "disasters/floods/geometries"
         geom_file = geometry_dir / f"flood_{event_id}.geojson"
-        if not geom_file.exists():
+        if geom_file.exists():
+            with open(geom_file, "r") as f:
+                return msgpack_response(json_lib.load(f))
+
+        events_path = resolve_flood_events_path(GLOBAL_DIR)
+        if not parquet_available(events_path):
+            return msgpack_error("Flood data not available", 404)
+
+        columns = [
+            "event_id", "perimeter", "timestamp", "end_timestamp",
+            "latitude", "longitude", "duration_days", "country", "severity",
+        ]
+        df = pd.read_parquet(events_path, columns=columns)
+        rows = df[df["event_id"] == event_id]
+        if rows.empty:
             return msgpack_error(f"Geometry not found for {event_id}", 404)
 
-        with open(geom_file, "r") as f:
-            geom_data = json_lib.load(f)
-        return msgpack_response(geom_data)
+        row = rows.iloc[0]
+        perimeter = row.get("perimeter")
+        if pd.isna(perimeter) or not perimeter:
+            return msgpack_error(f"Geometry not found for {event_id}", 404)
+        try:
+            geom = json_lib.loads(perimeter) if isinstance(perimeter, str) else perimeter
+        except Exception as e:
+            logger.warning(f"Failed to parse flood perimeter for {event_id}: {e}")
+            return msgpack_error(f"Geometry not found for {event_id}", 404)
+
+        def _iso(value):
+            if value is None or pd.isna(value):
+                return None
+            return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+        feature = {
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {
+                "event_id": event_id,
+                "timestamp": _iso(row.get("timestamp")),
+                "end_timestamp": _iso(row.get("end_timestamp")),
+                "duration_days": int(row["duration_days"]) if pd.notna(row.get("duration_days")) else None,
+                "latitude": float(row["latitude"]) if pd.notna(row.get("latitude")) else None,
+                "longitude": float(row["longitude"]) if pd.notna(row.get("longitude")) else None,
+                "country": str(row.get("country", "")) if pd.notna(row.get("country")) else None,
+                "severity": float(row["severity"]) if pd.notna(row.get("severity")) else None,
+            },
+        }
+        return msgpack_response(feature)
     except Exception as e:
         logger.error(f"Error fetching flood geometry: {e}")
         return msgpack_error(str(e), 500)
