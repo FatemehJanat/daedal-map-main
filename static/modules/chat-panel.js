@@ -928,11 +928,28 @@ export const ChatManager = {
       // A feed URL is an entry action, never a new runtime/watch boundary.
       // Load the target alongside the existing runtime universe (or the
       // normal account/public baseline on cold boot), then activate it below.
-      await this.loadOpsFeedSet(this.getOpsEntryFeedSet(feedIds), {
+      const payload = await this.loadOpsFeedSet(this.getOpsEntryFeedSet(feedIds), {
         label: routeIntent?.view_label || 'Ops deep link',
         forceDisplayReplay: true,
         preserveWatchUniverse: true
       });
+      if (!eventId) {
+        // Route entry previously continued into one default-load action using
+        // only the first feed id. That made a multi-feed URL load the watch
+        // but render just one requested layer (or none when the feed owns its
+        // display locally, as Ocean SST and NDBC buoys do).
+        for (const overlayId of getOpsOverlayIdsForFeeds(feedIds)) {
+          OverlaySelector?.showOverlay?.(overlayId, 'ops');
+          if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+            OverlaySelector.setActive(overlayId, true);
+          }
+          await OverlayController?.handleOverlayChange?.(overlayId, true, {
+            allowDefaultLoad: false,
+            suppressStatusMessage: true
+          });
+        }
+        return Boolean(payload);
+      }
     }
 
     const suppressResultMessage = Boolean(
