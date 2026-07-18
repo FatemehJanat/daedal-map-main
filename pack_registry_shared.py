@@ -537,11 +537,11 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
 
 
 def free_pack_ids() -> tuple[str, ...]:
-    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if str(profile.get("pricing") or "") == "free")
+    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if not str(profile.get("pricing") or "free").startswith("paid"))
 
 
 def paid_pack_ids() -> tuple[str, ...]:
-    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if str(profile.get("pricing") or "") != "free")
+    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if str(profile.get("pricing") or "free").startswith("paid"))
 
 
 def pack_profile(pack_id: str | None) -> dict:

@@ -10,7 +10,7 @@ import requests
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from mapmover.pack_pricing import FREE_PACK_IDS as _FREE_PACK_IDS
+from mapmover.pack_pricing import PAID_PACK_IDS as _PAID_PACK_IDS
 from mapmover.paths import SITE_URL
 from mapmover.artifact_access import (
     artifact_token_records,
@@ -31,7 +31,7 @@ COMMERCIAL_ACCESS_FORWARDED_HEADERS = {
     "x-payment",
     "x-payment-response",
 }
-FREE_QUERY_PACK_IDS = _FREE_PACK_IDS
+PAID_QUERY_PACK_IDS = _PAID_PACK_IDS
 
 
 def commercial_access_enabled() -> bool:
@@ -49,7 +49,7 @@ def get_trusted_artifact_token(request: Request) -> str | None:
 
 def pack_requires_commercial_access(pack_id: str | None) -> bool:
     normalized = str(pack_id or "").strip().lower()
-    return bool(normalized) and normalized not in FREE_QUERY_PACK_IDS
+    return bool(normalized) and normalized in PAID_QUERY_PACK_IDS
 
 
 def commercial_access_timeout_seconds() -> float:

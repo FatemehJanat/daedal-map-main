@@ -137,6 +137,36 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": 100,
         "max_limit": 1000,
     },
+    "cbp": {
+        "pack_id": "usa_industrial_activity",
+        "parquet_name": "USA.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "lodes": {
+        "pack_id": "usa_industrial_activity",
+        "parquet_name": "USA_tract.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
+    "susb": {
+        "pack_id": "usa_industrial_activity",
+        "parquet_name": "USA_county_naics.parquet",
+        "query_mode": "single_source",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "yearly",
+        "default_limit": DEFAULT_LIMIT,
+        "max_limit": MAX_LIMIT,
+    },
     "owid_co2": {
         "pack_id": "owid",
         "parquet_name": "owid_co2.parquet",
@@ -559,7 +589,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     available_cols: set[str] = set()
     if isinstance(parquet_path, Path) and parquet_path.exists():
         try:
-            available_cols = {str(col) for col in pd.read_parquet(parquet_path).columns}
+            available_cols = parquet_columns(parquet_path)
         except Exception:
             available_cols = set()
     elif parquet_path and parquet_available(parquet_path):
@@ -1083,6 +1113,10 @@ def resolve_pack_source_for_query(
 
 
 def get_source_parquet_path(spec: ApiSourceSpec) -> Path:
+    local_parquet_path = getattr(spec, "local_parquet_path", None)
+    if local_parquet_path:
+        return Path(local_parquet_path)
+
     source_dir = Path(get_source_path(spec.source_id))
     primary_path = source_dir / spec.parquet_name
     if primary_path.exists():

@@ -57,6 +57,7 @@ from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
 from mapmover.security import get_client_ip, rate_limiter
+from mapmover.storage_mode import get_runtime_mode
 
 
 router = APIRouter()
@@ -133,6 +134,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     def current_access_lane(*, pack_id_hint: str | None = None) -> str:
         if payment_rail == "trusted_artifact":
             return "trusted_artifact"
+        if payment_rail == "local_installed":
+            return "local_installed"
         if payment_rail:
             return "paid"
         if pack_id_hint and pack_requires_commercial_access(pack_id_hint):
@@ -343,6 +346,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     req.state.analytics_pack_id = spec.pack_id
     if resolved_from_pack:
         req.state.analytics_pack_id = pack_id or spec.pack_id
+    local_installed_access = get_runtime_mode() == "local"
+    commercial_verifier_required = (
+        pack_requires_commercial_access(spec.pack_id)
+        and not local_installed_access
+    )
+    if pack_requires_commercial_access(spec.pack_id) and local_installed_access:
+        payment_rail = "local_installed"
 
     available_columns = get_api_source_columns(spec)
 
@@ -936,7 +946,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         existing_meta = getattr(req.state, "analytics_metadata", {})
         existing_meta["artifact_token_id"] = artifact_token_id
         req.state.analytics_metadata = existing_meta
-    elif pack_requires_commercial_access(spec.pack_id):
+    elif commercial_verifier_required:
         if not commercial_access_enabled():
             return error_response(
                 request_id,

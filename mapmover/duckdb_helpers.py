@@ -31,6 +31,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 _MISSING_TIME_FILTER_WARNING_KEYS: set[tuple[str, tuple[str, ...]]] = set()
+_PARQUET_COLUMNS_CACHE: dict[str, tuple[tuple[int, int], set[str]]] = {}
+_PARQUET_COLUMNS_CACHE_LOCK = threading.Lock()
 
 
 DUCKDB_EVENT_SOURCES = {
@@ -423,11 +425,27 @@ def _normalize_ts_for_duckdb(val: str | None) -> str | None:
 def parquet_columns(parquet_path: Path) -> set[str]:
     if duckdb is None:
         return set()
-    if not is_cloud_mode() and not parquet_path.exists():
-        return set()
+    cloud_mode = is_cloud_mode()
+    if not cloud_mode:
+        if not parquet_path.exists():
+            return set()
+        try:
+            stat = parquet_path.stat()
+            signature = (int(stat.st_mtime_ns), int(stat.st_size))
+            cache_key = str(parquet_path.resolve())
+        except OSError:
+            return set()
+        with _PARQUET_COLUMNS_CACHE_LOCK:
+            cached = _PARQUET_COLUMNS_CACHE.get(cache_key)
+            if cached and cached[0] == signature:
+                return set(cached[1])
     uri = path_to_uri(parquet_path)
     rows = run_rows("DESCRIBE SELECT * FROM read_parquet(?)", [uri])
-    return {row[0] for row in rows}
+    columns = {row[0] for row in rows}
+    if not cloud_mode:
+        with _PARQUET_COLUMNS_CACHE_LOCK:
+            _PARQUET_COLUMNS_CACHE[cache_key] = (signature, set(columns))
+    return columns
 
 
 def quote_ident(name: str) -> str:
