@@ -327,6 +327,16 @@ SUPPORTED_DYNAMIC_SOURCES: dict[str, dict[str, Any]] = {
         "default_limit": 100,
         "max_limit": 500,
     },
+    "noaa_storm_events_floods": {
+        "pack_id": "floods",
+        "parquet_name": "events.parquet",
+        "query_mode": "single_source_events",
+        "location_field": "loc_id",
+        "time_field": "timestamp",
+        "time_granularity": "timestamp",
+        "default_limit": 100,
+        "max_limit": 1000,
+    },
     "tornadoes": {
         "pack_id": "tornadoes",
         "parquet_name": "events.parquet",
