@@ -1052,6 +1052,28 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     ]
     if not pack_sources:
         return None
+    pack_summary = pack_summaries.get(pack_id, {})
+    # A legacy/broader catalog response can include a pack wrapper as a member
+    # source. It repeats the pack title but has no metric contract, whereas a
+    # real event source may validly share the pack_id. Remove only this named
+    # wrapper when the pack has other real members.
+    if len(pack_sources) > 1:
+        def _normalized_display_key(value) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+        pack_name_key = _normalized_display_key(
+            pack_summary.get("pack_name") or _default_pack_title(pack_id)
+        )
+        wrapper_names = {pack_name_key, f"{pack_name_key}pack"} if pack_name_key else set()
+        pack_sources = [
+            source for source in pack_sources
+            if not (
+                _normalized_display_key(source.get("source_name")) in wrapper_names
+                and not (source.get("metrics") or {})
+            )
+        ]
+        if not pack_sources:
+            return None
     if pack_id == "currency":
         currency_order = {
             "fx_usd_historical": 0,
@@ -1066,7 +1088,6 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
         )
 
     primary = next((s for s in pack_sources if s.get("source_id") == pack_id), pack_sources[0])
-    pack_summary = pack_summaries.get(pack_id, {})
     pack_docs = _load_pack_source_docs(pack_sources)
     primary_doc = next((doc for doc in pack_docs if doc.get("source_id") == primary.get("source_id")), pack_docs[0] if pack_docs else None)
     primary_meta = ((primary_doc or {}).get("metadata", {}) or {})
@@ -2191,6 +2212,7 @@ async def get_catalog_overlays(req: Request):
         if src.get("source_id") and src.get("default_load")
     }
 
+    catalog_surface = "wip" if using_wip else "published"
     return msgpack_response(
         {
             "sources": filtered_sources,
@@ -2201,8 +2223,9 @@ async def get_catalog_overlays(req: Request):
             "overlay_count": len(filtered_sources),
             "pack_defaults": pack_defaults,
             "source_defaults": source_defaults,
-            "catalog_surface": "wip" if using_wip else "published",
-        }
+            "catalog_surface": catalog_surface,
+        },
+        headers={"X-Daedal-Catalog-Surface": catalog_surface},
     )
 
 
