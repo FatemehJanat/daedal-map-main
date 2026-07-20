@@ -67,7 +67,12 @@ def normalize_catalog_surfaces(value, *, default: tuple[str, ...] | None = DEFAU
 def catalog_surface_values(record: dict | None) -> list[str]:
     if not isinstance(record, dict):
         return list(DEFAULT_RELEASED_CATALOG_SURFACES)
-    return normalize_catalog_surfaces(record.get("catalog_surfaces"))
+    # A missing field is a legacy released record and keeps the former app
+    # defaults. An explicit empty list is an organized, not-yet-promoted
+    # source; it must remain outside every product surface.
+    if "catalog_surfaces" not in record:
+        return list(DEFAULT_RELEASED_CATALOG_SURFACES)
+    return normalize_catalog_surfaces(record.get("catalog_surfaces"), default=())
 
 
 def has_catalog_product_surface(record: dict | None, surface: str | None) -> bool:
