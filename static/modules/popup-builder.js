@@ -109,17 +109,25 @@ export const PopupBuilder = {
    */
   build(properties, sourceData = null, locationInfo = null) {
     const lines = [];
+    const combinedMetricData = properties?._combined_metric_data || null;
 
     // Title - keep the popup name simple and clean.
     let name = this.buildDisplayName(properties);
+    if (combinedMetricData?.sections?.length) {
+      name = this.getMetricLocationName(properties, name);
+    }
     const stateAbbr = properties.stusab || properties.abbrev || '';
 
     lines.push(`<strong>${name}${stateAbbr ? ', ' + stateAbbr : ''}</strong>`);
 
-    const combinedMetricData = properties?._combined_metric_data || null;
     if (combinedMetricData?.sections?.length) {
       lines.push(this.buildCombinedMetricContent(combinedMetricData));
-      lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more</em>');
+      const level = Math.min(...combinedMetricData.sections
+        .map((section) => Number(String(section.geographic_level || '').match(/admin_(\d+)/)?.[1]))
+        .filter(Number.isFinite));
+      if (Number.isFinite(level) && level < 2) {
+        lines.push('<em style="font-size: 10px; color: rgba(230, 243, 255, 0.62);">Zoom in for more detail</em>');
+      }
       return lines.join('<br>');
     }
 
@@ -253,31 +261,30 @@ export const PopupBuilder = {
       const metrics = Array.isArray(section.available_metrics) && section.available_metrics.length
         ? section.available_metrics
         : [section.metric_key].filter(Boolean);
-      const headerBits = [];
-      if (section.match_kind === 'ancestor' && section.matched_loc_id) {
-        headerBits.push(`from ${section.matched_loc_id}`);
-      }
-      if (section.geographic_level) {
-        headerBits.push(String(section.geographic_level).replace(/_/g, ' '));
-      }
       const colorSwatch = section.color
         ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${section.color};margin-right:6px;vertical-align:middle;"></span>`
         : '';
-      // Section is clickable so users can pick which display owns the
-      // single visible legend (selected-legend model). Highlight the
-      // currently selected instance so the affordance is discoverable.
       const isSelected = Boolean(section.display_id) && section.display_id === selectedDisplayId;
       const sectionStyle = isSelected
-        ? 'cursor:pointer;background:rgba(255,255,255,0.07);border-radius:4px;padding:2px 4px;margin:2px -4px;'
-        : 'cursor:pointer;padding:2px 4px;margin:2px -4px;';
-      let html = `<div class="popup-metric-section" style="${sectionStyle}" data-action="select-metric-display" data-display-id="${section.display_id || ''}" data-lane="${lane}" title="Click to show this layer's legend">`;
-      html += `<div style="font-size:11px;font-weight:700;color:rgba(230,243,255,0.94);margin-top:4px;">${colorSwatch}${section.source_name || section.source_id || 'Metric layer'}${isSelected ? ' <span style="font-weight:400;color:rgba(230,243,255,0.55);">(legend)</span>' : ''}</div>`;
-      if (headerBits.length) {
-        html += `<div style="font-size:10px;color:rgba(230,243,255,0.62);margin-bottom:2px;">${headerBits.join(' | ')}</div>`;
+        ? 'cursor:pointer;background:rgba(255,255,255,0.07);border-radius:5px;padding:5px 6px;margin:4px -2px;'
+        : 'cursor:pointer;padding:5px 6px;margin:4px -2px;';
+      const sourceLabel = this.getMetricSourceLabel(section);
+      const levelLabel = this.getMetricGeographyLabel(section);
+      const year = section.properties?.data_year || section.properties?.year || '';
+      // Exact rows describe the polygon the user selected, making a repeated
+      // "County level" label redundant.  Retain it only for an ancestor
+      // fallback, where it explains why the displayed value is broader.
+      const subtitleParts = [];
+      if (section.match_kind === 'ancestor') subtitleParts.push(levelLabel);
+      if (year) subtitleParts.push(year);
+      let html = `<div class="popup-metric-section" style="${sectionStyle}" data-action="select-metric-display" data-display-id="${section.display_id || ''}" data-lane="${lane}" title="Select this map metric">`;
+      html += `<div style="font-size:11px;font-weight:700;color:rgba(230,243,255,0.94);">${colorSwatch}${sourceLabel}</div>`;
+      if (subtitleParts.length) {
+        html += `<div style="font-size:10px;color:rgba(230,243,255,0.62);margin:1px 0 3px;">${subtitleParts.join(' · ')}</div>`;
       }
       for (const metric of metrics.slice(0, 6)) {
         const value = section.properties?.[metric];
-        const fieldName = this.cleanFieldName(metric);
+        const fieldName = this.getMetricLabel(metric);
         const isActive = ChoroplethManager?.metric && metric === ChoroplethManager.metric;
         if (value == null || value === '') {
           html += `<div style="color:rgba(230,243,255,0.68);">${fieldName}: N/A</div>`;
@@ -292,6 +299,57 @@ export const PopupBuilder = {
     });
 
     return blocks.join('');
+  },
+
+  // Shared contract for every choropleth-style popup: source, geography,
+  // reference year, and one or more formatted metrics. Source-specific
+  // displays can supply friendly names, but raw catalog IDs never leak into
+  // the user-facing popup.
+  getMetricSourceLabel(section = {}) {
+    const knownNames = {
+      epa_aqs: 'EPA Air Quality System',
+      fema_nri: 'FEMA National Risk Index',
+      fema_disasters: 'FEMA Disaster Declarations',
+      fema_declarations: 'FEMA Disaster Declarations'
+    };
+    const sourceId = String(section.source_id || '').trim();
+    const supplied = String(section.source_name || '').trim();
+    if (supplied && supplied !== sourceId) return supplied;
+    if (knownNames[sourceId]) return knownNames[sourceId];
+    return sourceId
+      .split(/[_-]+/)
+      .filter(Boolean)
+      .map((word) => (/^(epa|fema|nri|aqi|usa|us)$/i.test(word)
+        ? word.toUpperCase()
+        : word.charAt(0).toUpperCase() + word.slice(1)))
+      .join(' ') || 'Map metric';
+  },
+
+  getMetricGeographyLabel(section = {}) {
+    const level = String(section.geographic_level || '').match(/admin_(\d+)/)?.[1];
+    const labels = { 0: 'Country level', 1: 'State / province level', 2: 'County level', 3: 'Tract level' };
+    if (level != null && labels[level]) return labels[level];
+    return section.match_kind === 'ancestor' ? 'Parent-area value' : 'Map area value';
+  },
+
+  getMetricLocationName(properties = {}, name = 'Unknown') {
+    const level = Number(properties.admin_level_num);
+    if (level === 2 && !/\bcounty\b/i.test(name)) return `${name} County`;
+    if (level === 3 && !/\btract\b/i.test(name)) return `Census tract ${name}`;
+    return name;
+  },
+
+  getMetricLabel(metric = '') {
+    const knownLabels = {
+      aqi_90th_pct: '90th-percentile AQI',
+      total_declarations: 'FEMA declarations',
+      risk_value: 'Risk value',
+      risk_score: 'Risk score',
+      eal_score: 'Expected annual loss score',
+      sovi_score: 'Social vulnerability score',
+      resl_score: 'Community resilience score'
+    };
+    return knownLabels[metric] || this.cleanFieldName(metric);
   },
 
   buildDisplayName(properties = {}) {

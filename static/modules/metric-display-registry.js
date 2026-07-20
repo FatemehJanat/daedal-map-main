@@ -125,8 +125,18 @@ export const MetricDisplayRegistry = {
     const canonicalSourceId = String(payload.source_id || '').trim();
     const canonicalMetricKey = String(payload.metric_key || '').trim();
     const canonicalGeographicLevel = String(payload.geographic_level || '').trim();
-    if (canonicalSourceId && canonicalMetricKey && canonicalGeographicLevel) {
+    // Administrative aggregates of one metric are alternate zoom views, not
+    // independent overlays. Keep their data in App's cache, but retain only
+    // the visible level in this rendering registry.
+    if (options.replaceGeographicLevels && canonicalSourceId && canonicalMetricKey && canonicalGeographicLevel) {
       this.displaysByLane[normalizedLane] = laneDisplays.filter((display) => !(
+        String(display.source_id || '').trim() === canonicalSourceId
+        && String(display.metric_key || '').trim() === canonicalMetricKey
+        && String(display.geographic_level || '').trim() !== canonicalGeographicLevel
+      ));
+    }
+    if (canonicalSourceId && canonicalMetricKey && canonicalGeographicLevel) {
+      this.displaysByLane[normalizedLane] = (this.displaysByLane[normalizedLane] || []).filter((display) => !(
         String(display.source_id || '').trim() === canonicalSourceId
         && String(display.metric_key || '').trim() === canonicalMetricKey
         && !String(display.geographic_level || '').trim()

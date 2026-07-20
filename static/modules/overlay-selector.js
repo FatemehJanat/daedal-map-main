@@ -299,6 +299,13 @@ export function getOverlayCatalogEntryBySourceId(sourceId) {
   return null;
 }
 
+export function getOverlayCatalogEntriesByOverlayId(overlayId) {
+  const normalizedOverlayId = String(overlayId || '').trim();
+  if (!normalizedOverlayId) return [];
+  const match = ALL_OVERLAYS.find((overlay) => String(overlay?.id || '').trim() === normalizedOverlayId);
+  return Array.isArray(match?.sources) ? match.sources : [];
+}
+
 export function resolvePackIdFromSourceId(sourceId) {
   const normalizedSourceId = String(sourceId || '').trim();
   if (!normalizedSourceId) return '';
@@ -818,6 +825,27 @@ export function applyOverlayCatalogResponse(response = {}) {
   SOURCE_DEFAULTS = response.source_defaults || {};
   ALL_CATEGORIES = buildCategoriesFromTree(overlayTree);
   if (response.catalog_surface === 'wip') {
+    // WIP is an explicitly authorized local/admin test surface.  Its draft
+    // and can-share catalog sources must not be hidden behind the normal
+    // curated Explore tray allowlist, or a valid WIP source cannot be tested
+    // from the map at all.  Keep published sources on their usual curated
+    // posture; reveal only the non-published leaves returned by this response.
+    const wipSourceIds = new Set(
+      (Array.isArray(response.sources) ? response.sources : [])
+        .filter((source) => String(source?.release_state || '').trim().toLowerCase() !== 'published')
+        .map((source) => String(source?.source_id || '').trim())
+        .filter(Boolean)
+    );
+    if (wipSourceIds.size) {
+      const mode = getCurrentOverlayLaneMode();
+      const shown = laneShownAdjustments.get(mode) || new Set();
+      for (const overlay of getAllOverlaysFromCategories(ALL_CATEGORIES)) {
+        if ((overlay.sourceIds || []).some((sourceId) => wipSourceIds.has(sourceId))) {
+          shown.add(overlay.id);
+        }
+      }
+      laneShownAdjustments.set(mode, shown);
+    }
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
     if (usContext?.overlays) {
       // WIP overlays are intentionally not part of the normal Explore

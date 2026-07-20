@@ -1111,7 +1111,7 @@ export const TimeSlider = {
    * @param {string[]} availableMetrics - Explicit list of metrics from order (optional)
    * @param {Object} metricYearRanges - Per-metric year ranges
    */
-  updateData(timeRange, timeData, baseGeojson, availableMetrics = null, metricYearRanges = null) {
+  updateData(timeRange, timeData, baseGeojson, availableMetrics = null, metricYearRanges = null, options = {}) {
     const currentTime = this.currentTime;
 
     this.granularity = timeRange.granularity || this.granularity || 'yearly';
@@ -1149,7 +1149,9 @@ export const TimeSlider = {
       this.yearLabel.textContent = this.formatTimeLabel(this.currentTime);
     }
 
-    ChoroplethModel.renderMerged(this);
+    if (options.render !== false) {
+      ChoroplethModel.renderMerged(this);
+    }
   },
 
   /**

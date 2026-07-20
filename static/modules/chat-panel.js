@@ -37,7 +37,7 @@ import {
   updateComposerState as updateComposerStateImpl,
   updateSidebarModeLayout as updateSidebarModeLayoutImpl
 } from './chat/chat-lane-controller.js';
-import { getInitialLane, setLaneTitle, writeEntityParam } from './routing/app-route-state.js';
+import { getInitialLane, setLaneTitle } from './routing/app-route-state.js';
 import {
   applyFilterUpdate as applyFilterUpdateImpl,
   handleResponse as handleResponseImpl,
@@ -1820,11 +1820,9 @@ export const ChatManager = {
     scheduleExactEventFocusRefresh(syntheticOrder, response);
   },
 
-  // Make an app pack/source/feed load a distinct, identifiable analytics
-  // signal: stamp the entity id into the page title + URL (so GA tells an app
-  // *load* apart from a www page *visit*) and fire a specific event for clean
-  // counting. Single-entity loads only -- a multi-pack preset has no one
-  // identity, so it is skipped.
+  // Record a single-entity load for analytics without changing the URL.
+  // Query parameters are entry/share intent only; a routine overlay toggle or
+  // chat response must not become a new deep link that replays on refresh.
   reflectLoadedEntity(lane, params = {}) {
     const sourceId = String(params.sourceId || '').trim();
     const packId = String(params.packId || '').trim();
@@ -1834,10 +1832,6 @@ export const ChatManager = {
     try {
       const entityId = sourceId || feedId || packId;
       setLaneTitle(lane, entityId);
-      writeEntityParam(
-        lane,
-        sourceId ? { sourceId, eventId, focus: params.focus || null } : feedId ? { feedId, eventId, focus: params.focus || null } : { packId, eventId, focus: params.focus || null }
-      );
       if (feedId) {
         window.gtag?.('event', 'feed_load', {
           feed_id: feedId,

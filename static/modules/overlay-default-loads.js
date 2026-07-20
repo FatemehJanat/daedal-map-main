@@ -1,6 +1,7 @@
 import {
   getOpsFeedIdForOverlay,
   getOpsOverlayIdsForFeeds,
+  getOverlayCatalogEntriesByOverlayId,
   isOpsFeedAllowed,
   getOverlayCatalogEntriesByPackId,
   getOverlayCatalogEntryBySourceId,
@@ -554,6 +555,35 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   if (normalizedLane === 'explore' && normalizedOverlayId) {
     const packAction = buildPackDefaultLoadAction(normalizedOverlayId);
     if (packAction) return packAction;
+    const sourceEntries = getOverlayCatalogEntriesByOverlayId(normalizedOverlayId);
+    if (sourceEntries.length === 1) {
+      const sourceEntry = sourceEntries[0] || {};
+      const sourceAction = buildSourceDefaultLoadAction(
+        String(sourceEntry.source_id || '').trim(),
+        String(sourceEntry.pack_id || '').trim()
+      );
+      if (sourceAction) return sourceAction;
+    }
+    // A single Explore overlay may represent a multi-source pack (NRI is
+    // hazard-split, for example). Its leaf has several source entries, so the
+    // single-source branch above deliberately does not apply. Prefer one
+    // unique pack-level default before falling back to a member default; this
+    // keeps the overlay's authored starter metric/filter authoritative.
+    const candidatePackIds = [...new Set(sourceEntries
+      .map((entry) => String(entry?.pack_id || '').trim())
+      .filter(Boolean))];
+    for (const candidatePackId of candidatePackIds) {
+      const candidateAction = buildPackDefaultLoadAction(candidatePackId);
+      if (candidateAction) return candidateAction;
+    }
+    const sourceWithDefault = sourceEntries.find((entry) => entry?.default_load);
+    if (sourceWithDefault) {
+      const sourceAction = buildSourceDefaultLoadAction(
+        String(sourceWithDefault.source_id || '').trim(),
+        String(sourceWithDefault.pack_id || '').trim()
+      );
+      if (sourceAction) return sourceAction;
+    }
   }
 
   const normalizedFeedId = String(feedId || '').trim();

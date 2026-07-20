@@ -386,6 +386,24 @@ export const App = {
     };
   },
 
+  getMetricDisplayAdminLevel(payload = this.currentData) {
+    const fixedGeoLevel = this.activeMetricOrderContext?.sourceId === payload?.source_id
+      ? this.activeMetricOrderContext.fixedGeoLevel
+      : null;
+    if (Number.isInteger(fixedGeoLevel)) {
+      return fixedGeoLevel;
+    }
+    // A mixed-level metric payload is retained so zoom changes do not need
+    // another request. Its last response level is therefore not necessarily
+    // the level currently being viewed while idle prefetches complete.
+    const viewportLevel = ViewportLoader?.currentAdminLevel;
+    if (payload?.data_type === 'metrics' && ViewportLoader?.orderMode && Number.isInteger(viewportLevel)) {
+      return viewportLevel;
+    }
+    const explicitLevel = this.getNumericAdminLevel(payload?.geographic_level);
+    return explicitLevel != null ? explicitLevel : viewportLevel;
+  },
+
   setMetricOrderContext(order, data, options = {}) {
     const items = order?.items || [];
     const sourceIds = [...new Set(items.map((item) => item?.source_id).filter(Boolean))];
@@ -427,6 +445,21 @@ export const App = {
       return;
     }
 
+    // A ranked/filtered subset (for example, NRI's highest-risk counties)
+    // is not an additive county metric. Its parent score is intentionally
+    // undefined, so keep the authored county geography visible at every zoom
+    // rather than requesting empty state data or a world-country fallback.
+    const lockGeoLevel = items.some((item) => item?.lock_geo_level === true);
+    const requestedLockedLevel = items
+      .map((item) => this.getNumericAdminLevel(item?.geo_level))
+      .find((level) => Number.isInteger(level));
+    const fixedGeoLevel = lockGeoLevel
+      ? (requestedLockedLevel ?? currentLevel)
+      : null;
+    const effectiveGeoLevels = Number.isInteger(fixedGeoLevel)
+      ? [fixedGeoLevel]
+      : availableGeoLevels;
+
     const existingLoadedLevels = (
       this.activeMetricOrderContext &&
       this.activeMetricOrderContext.sourceId === sourceId
@@ -450,11 +483,28 @@ export const App = {
       order: JSON.parse(JSON.stringify(order)),
       sourceId,
       region,
-      availableGeoLevels,
+      availableGeoLevels: effectiveGeoLevels,
+      fixedGeoLevel,
       loadedLevels,
       loadingLevels: new Set(),
       loadingPromises: new Map()
     };
+
+    // The source's default order is deliberately admin_2 so it works in any
+    // context, but Explore may already be viewing the world at admin_0 when
+    // that first response arrives. onViewportChange only reacts to a level
+    // *change*, so request the visible aggregate explicitly here instead of
+    // leaving the initial county response on screen until the user zooms.
+    const visibleLevel = ViewportLoader?.currentAdminLevel;
+    if (
+      Number.isInteger(visibleLevel)
+      && availableGeoLevels.includes(visibleLevel)
+      && !loadedLevels.has(visibleLevel)
+    ) {
+      this.ensureMetricLevelLoaded(visibleLevel).catch((error) => {
+        console.warn(`Initial metric level load failed for admin_${visibleLevel}:`, error.message);
+      });
+    }
 
     if (options.schedulePrefetch !== false) {
       const highestLoadedLevel = loadedLevels.size > 0 ? Math.max(...loadedLevels) : null;
@@ -527,6 +577,13 @@ export const App = {
   applyOrderModeLevelFilter(level) {
     if (!this.currentData || this.currentData.data_type !== 'metrics') return;
 
+    const fixedGeoLevel = this.activeMetricOrderContext?.sourceId === this.currentData.source_id
+      ? this.activeMetricOrderContext.fixedGeoLevel
+      : null;
+    if (Number.isInteger(fixedGeoLevel)) {
+      level = fixedGeoLevel;
+    }
+
     if (hasTemporalMetricPayload(this.currentData) && TimeSlider?.baseGeojson) {
       TimeSlider.setAdminLevelFilter(level);
       return;
@@ -535,6 +592,9 @@ export const App = {
     if (this.currentData.geojson?.features) {
       const filtered = this.filterGeojsonByAdminLevel(this.currentData.geojson, level);
       MapAdapter?.updateSourceData(filtered);
+      // Aggregate levels are cached, but only the current level may remain a
+      // visible metric display. This removes a stale child-level overlay.
+      this.syncMetricDisplayRegistryForCurrentState();
       const countEl = document.getElementById('totalAreas');
       if (countEl) {
         countEl.textContent = filtered.features.length;
@@ -632,9 +692,24 @@ export const App = {
 
     const loadPromise = (async () => {
       try {
+        const isLocalHost = typeof window !== 'undefined'
+          && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+        // The account panel owns this local preference.  During startup the
+        // ChatManager can briefly be restored to its published default after
+        // the initial WIP order has already loaded; use the same durable
+        // preference for lazy viewport follow-ups.  The server still rejects
+        // WIP if the requester is not an authorized local master/admin.
+        const localCatalogSurface = isLocalHost && window.localStorage.getItem('useWipCatalog') === '1'
+          ? 'wip'
+          : null;
         const response = await postMsgpack(apiUrl, {
           confirmed_order: nextOrder,
-          sessionId: ChatManager.sessionId
+          sessionId: ChatManager.sessionId,
+          // Parent-level metric fetches must stay on the same catalog surface
+          // as the initial order. Without this, a WIP-only source loads at
+          // admin_2 but becomes "unknown" when the viewport asks for its
+          // materialized admin_1/admin_0 rows.
+          catalog_surface: localCatalogSurface || ChatManager?.getEffectiveCatalogSurface?.() || 'published'
         });
 
         console.log(`Lazy metric response for ${geoLevel}:`, {
@@ -677,7 +752,11 @@ export const App = {
           // merge handling makes recording both harmless.
           overlayLedger.resolveInFlight(inFlightToken);
           this.ingestLazyMetricData(response, nextOrder, {
-            schedulePrefetch: !options.prefetch
+            schedulePrefetch: !options.prefetch,
+            // A prefetch must warm the metric/time cache only. Rendering it
+            // here re-initialized the slider at its fetched admin level and
+            // made the map visibly bounce from admin_0 to admin_1.
+            cacheOnly: options.prefetch === true
           });
           if (ViewportLoader?.currentAdminLevel === level) {
             this.applyOrderModeLevelFilter(level);
@@ -724,7 +803,11 @@ export const App = {
       );
     }
 
-    this.displayMapPayload(data, { order, lazyLoad: true });
+    this.displayMapPayload(data, {
+      order,
+      lazyLoad: true,
+      cacheOnly: options.cacheOnly === true
+    });
     this.setMetricOrderContext(order, this.currentData, options);
   },
 
@@ -1849,7 +1932,8 @@ export const App = {
       color,
       opacity: options.opacity,
       visibility: options.visibility,
-      timeKey: options.timeKey
+      timeKey: options.timeKey,
+      replaceGeographicLevels: options.replaceGeographicLevels
     });
   },
 
@@ -1860,7 +1944,7 @@ export const App = {
     return [
       String(this.currentData.source_id || '').trim(),
       String(metricKey || '').trim(),
-      String(this.currentData.geographic_level || '').trim()
+      `admin_${this.getMetricDisplayAdminLevel(this.currentData)}`
     ].join('|');
   },
 
@@ -1940,10 +2024,22 @@ export const App = {
       .map((sourceId) => String(sourceId || '').trim())
       .filter(Boolean));
     if (!wanted.size) return;
+    const removesCurrentBase = wanted.has(String(this.currentData?.source_id || '').trim());
     for (const display of MetricDisplayRegistry.getLaneDisplays(normalizedLane)) {
       if (wanted.has(String(display.source_id || '').trim())) {
         MetricDisplayRegistry.removeDisplay(normalizedLane, display.display_id);
       }
+    }
+    if (removesCurrentBase) {
+      // The primary metric uses the shared regions source, not an additive
+      // registry layer. Removing only its registry entry left the old fill on
+      // screen whenever Demographics kept that shared layer visible.
+      MapAdapter?.updateSourceData?.({ type: 'FeatureCollection', features: [] });
+      MapAdapter?.setBaseFillVisible?.(false);
+      ChoroplethManager?.hide?.();
+      this.currentData = null;
+      this.activeMetricOrderContext = null;
+      this.clearMetricPrefetch();
     }
     MapAdapter?.renderMetricDisplayLayers?.(MetricDisplayRegistry.getLaneDisplays(normalizedLane), {
       currentDisplayId: this.getCurrentMetricDisplayId()
@@ -1980,30 +2076,47 @@ export const App = {
 
     if (hasTemporalMetricPayload(this.currentData) && TimeSlider?.baseGeojson && TimeSlider?.buildTimeGeojson) {
       const geojson = TimeSlider.buildTimeGeojson(TimeSlider.currentTime);
+      const loadedAdminLevel = this.getMetricDisplayAdminLevel(this.currentData);
+      const levelGeojson = this.filterGeojsonByAdminLevel(geojson, loadedAdminLevel);
+      const displayGeojson = levelGeojson?.features?.length ? levelGeojson : geojson;
       const display = this.upsertMetricDisplayRegistry({
         ...this.currentData,
-        geojson,
+        // TimeSlider holds all materialized administrative levels so that it
+        // can switch levels without a new request. The display registry is
+        // map/popup state, however, and must contain only the active level.
+        // Otherwise a county row inherited the last lazy response's
+        // geographic_level label (e.g. country) and appeared twice in a
+        // popup.
+        geographic_level: `admin_${loadedAdminLevel}`,
+        geojson: displayGeojson,
         metric_key: metricKey
       }, {
         lane: normalizedLane,
         metricKey,
-        timeKey: TimeSlider.currentTime
+        timeKey: TimeSlider.currentTime,
+        replaceGeographicLevels: true
       });
       this.renderMetricDisplayRegistryLayers(normalizedLane);
       return display;
     }
 
-    const explicitLevelMatch = String(this.currentData?.geographic_level || '').match(/^admin_(\d+)$/);
-    const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+    const loadedAdminLevel = this.getMetricDisplayAdminLevel(this.currentData);
     const displayGeojson = this.filterGeojsonByAdminLevel(this.currentData.geojson, loadedAdminLevel);
     const nextGeojson = displayGeojson?.features?.length ? displayGeojson : this.currentData.geojson;
     const display = this.upsertMetricDisplayRegistry({
       ...this.currentData,
+      geographic_level: `admin_${loadedAdminLevel}`,
       geojson: nextGeojson,
       metric_key: metricKey
     }, {
       lane: normalizedLane,
-      metricKey
+      metricKey,
+      // Admin 0/1/2 responses are alternate representations of this same
+      // metric.  The initial default response is registered before its order
+      // context is installed, so conditioning this on a lazy order left that
+      // first county-level instance behind.  Keep exactly one geographic
+      // level for a source/metric regardless of how it was loaded.
+      replaceGeographicLevels: true
     });
     this.renderMetricDisplayRegistryLayers(normalizedLane);
     return display;
@@ -2022,12 +2135,18 @@ export const App = {
     if (!sections.length) {
       return null;
     }
+    // A choropleth polygon represents one administrative row. Registry
+    // ancestry is useful for data lookup, but showing parent rows in a county
+    // popup made a single FEMA value appear three times. Prefer the exact
+    // clicked geography; only fall back to an ancestor when that geometry has
+    // no direct metric row.
+    const exactSections = sections.filter((section) => section.match_kind === 'exact');
     const normalizedLane = normalizeChatMapLane(lane);
     return {
       lane: normalizedLane,
       clicked_loc_id: locId,
       ancestry: buildCurrentLocIdAncestors(locId),
-      sections,
+      sections: exactSections.length ? exactSections : [sections[0]],
       selected_display_id: MetricDisplayRegistry.getSelectedDisplay(normalizedLane)?.display_id || null
     };
   },
@@ -2055,8 +2174,7 @@ export const App = {
       return true;
     }
 
-    const explicitLevelMatch = String(this.currentData?.geographic_level || '').match(/^admin_(\d+)$/);
-    const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+    const loadedAdminLevel = this.getMetricDisplayAdminLevel(this.currentData);
     const displayGeojson = this.filterGeojsonByAdminLevel(this.currentData.geojson, loadedAdminLevel);
     const nextGeojson = displayGeojson?.features?.length ? displayGeojson : this.currentData.geojson;
     ChoroplethManager.initFromGeojson(metricKey, nextGeojson);
@@ -2066,7 +2184,7 @@ export const App = {
       normalizedLane,
       this.currentData?.source_id,
       metricKey,
-      this.currentData?.geographic_level || null,
+      `admin_${loadedAdminLevel}`,
       baseColor
     );
     this.syncMetricDisplayRegistryForCurrentState();
@@ -2627,6 +2745,28 @@ export const App = {
 
     this.currentData = data;
 
+    // Lazy parent/child prefetches share the same source and must be merged
+    // into the retained payload and timeline, but they are not a request to
+    // switch the visible map level.  In particular, a temporal response used
+    // to call TimeSlider.updateData() below and repaint the prefetched level.
+    if (options.cacheOnly === true && data.data_type === 'metrics') {
+      const temporalPayload = getTemporalMetricPayload(data);
+      if (temporalPayload && TimeSlider?.baseGeojson) {
+        TimeSlider.updateData(
+          temporalPayload.timeRange,
+          temporalPayload.timeData,
+          data.geojson,
+          temporalPayload.availableMetrics,
+          temporalPayload.metricTimeRanges,
+          { render: false }
+        );
+      }
+      if (options.order) {
+        this.setMetricOrderContext(options.order, data, { schedulePrefetch: false });
+      }
+      return;
+    }
+
     // Point collections are independent layers (rather than the shared
     // choropleth source), so clear a previous location registry when the
     // display moves on to another dataset.
@@ -3003,8 +3143,7 @@ export const App = {
       ChoroplethManager.reset();
 
       if (data.geojson && data.geojson.type === 'FeatureCollection') {
-        const explicitLevelMatch = String(data.geographic_level || '').match(/^admin_(\d+)$/);
-        const loadedAdminLevel = explicitLevelMatch ? parseInt(explicitLevelMatch[1], 10) : ViewportLoader.currentAdminLevel;
+        const loadedAdminLevel = this.getMetricDisplayAdminLevel(data);
         const displayGeojson = options.skipAdminLevelFilter
           ? data.geojson
           : (() => {

@@ -1837,19 +1837,36 @@ export const MapAdapter = {
     // bbox math instead of flying to whichever fixed-center country happens
     // to appear first in the list.
     const focusKeys = new Set();
+    const primaryDivisionKeys = new Set();
+    let includesCountryFeature = false;
     for (const feature of geojson.features) {
       const props = feature.properties || {};
       // Prefer parent_id (this feature is part of country X) over loc_id
       // (this feature IS X). Single-country payloads have a consistent
       // parent_id across all features; worldwide payloads vary per feature.
       const key = props.parent_id || props.loc_id || feature.id;
-      if (key) focusKeys.add(String(key));
+      // County/state features carry parents such as USA-AK rather than USA.
+      // Compare their hierarchy roots so an all-US payload still reaches the
+      // US fixed center instead of letting Alaska's antimeridian geometry
+      // drag a naive bounding-box fit into the Atlantic.
+      const countryRoot = String(key || '').split('-')[0];
+      if (countryRoot) focusKeys.add(countryRoot);
+      // Use loc_id for the primary division because a county's parent_id can
+      // itself be that division.  A national payload spans many such keys;
+      // a focused state/county payload does not and should still use its own
+      // precise geometry bounds.
+      const hierarchyParts = String(props.loc_id || key || '').split('-').filter(Boolean);
+      if (hierarchyParts.length > 1) {
+        primaryDivisionKeys.add(`${hierarchyParts[0]}-${hierarchyParts[1]}`);
+      } else if (hierarchyParts.length === 1) {
+        includesCountryFeature = true;
+      }
       if (focusKeys.size > 1) break;
     }
     if (focusKeys.size === 1) {
       const onlyKey = focusKeys.values().next().value;
       const fixed = this.countryFixedCenters[onlyKey];
-      if (fixed) {
+      if (fixed && (includesCountryFeature || primaryDivisionKeys.size > 1)) {
         this.map.flyTo({
           center: fixed.center,
           zoom: options.minZoom || fixed.zoom,
