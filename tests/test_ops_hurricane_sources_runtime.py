@@ -6,6 +6,24 @@ from mapmover import ops_orchestrator_runtime as ops
 
 
 class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
+    def test_retired_ibtracs_display_payload_is_not_a_live_hurricane_feed(self):
+        payloads = ops._report_display_payload_by_feed({
+            "display_payloads": [
+                {"source_id": "hurricanes_ops", "geojson": {"features": []}},
+            ],
+        })
+
+        self.assertEqual({}, payloads)
+
+        payloads = ops._report_display_payload_by_feed({
+            "display_payloads": [
+                {"source_id": "hurricanes_live_ops", "geojson": {"features": []}},
+            ],
+        })
+
+        self.assertEqual({"hurricanes_live"}, set(payloads))
+        self.assertEqual("hurricanes_live_ops", payloads["hurricanes_live"]["source_id"])
+
     def test_retained_advisories_build_solid_observed_track(self):
         snapshot = {
             "payload_summary": {

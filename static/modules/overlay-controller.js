@@ -1133,8 +1133,11 @@ export const OverlayController = {
   _opsOverlayIdForPayload(payload) {
     const sourceId = String(payload?.source_id || '').trim();
     const eventType = String(payload?.event_type || '').trim();
-    if (sourceId === 'hurricanes_live_ops' || sourceId === 'hurricanes_ops') return 'hurricanes_live';
-    if (eventType === 'hurricane' && this._isOpsMode()) return 'hurricanes_live';
+    // Only the composed advisory feed is allowed to render in Ops.  The old
+    // `hurricanes_ops` payload was IBTrACS best-track data: valuable for
+    // Explore/history, but potentially days old and never a live display.
+    if (sourceId === 'hurricanes_live_ops') return 'hurricanes_live';
+    if (eventType === 'hurricane' && this._isOpsMode()) return null;
     if (eventType === 'hurricane') return 'hurricanes';
     if (sourceId === 'currency_live_ops') return 'currency';
     if (eventType === 'earthquake') return 'earthquakes';

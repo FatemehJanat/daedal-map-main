@@ -2253,7 +2253,11 @@ def _report_display_payload_by_feed(report: dict | None) -> dict[str, dict]:
         source_id = str(payload.get("source_id") or "").strip()
         if source_id == "currency_live_ops":
             payloads["currency"] = payload
-        elif source_id in {"hurricanes_ops", "hurricanes_live_ops"}:
+        # `hurricanes_ops` was the retired IBTrACS-based display payload.
+        # IBTrACS remains a canonical historical/API source, but it is not an
+        # operational display authority.  Do not let an older cached report
+        # reintroduce its completed best tracks into the live Hurricanes feed.
+        elif source_id == "hurricanes_live_ops":
             payloads[HURRICANE_LIVE_FEED] = payload
         elif source_id.endswith("_live_ops"):
             payloads[source_id[:-9]] = payload
@@ -3032,7 +3036,7 @@ def _resolve_cached_focus_target(*, cache, report: dict, effective_feeds: list[s
         fallback_feature = stored.get("feature")
         if isinstance(fallback_feature, dict):
             return feed, {
-                "type": stored.get("source_id") in {"hurricanes_ops", "hurricanes_live_ops"} and "data" or "events",
+                "type": stored.get("source_id") == "hurricanes_live_ops" and "data" or "events",
                 "data_type": "events",
                 "event_type": FEED_FOCUS_SPECS.get(feed, {}).get("label"),
                 "source_id": stored.get("source_id"),
