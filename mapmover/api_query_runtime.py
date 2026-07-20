@@ -10,6 +10,7 @@ import re
 import pandas as pd
 
 from .data_loading import get_source_path, load_catalog, load_source_metadata
+from .catalog_surface import is_mcp_distribution_source
 from .duckdb_helpers import parquet_available, parquet_columns, path_to_uri, quote_ident, run_df
 from .paths import DATA_ROOT
 from .runtime.aggregate_primitives import resolve_aggregate_admin2_dir
@@ -800,14 +801,14 @@ def get_pack_source_ids(pack_id: str) -> list[str]:
     return sorted(set(source_ids))
 
 
-def _get_api_ready_pack_source_ids(pack_id: str) -> list[str]:
+def _get_mcp_pack_source_ids(pack_id: str) -> list[str]:
     source_ids: list[str] = []
     catalog = load_catalog()
     normalized_pack_id = str(pack_id or "").strip()
     for source in catalog.get("sources", []):
         if str(source.get("pack_id") or "").strip() != normalized_pack_id:
             continue
-        if not bool(source.get("api_ready")):
+        if not is_mcp_distribution_source(source):
             continue
         source_id = str(source.get("source_id") or "").strip()
         if source_id and get_api_source_spec(source_id) is not None:
@@ -851,7 +852,7 @@ def resolve_pack_sources_for_metrics(pack_id: str, metrics: list[str]) -> dict[s
             "unknown_metrics": normalized_metrics,
         }
 
-    candidate_sources = _get_api_ready_pack_source_ids(normalized_pack_id)
+    candidate_sources = _get_mcp_pack_source_ids(normalized_pack_id)
     if not candidate_sources:
         return {
             "pack_id": normalized_pack_id,
@@ -990,7 +991,7 @@ def _resolve_default_pack_source(
             "supported_granularities": sorted(granularity_to_source.keys()),
         }
 
-    candidate_sources = _get_api_ready_pack_source_ids(normalized_pack_id)
+    candidate_sources = _get_mcp_pack_source_ids(normalized_pack_id)
     if not candidate_sources:
         return {
             "pack_id": normalized_pack_id,

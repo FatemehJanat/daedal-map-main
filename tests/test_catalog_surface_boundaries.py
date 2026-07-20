@@ -8,6 +8,7 @@ from mapmover.catalog_surface import (
     catalog_product_surface,
     filter_catalog_for_product_surface,
     has_catalog_product_surface,
+    is_mcp_distribution_source,
     normalize_catalog_surface,
     request_can_use_wip_catalog,
 )
@@ -39,6 +40,17 @@ class CatalogSurfaceBoundaryTests(unittest.TestCase):
         self.assertTrue(has_catalog_product_surface({}, "explore"))
         self.assertTrue(has_catalog_product_surface({}, "research"))
         self.assertFalse(has_catalog_product_surface({}, "api"))
+        self.assertFalse(has_catalog_product_surface({}, "mcp"))
+
+    def test_mcp_is_an_explicit_catalog_surface(self) -> None:
+        record = {"catalog_surfaces": ["api", "mcp"]}
+        self.assertTrue(has_catalog_product_surface(record, "api"))
+        self.assertTrue(has_catalog_product_surface(record, "mcp"))
+        self.assertTrue(is_mcp_distribution_source(record))
+
+    def test_legacy_api_ready_is_only_a_mcp_migration_bridge(self) -> None:
+        self.assertTrue(is_mcp_distribution_source({"api_ready": True, "catalog_surfaces": ["api"]}))
+        self.assertFalse(is_mcp_distribution_source({"api_ready": True, "catalog_surfaces": ["research"]}))
 
     def test_filter_catalog_for_product_surface_keeps_research_only_out_of_explore(self) -> None:
         catalog = {

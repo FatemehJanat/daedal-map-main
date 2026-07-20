@@ -12,7 +12,11 @@ from mapmover.hosted_runtime_account import load_account_context
 
 _catalog_surface_override: ContextVar[str | None] = ContextVar("catalog_surface_override", default=None)
 CATALOG_FILE_SURFACES = {"published", "wip"}
-CATALOG_PRODUCT_SURFACES = {"explore", "research", "api", "downloadable"}
+# ``api`` is the first, local machine-contract gate. ``mcp`` is deliberately
+# separate: it means the same API-ready source has passed the optional public
+# MCP/discovery release gate. It is not an app view, but using the shared
+# surface vocabulary keeps catalog filtering and release tooling consistent.
+CATALOG_PRODUCT_SURFACES = {"explore", "research", "api", "mcp", "downloadable"}
 DEFAULT_RELEASED_CATALOG_SURFACES = ("explore", "research")
 
 
@@ -73,6 +77,19 @@ def has_catalog_product_surface(record: dict | None, surface: str | None) -> boo
     if normalized not in CATALOG_PRODUCT_SURFACES:
         return True
     return normalized in catalog_surface_values(record)
+
+
+def is_mcp_distribution_source(record: dict | None) -> bool:
+    """Return public-MCP eligibility, including one-release legacy migration.
+
+    Catalogs built before the explicit ``mcp`` surface used ``api_ready`` for
+    this exact decision. New catalogs never emit that field; accepting it here
+    prevents a staged runtime deployment from briefly emptying public discovery
+    before its regenerated catalog arrives.
+    """
+    if has_catalog_product_surface(record, "mcp"):
+        return has_catalog_product_surface(record, "api")
+    return bool(isinstance(record, dict) and record.get("api_ready")) and has_catalog_product_surface(record, "api")
 
 
 def filter_catalog_for_product_surface(catalog: dict, surface: str | None) -> dict:

@@ -23,6 +23,7 @@ from mapmover.auth_context import build_session_cache_key, get_authenticated_use
 from mapmover.corpus_registry import corpus_registry
 from mapmover import ACCOUNT_URL, CacheSignature, CoverageClaim, clear_metadata_cache, initialize_catalog, logger, session_manager
 from mapmover.foundation_helpers import load_reference_json
+from mapmover.catalog_surface import is_mcp_distribution_source
 from mapmover.hosted_runtime_account import load_account_context
 from mapmover.hosted_runtime_events import submit_runtime_feedback
 from mapmover.order_queue import order_queue
@@ -928,8 +929,8 @@ def _sample_questions_for_pack(pack_id: str, data_type: str, title: str) -> list
     return [f"Show {title} values for one or more regions over time"]
 
 
-def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
-    cache_entry = _public_pack_list_cache.get(api_ready_only, {})
+def _build_public_pack_list(mcp_only: bool = False) -> list[dict]:
+    cache_entry = _public_pack_list_cache.get(mcp_only, {})
     cached_value = cache_entry.get("value")
     cached_at = float(cache_entry.get("cached_at") or 0.0)
     if isinstance(cached_value, list) and (time.time() - cached_at) < _PUBLIC_PACK_CATALOG_TTL_SECONDS:
@@ -946,7 +947,7 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
     }
     published = [
         s for s in all_sources
-        if s.get("pack_id") and (not api_ready_only or bool(s.get("api_ready", False)))
+        if s.get("pack_id") and (not mcp_only or is_mcp_distribution_source(s))
     ]
 
     pack_map = {}
@@ -1026,12 +1027,12 @@ def _build_public_pack_list(api_ready_only: bool = False) -> list[dict]:
             str(p.get("title") or p.get("pack_name") or "").lower(),
         )
     )
-    _public_pack_list_cache[api_ready_only] = {"value": packs, "cached_at": time.time()}
+    _public_pack_list_cache[mcp_only] = {"value": packs, "cached_at": time.time()}
     return packs
 
 
-def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dict | None:
-    cache_key = (str(pack_id or ""), bool(api_ready_only))
+def _build_public_pack_detail(pack_id: str, mcp_only: bool = False) -> dict | None:
+    cache_key = (str(pack_id or ""), bool(mcp_only))
     cached_entry = _public_pack_detail_cache.get(cache_key)
     if cached_entry and (time.time() - float(cached_entry.get("cached_at") or 0.0)) < _PUBLIC_PACK_CATALOG_TTL_SECONDS:
         cached_value = cached_entry.get("value")
@@ -1048,7 +1049,7 @@ def _build_public_pack_detail(pack_id: str, api_ready_only: bool = False) -> dic
     }
     pack_sources = [
         s for s in all_sources
-        if s.get("pack_id") == pack_id and (not api_ready_only or bool(s.get("api_ready", False)))
+        if s.get("pack_id") == pack_id and (not mcp_only or is_mcp_distribution_source(s))
     ]
     if not pack_sources:
         return None
@@ -1313,7 +1314,7 @@ def _build_v1_guide_payload() -> dict:
 
 def prewarm_public_pack_catalog() -> None:
     try:
-        _build_public_pack_list(api_ready_only=False)
+        _build_public_pack_list(mcp_only=False)
         logger.info("Pre-warmed public pack catalog")
     except Exception as exc:
         logger.warning("Public pack catalog prewarm failed: %s", exc)
@@ -1322,7 +1323,7 @@ def prewarm_public_pack_catalog() -> None:
 def _current_agent_pack_ids() -> list[str]:
     pack_ids = {
         str(pack.get("pack_id") or "").strip()
-        for pack in _build_public_pack_list(api_ready_only=True)
+        for pack in _build_public_pack_list(mcp_only=True)
         if str(pack.get("pack_id") or "").strip()
     }
     return sorted(pack_ids)
@@ -1571,8 +1572,8 @@ def _build_mcp_server_json_payload(pack_id: str | None = None) -> dict:
 
 def _build_v1_catalog_payload() -> dict:
     catalog_packs = []
-    for pack in _build_public_pack_list(api_ready_only=True):
-        detail = _build_public_pack_detail(pack.get("pack_id", ""), api_ready_only=True) or {}
+    for pack in _build_public_pack_list(mcp_only=True):
+        detail = _build_public_pack_detail(pack.get("pack_id", ""), mcp_only=True) or {}
         temporal = {
             "start": (detail.get("temporal_coverage") or {}).get("start", pack.get("temporal_start")),
             "end": (detail.get("temporal_coverage") or {}).get("end", pack.get("temporal_end")),
@@ -1621,7 +1622,7 @@ def _build_v1_catalog_payload() -> dict:
 
 
 def _build_v1_pack_payload(pack_id: str) -> dict | None:
-    pack = _build_public_pack_detail(pack_id, api_ready_only=True)
+    pack = _build_public_pack_detail(pack_id, mcp_only=True)
     if not pack:
         return None
 
@@ -2031,7 +2032,7 @@ async def get_v1_guide():
 
 @router.get("/api/v1/catalog")
 async def get_v1_catalog():
-    """Return the agent/API catalog filtered to sources marked api_ready."""
+    """Return the public MCP/API catalog for sources carrying the mcp surface."""
     from mapmover.data_loading import load_api_catalog
     from pack_registry_shared import tool_family_catalog_entry, tool_family_ids
 
@@ -2121,7 +2122,7 @@ async def get_pack_mcp_server_json(pack_id: str):
 
 @router.get("/api/v1/packs/{pack_id}")
 async def get_v1_pack(pack_id: str):
-    """Return the agent/API pack detail filtered to api_ready sources only."""
+    """Return public MCP/API pack detail filtered to mcp sources only."""
     from mapmover.data_loading import load_api_pack_detail
     from pack_registry_shared import (
         tool_family_alias_ids,
