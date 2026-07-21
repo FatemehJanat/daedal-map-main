@@ -74,6 +74,50 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual(2, len(track))
         self.assertEqual(150.8, track[-1]["longitude"])
 
+    def test_retained_history_does_not_turn_gdacs_alert_repolls_into_track_points(self):
+        snapshot = {"payload_summary": {"storms": []}}
+        history = [
+            {
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "GDACS-TC1001279",
+                        "name": "BAVI-26",
+                        "year": 2026,
+                        "source": "GDACS",
+                        "current_position": {
+                            "timestamp": "2026-07-15T17:55:16+00:00",
+                            "latitude": 28.7,
+                            "longitude": 120.4,
+                        },
+                    }],
+                },
+            },
+            {
+                "payload_summary": {
+                    "storms": [{
+                        "storm_id": "WP092026",
+                        "identity": {"canonical_id": "WP092026"},
+                        "name": "BAVI",
+                        "year": 2026,
+                        "source": "JMA",
+                        "current_position": {
+                            "timestamp": "2026-07-15T00:00:00+00:00",
+                            "latitude": 40.0,
+                            "longitude": 130.0,
+                        },
+                    }],
+                },
+            },
+        ]
+
+        augmented = ops._with_hurricane_history_tracks(snapshot, history)
+        storms = augmented["payload_summary"]["storms"]
+
+        self.assertEqual(1, len(storms))
+        self.assertEqual("WP092026", storms[0]["storm_id"])
+        self.assertEqual([[130.0, 40.0]], [[point["longitude"], point["latitude"]] for point in storms[0]["observed_track"]])
+        self.assertEqual(130.0, storms[0]["current_position"]["longitude"])
+
     def test_logical_hurricanes_feed_unifies_agency_ids_and_gdacs_context(self):
         snapshots = {
             "tc_nhc/snapshot.json": {
@@ -465,6 +509,42 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertNotIn("NEOGURI", names)
         self.assertIn("MAYSAK", names)
         self.assertEqual(1, payload["count"])
+
+    def test_terminal_advisory_never_renders_a_forecast(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "collector": "hurricanes_live",
+            "payload_hash": "current-hash",
+            "ops_history_display_hours": 336,
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "WP092026",
+                    "name": "BAVI",
+                    "source": "JTWC",
+                    "issued_at": now.isoformat(),
+                    "valid_through": (now - timedelta(hours=1)).isoformat(),
+                    "current_position": {
+                        "timestamp": now.isoformat(),
+                        "latitude": 28.7,
+                        "longitude": 120.4,
+                        "wind_kt": 60,
+                    },
+                    "forecast_points": [{
+                        "valid_at": (now + timedelta(hours=12)).isoformat(),
+                        "latitude": 30.7,
+                        "longitude": 118.5,
+                        "wind_kt": 40,
+                    }],
+                }],
+            },
+        }
+
+        payload = ops._build_live_hurricane_display_payload(snapshot)
+        kinds = [feature["properties"]["track_kind"] for feature in payload["geojson"]["features"]]
+
+        self.assertIn("current", kinds)
+        self.assertNotIn("forecast", kinds)
+        self.assertEqual("ended_recent", payload["geojson"]["features"][0]["properties"]["track_state"])
 
 
 if __name__ == "__main__":

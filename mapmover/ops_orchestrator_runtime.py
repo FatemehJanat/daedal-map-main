@@ -1137,7 +1137,18 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             default=None,
         )
         age_hours = max(0.0, (now - last_observed_time).total_seconds() / 3600.0) if last_observed_time else None
-        is_active = bool(age_hours is not None and age_hours <= HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS and not storm.get("retained_history_only"))
+        # A forecast belongs to an active advisory, not merely to a recently
+        # received position.  Agencies can leave a final position fresh while
+        # explicitly closing the advisory; that terminal timestamp must win
+        # so a completed storm never keeps a stale forecast on the live map.
+        advisory_ended_at = _parse_iso_datetime(storm.get("valid_through"))
+        advisory_has_ended = bool(advisory_ended_at is not None and advisory_ended_at < now)
+        is_active = bool(
+            age_hours is not None
+            and age_hours <= HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS
+            and not storm.get("retained_history_only")
+            and not advisory_has_ended
+        )
         # Ended/recently inactive storms remain useful in Ops history, but take
         # an immediate readability drop before slowly fading through retention.
         if is_active:
@@ -1150,6 +1161,7 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "track_state": "active" if is_active else "ended_recent",
             "track_opacity": round(track_opacity, 3),
             "last_observed_at": last_observed_time.isoformat() if last_observed_time else None,
+            "advisory_ended_at": advisory_ended_at.isoformat() if advisory_ended_at else None,
             "source_priority": _hurricane_source_priority_for_storm(storm),
         })
         forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
@@ -1435,6 +1447,14 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
     def add_position(target: dict, point: dict | None, *, source: str | None = None, fallback_timestamp: str | None = None) -> None:
         if not isinstance(point, dict):
             return
+        candidate_source = str(source or "").strip().upper()
+        # GDACS is impact/alert context, not a warning centre. Its collector
+        # timestamps the last supplied storm location with every alert poll,
+        # which can replay one old fix hundreds of times and turn retained
+        # history into a false fan of lines. Keep its alert metadata, but let
+        # only advisory agencies contribute the observed track/current point.
+        if candidate_source == "GDACS":
+            return
         timestamp = str(point.get("timestamp") or fallback_timestamp or "").strip()
         if not timestamp:
             return
@@ -1456,7 +1476,6 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         # the first collector would discard later, better fixes (for example
         # GDACS first, then JTWC/JMA for Maysak).
         preferred_source = str(target.get("selected_observed_source") or "").strip().upper()
-        candidate_source = str(source or "").strip().upper()
         if preferred_source and candidate_source and candidate_source != preferred_source:
             return
         storm_positions = positions.setdefault(storm_id, {})
@@ -1501,6 +1520,12 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
                 None,
             )
             if target is None:
+                # A GDACS alert is not enough to establish a retained track.
+                # If a warning-centre record for the storm exists it will
+                # create the display event; the raw GDACS history remains
+                # retained by its collector for alert/impact research.
+                if str(historical.get("source") or "").strip().upper() == "GDACS":
+                    continue
                 target = register_storm(historical, retained_only=True)
             if target is None:
                 continue
