@@ -1,9 +1,9 @@
 {
-  "_description": "USA county bridge loc_ids; GeoBoundaries IDs where available, Census-backed local bridges otherwise",
-  "_source": "county-map-data/geometry/USA.parquet + Census 2024 TIGER/Line COUNTY + USA crosswalk",
-  "_schema_version": "2.1.0",
-  "_count": 3244,
-  "_last_updated": "2026-07-15",
+  "_description": "USA county bridge loc_ids aligned to GeoBoundaries county geometry",
+  "_source": "county-map-data/geometry/USA.parquet + county-map-data/countries/USA/crosswalk.json",
+  "_schema_version": "2.0.0",
+  "_count": 3231,
+  "_last_updated": "2026-07-20",
   "counties": {
     "02013": {
       "name": "Aleutians East",
@@ -76,6 +76,14 @@
       "county_fips": "100",
       "loc_id": "USA-AK-100",
       "geometry_loc_id": "USA-G176525-G240915"
+    },
+    "02105": {
+      "name": "Hoonah-Angoon",
+      "state_abbr": "AK",
+      "state_fips": "02",
+      "county_fips": "105",
+      "loc_id": "USA-AK-105",
+      "geometry_loc_id": "USA-G176525-G200499"
     },
     "02110": {
       "name": "Juneau",
@@ -157,6 +165,14 @@
       "loc_id": "USA-AK-188",
       "geometry_loc_id": "USA-G176525-G279389"
     },
+    "02195": {
+      "name": "Petersburg",
+      "state_abbr": "AK",
+      "state_fips": "02",
+      "county_fips": "195",
+      "loc_id": "USA-AK-195",
+      "geometry_loc_id": "USA-G176525-G252953"
+    },
     "02198": {
       "name": "Prince of Wales-Hyder",
       "state_abbr": "AK",
@@ -173,6 +189,14 @@
       "loc_id": "USA-AK-220",
       "geometry_loc_id": "USA-G176525-G213913"
     },
+    "02230": {
+      "name": "Skagway",
+      "state_abbr": "AK",
+      "state_fips": "02",
+      "county_fips": "230",
+      "loc_id": "USA-AK-230",
+      "geometry_loc_id": "USA-G176525-G245056"
+    },
     "02240": {
       "name": "Southeast Fairbanks",
       "state_abbr": "AK",
@@ -188,6 +212,22 @@
       "county_fips": "261",
       "loc_id": "USA-AK-261",
       "geometry_loc_id": "USA-G176525-G275930"
+    },
+    "02275": {
+      "name": "Wrangell",
+      "state_abbr": "AK",
+      "state_fips": "02",
+      "county_fips": "275",
+      "loc_id": "USA-AK-275",
+      "geometry_loc_id": "USA-G176525-G218373"
+    },
+    "02282": {
+      "name": "Yakutat",
+      "state_abbr": "AK",
+      "state_fips": "02",
+      "county_fips": "282",
+      "loc_id": "USA-AK-282",
+      "geometry_loc_id": "USA-G176525-G247217"
     },
     "02290": {
       "name": "Yukon-Koyukuk",
@@ -1332,6 +1372,30 @@
       "county_fips": "149",
       "loc_id": "USA-AR-149",
       "geometry_loc_id": "USA-G112663-G277899"
+    },
+    "60010": {
+      "name": "Eastern",
+      "state_abbr": "AS",
+      "state_fips": "60",
+      "county_fips": "010",
+      "loc_id": "USA-AS-010",
+      "geometry_loc_id": "USA-G152114-G220210"
+    },
+    "60020": {
+      "name": "Manu'a",
+      "state_abbr": "AS",
+      "state_fips": "60",
+      "county_fips": "020",
+      "loc_id": "USA-AS-020",
+      "geometry_loc_id": "USA-G152114-G211285"
+    },
+    "60050": {
+      "name": "Western",
+      "state_abbr": "AS",
+      "state_fips": "60",
+      "county_fips": "050",
+      "loc_id": "USA-AS-050",
+      "geometry_loc_id": "USA-G152114-G270595"
     },
     "04001": {
       "name": "Apache",
@@ -4332,6 +4396,14 @@
       "county_fips": "321",
       "loc_id": "USA-GA-321",
       "geometry_loc_id": "USA-G171250-G251605"
+    },
+    "66010": {
+      "name": "Guam",
+      "state_abbr": "GU",
+      "state_fips": "66",
+      "county_fips": "010",
+      "loc_id": "USA-GU-010",
+      "geometry_loc_id": "USA-G164184-G267838"
     },
     "15001": {
       "name": "Hawaii",
@@ -9509,6 +9581,14 @@
       "loc_id": "USA-MD-003",
       "geometry_loc_id": "USA-G194454-G218519"
     },
+    "24005": {
+      "name": "Baltimore",
+      "state_abbr": "MD",
+      "state_fips": "24",
+      "county_fips": "005",
+      "loc_id": "USA-MD-005",
+      "geometry_loc_id": "USA-G194454-G268318"
+    },
     "24009": {
       "name": "Calvert",
       "state_abbr": "MD",
@@ -9675,7 +9755,7 @@
       "state_fips": "24",
       "county_fips": "510",
       "loc_id": "USA-MD-510",
-      "geometry_loc_id": "USA-G194454-G268318"
+      "geometry_loc_id": "USA-G194454-G236351"
     },
     "23001": {
       "name": "Androscoggin",
@@ -11925,6 +12005,14 @@
       "loc_id": "USA-MO-187",
       "geometry_loc_id": "USA-G125286-G235453"
     },
+    "29189": {
+      "name": "St. Louis",
+      "state_abbr": "MO",
+      "state_fips": "29",
+      "county_fips": "189",
+      "loc_id": "USA-MO-189",
+      "geometry_loc_id": "USA-G125286-G283850"
+    },
     "29195": {
       "name": "Saline",
       "state_abbr": "MO",
@@ -12076,6 +12164,38 @@
       "county_fips": "510",
       "loc_id": "USA-MO-510",
       "geometry_loc_id": "USA-G125286-G267862"
+    },
+    "69085": {
+      "name": "Northern Islands",
+      "state_abbr": "MP",
+      "state_fips": "69",
+      "county_fips": "085",
+      "loc_id": "USA-MP-085",
+      "geometry_loc_id": "USA-G140259-G208084"
+    },
+    "69100": {
+      "name": "Rota",
+      "state_abbr": "MP",
+      "state_fips": "69",
+      "county_fips": "100",
+      "loc_id": "USA-MP-100",
+      "geometry_loc_id": "USA-G140259-G257264"
+    },
+    "69110": {
+      "name": "Saipan",
+      "state_abbr": "MP",
+      "state_fips": "69",
+      "county_fips": "110",
+      "loc_id": "USA-MP-110",
+      "geometry_loc_id": "USA-G140259-G266346"
+    },
+    "69120": {
+      "name": "Tinian",
+      "state_abbr": "MP",
+      "state_fips": "69",
+      "county_fips": "120",
+      "loc_id": "USA-MP-120",
+      "geometry_loc_id": "USA-G140259-G273126"
     },
     "28001": {
       "name": "Adams",
@@ -23245,6 +23365,14 @@
       "loc_id": "USA-VA-057",
       "geometry_loc_id": "USA-G125186-G266060"
     },
+    "51059": {
+      "name": "Fairfax",
+      "state_abbr": "VA",
+      "state_fips": "51",
+      "county_fips": "059",
+      "loc_id": "USA-VA-059",
+      "geometry_loc_id": "USA-G125186-G282830"
+    },
     "51061": {
       "name": "Fauquier",
       "state_abbr": "VA",
@@ -23268,6 +23396,14 @@
       "county_fips": "065",
       "loc_id": "USA-VA-065",
       "geometry_loc_id": "USA-G125186-G295772"
+    },
+    "51067": {
+      "name": "Franklin",
+      "state_abbr": "VA",
+      "state_fips": "51",
+      "county_fips": "067",
+      "loc_id": "USA-VA-067",
+      "geometry_loc_id": "USA-G125186-G267254"
     },
     "51069": {
       "name": "Frederick",
@@ -23605,6 +23741,22 @@
       "loc_id": "USA-VA-157",
       "geometry_loc_id": "USA-G125186-G269243"
     },
+    "51159": {
+      "name": "Richmond",
+      "state_abbr": "VA",
+      "state_fips": "51",
+      "county_fips": "159",
+      "loc_id": "USA-VA-159",
+      "geometry_loc_id": "USA-G125186-G274308"
+    },
+    "51161": {
+      "name": "Roanoke",
+      "state_abbr": "VA",
+      "state_fips": "51",
+      "county_fips": "161",
+      "loc_id": "USA-VA-161",
+      "geometry_loc_id": "USA-G125186-G204079"
+    },
     "51163": {
       "name": "Rockbridge",
       "state_abbr": "VA",
@@ -23827,7 +23979,7 @@
       "state_fips": "51",
       "county_fips": "600",
       "loc_id": "USA-VA-600",
-      "geometry_loc_id": "USA-G125186-G282830"
+      "geometry_loc_id": "USA-G125186-G215213"
     },
     "51610": {
       "name": "Falls Church",
@@ -23843,7 +23995,7 @@
       "state_fips": "51",
       "county_fips": "620",
       "loc_id": "USA-VA-620",
-      "geometry_loc_id": "USA-G125186-G267254"
+      "geometry_loc_id": "USA-G125186-G235120"
     },
     "51630": {
       "name": "Fredericksburg",
@@ -23995,7 +24147,7 @@
       "state_fips": "51",
       "county_fips": "770",
       "loc_id": "USA-VA-770",
-      "geometry_loc_id": "USA-G125186-G239261"
+      "geometry_loc_id": "USA-G125186-G204079"
     },
     "51775": {
       "name": "Salem",
@@ -24052,6 +24204,30 @@
       "county_fips": "840",
       "loc_id": "USA-VA-840",
       "geometry_loc_id": "USA-G125186-G282044"
+    },
+    "78010": {
+      "name": "St. Croix",
+      "state_abbr": "VI",
+      "state_fips": "78",
+      "county_fips": "010",
+      "loc_id": "USA-VI-010",
+      "geometry_loc_id": "USA-G156708-G202794"
+    },
+    "78020": {
+      "name": "St. John",
+      "state_abbr": "VI",
+      "state_fips": "78",
+      "county_fips": "020",
+      "loc_id": "USA-VI-020",
+      "geometry_loc_id": "USA-G156708-G254126"
+    },
+    "78030": {
+      "name": "St. Thomas",
+      "state_abbr": "VI",
+      "state_fips": "78",
+      "county_fips": "030",
+      "loc_id": "USA-VI-030",
+      "geometry_loc_id": "USA-G156708-G209049"
     },
     "50001": {
       "name": "Addison",
@@ -25676,356 +25852,6 @@
       "county_fips": "045",
       "loc_id": "USA-WY-045",
       "geometry_loc_id": "USA-G101622-G268653"
-    },
-    "02063": {
-      "name": "Chugach",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "063",
-      "loc_id": "USA-AK-063",
-      "geometry_loc_id": null,
-      "census_namelsad": "Chugach Census Area",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02066": {
-      "name": "Copper River",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "066",
-      "loc_id": "USA-AK-066",
-      "geometry_loc_id": null,
-      "census_namelsad": "Copper River Census Area",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02105": {
-      "name": "Hoonah-Angoon",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "105",
-      "loc_id": "USA-AK-105",
-      "geometry_loc_id": null,
-      "census_namelsad": "Hoonah-Angoon Census Area",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02195": {
-      "name": "Petersburg",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "195",
-      "loc_id": "USA-AK-195",
-      "geometry_loc_id": null,
-      "census_namelsad": "Petersburg Borough",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02230": {
-      "name": "Skagway",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "230",
-      "loc_id": "USA-AK-230",
-      "geometry_loc_id": null,
-      "census_namelsad": "Skagway Municipality",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02275": {
-      "name": "Wrangell",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "275",
-      "loc_id": "USA-AK-275",
-      "geometry_loc_id": null,
-      "census_namelsad": "Wrangell City and Borough",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "02282": {
-      "name": "Yakutat",
-      "state_abbr": "AK",
-      "state_fips": "02",
-      "county_fips": "282",
-      "loc_id": "USA-AK-282",
-      "geometry_loc_id": null,
-      "census_namelsad": "Yakutat City and Borough",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "60010": {
-      "name": "Eastern",
-      "state_abbr": "AS",
-      "state_fips": "60",
-      "county_fips": "010",
-      "loc_id": "USA-AS-010",
-      "geometry_loc_id": null,
-      "census_namelsad": "Eastern District",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "60020": {
-      "name": "Manu'a",
-      "state_abbr": "AS",
-      "state_fips": "60",
-      "county_fips": "020",
-      "loc_id": "USA-AS-020",
-      "geometry_loc_id": null,
-      "census_namelsad": "Manu'a District",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "60030": {
-      "name": "Rose Island",
-      "state_abbr": "AS",
-      "state_fips": "60",
-      "county_fips": "030",
-      "loc_id": "USA-AS-030",
-      "geometry_loc_id": null,
-      "census_namelsad": "Rose Island",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "60040": {
-      "name": "Swains Island",
-      "state_abbr": "AS",
-      "state_fips": "60",
-      "county_fips": "040",
-      "loc_id": "USA-AS-040",
-      "geometry_loc_id": null,
-      "census_namelsad": "Swains Island",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "60050": {
-      "name": "Western",
-      "state_abbr": "AS",
-      "state_fips": "60",
-      "county_fips": "050",
-      "loc_id": "USA-AS-050",
-      "geometry_loc_id": null,
-      "census_namelsad": "Western District",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09110": {
-      "name": "Capitol",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "110",
-      "loc_id": "USA-CT-110",
-      "geometry_loc_id": null,
-      "census_namelsad": "Capitol Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09120": {
-      "name": "Greater Bridgeport",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "120",
-      "loc_id": "USA-CT-120",
-      "geometry_loc_id": null,
-      "census_namelsad": "Greater Bridgeport Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09130": {
-      "name": "Lower Connecticut River Valley",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "130",
-      "loc_id": "USA-CT-130",
-      "geometry_loc_id": null,
-      "census_namelsad": "Lower Connecticut River Valley Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09140": {
-      "name": "Naugatuck Valley",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "140",
-      "loc_id": "USA-CT-140",
-      "geometry_loc_id": null,
-      "census_namelsad": "Naugatuck Valley Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09150": {
-      "name": "Northeastern Connecticut",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "150",
-      "loc_id": "USA-CT-150",
-      "geometry_loc_id": null,
-      "census_namelsad": "Northeastern Connecticut Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09160": {
-      "name": "Northwest Hills",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "160",
-      "loc_id": "USA-CT-160",
-      "geometry_loc_id": null,
-      "census_namelsad": "Northwest Hills Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09170": {
-      "name": "South Central Connecticut",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "170",
-      "loc_id": "USA-CT-170",
-      "geometry_loc_id": null,
-      "census_namelsad": "South Central Connecticut Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09180": {
-      "name": "Southeastern Connecticut",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "180",
-      "loc_id": "USA-CT-180",
-      "geometry_loc_id": null,
-      "census_namelsad": "Southeastern Connecticut Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "09190": {
-      "name": "Western Connecticut",
-      "state_abbr": "CT",
-      "state_fips": "09",
-      "county_fips": "190",
-      "loc_id": "USA-CT-190",
-      "geometry_loc_id": null,
-      "census_namelsad": "Western Connecticut Planning Region",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "66010": {
-      "name": "Guam",
-      "state_abbr": "GU",
-      "state_fips": "66",
-      "county_fips": "010",
-      "loc_id": "USA-GU-010",
-      "geometry_loc_id": null,
-      "census_namelsad": "Guam",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "24005": {
-      "name": "Baltimore",
-      "state_abbr": "MD",
-      "state_fips": "24",
-      "county_fips": "005",
-      "loc_id": "USA-MD-005",
-      "geometry_loc_id": null,
-      "census_namelsad": "Baltimore County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "29189": {
-      "name": "St. Louis",
-      "state_abbr": "MO",
-      "state_fips": "29",
-      "county_fips": "189",
-      "loc_id": "USA-MO-189",
-      "geometry_loc_id": null,
-      "census_namelsad": "St. Louis County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "69085": {
-      "name": "Northern Islands",
-      "state_abbr": "MP",
-      "state_fips": "69",
-      "county_fips": "085",
-      "loc_id": "USA-MP-085",
-      "geometry_loc_id": null,
-      "census_namelsad": "Northern Islands Municipality",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "69100": {
-      "name": "Rota",
-      "state_abbr": "MP",
-      "state_fips": "69",
-      "county_fips": "100",
-      "loc_id": "USA-MP-100",
-      "geometry_loc_id": null,
-      "census_namelsad": "Rota Municipality",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "69110": {
-      "name": "Saipan",
-      "state_abbr": "MP",
-      "state_fips": "69",
-      "county_fips": "110",
-      "loc_id": "USA-MP-110",
-      "geometry_loc_id": null,
-      "census_namelsad": "Saipan Municipality",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "69120": {
-      "name": "Tinian",
-      "state_abbr": "MP",
-      "state_fips": "69",
-      "county_fips": "120",
-      "loc_id": "USA-MP-120",
-      "geometry_loc_id": null,
-      "census_namelsad": "Tinian Municipality",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "51059": {
-      "name": "Fairfax",
-      "state_abbr": "VA",
-      "state_fips": "51",
-      "county_fips": "059",
-      "loc_id": "USA-VA-059",
-      "geometry_loc_id": null,
-      "census_namelsad": "Fairfax County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "51067": {
-      "name": "Franklin",
-      "state_abbr": "VA",
-      "state_fips": "51",
-      "county_fips": "067",
-      "loc_id": "USA-VA-067",
-      "geometry_loc_id": null,
-      "census_namelsad": "Franklin County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "51159": {
-      "name": "Richmond",
-      "state_abbr": "VA",
-      "state_fips": "51",
-      "county_fips": "159",
-      "loc_id": "USA-VA-159",
-      "geometry_loc_id": null,
-      "census_namelsad": "Richmond County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "51161": {
-      "name": "Roanoke",
-      "state_abbr": "VA",
-      "state_fips": "51",
-      "county_fips": "161",
-      "loc_id": "USA-VA-161",
-      "geometry_loc_id": null,
-      "census_namelsad": "Roanoke County",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "78010": {
-      "name": "St. Croix",
-      "state_abbr": "VI",
-      "state_fips": "78",
-      "county_fips": "010",
-      "loc_id": "USA-VI-010",
-      "geometry_loc_id": null,
-      "census_namelsad": "St. Croix Island",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "78020": {
-      "name": "St. John",
-      "state_abbr": "VI",
-      "state_fips": "78",
-      "county_fips": "020",
-      "loc_id": "USA-VI-020",
-      "geometry_loc_id": null,
-      "census_namelsad": "St. John Island",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
-    },
-    "78030": {
-      "name": "St. Thomas",
-      "state_abbr": "VI",
-      "state_fips": "78",
-      "county_fips": "030",
-      "loc_id": "USA-VI-030",
-      "geometry_loc_id": null,
-      "census_namelsad": "St. Thomas Island",
-      "reference_source": "U.S. Census Bureau, 2024 TIGER/Line COUNTY"
     }
   },
   "name_lookup": {
@@ -26038,6 +25864,7 @@
     "02_dillingham": 2070,
     "02_fairbanksnorthstar": 2090,
     "02_haines": 2100,
+    "02_hoonahangoon": 2105,
     "02_juneau": 2110,
     "02_kenaipeninsula": 2122,
     "02_ketchikangateway": 2130,
@@ -26048,10 +25875,14 @@
     "02_nome": 2180,
     "02_northslope": 2185,
     "02_northwestarctic": 2188,
+    "02_petersburg": 2195,
     "02_princeofwalesouterketchi": 2198,
     "02_sitka": 2220,
+    "02_skagway": 2230,
     "02_southeastfairbanks": 2240,
     "02_valdezcordova": 2261,
+    "02_wrangell": 2275,
+    "02_yakutat": 2282,
     "02_yukonkoyukuk": 2290,
     "01_autauga": 1001,
     "01_baldwin": 1003,
@@ -26195,6 +26026,9 @@
     "05_white": 5145,
     "05_woodruff": 5147,
     "05_yell": 5149,
+    "60_eastern": 60010,
+    "60_manua": 60020,
+    "60_western": 60050,
     "04_apache": 4001,
     "04_cochise": 4003,
     "04_coconino": 4005,
@@ -26570,6 +26404,7 @@
     "13_wilkes": 13317,
     "13_wilkinson": 13319,
     "13_worth": 13321,
+    "66_guam": 66010,
     "15_hawaii": 15001,
     "15_honolulu": 15003,
     "15_kalawao": 15005,
@@ -27217,6 +27052,7 @@
     "25_worcester": 25027,
     "24_allegany": 24001,
     "24_annearundel": 24003,
+    "24_baltimore": 24510,
     "24_calvert": 24009,
     "24_caroline": 24011,
     "24_carroll": 24013,
@@ -27237,7 +27073,6 @@
     "24_washington": 24043,
     "24_wicomico": 24045,
     "24_worcester": 24047,
-    "24_baltimore": 24005,
     "23_androscoggin": 23001,
     "23_aroostook": 23003,
     "23_cumberland": 23005,
@@ -27519,6 +27354,7 @@
     "29_stclair": 29185,
     "29_stegenevieve": 29186,
     "29_stfrancois": 29187,
+    "29_stlouis": 29510,
     "29_saline": 29195,
     "29_schuyler": 29197,
     "29_scotland": 29199,
@@ -27537,7 +27373,10 @@
     "29_webster": 29225,
     "29_worth": 29227,
     "29_wright": 29229,
-    "29_stlouis": 29189,
+    "69_northernislands": 69085,
+    "69_rota": 69100,
+    "69_saipan": 69110,
+    "69_tinian": 69120,
     "28_adams": 28001,
     "28_alcorn": 28003,
     "28_amite": 28005,
@@ -28934,9 +28773,11 @@
     "51_dickenson": 51051,
     "51_dinwiddie": 51053,
     "51_essex": 51057,
+    "51_fairfax": 51600,
     "51_fauquier": 51061,
     "51_floyd": 51063,
     "51_fluvanna": 51065,
+    "51_franklin": 51620,
     "51_frederick": 51069,
     "51_giles": 51071,
     "51_gloucester": 51073,
@@ -28979,6 +28820,8 @@
     "51_princewilliam": 51153,
     "51_pulaski": 51155,
     "51_rappahannock": 51157,
+    "51_richmond": 51760,
+    "51_roanoke": 51770,
     "51_rockbridge": 51163,
     "51_rockingham": 51165,
     "51_russell": 51167,
@@ -29006,9 +28849,7 @@
     "51_covington": 51580,
     "51_danville": 51590,
     "51_emporia": 51595,
-    "51_fairfax": 51059,
     "51_fallschurch": 51610,
-    "51_franklin": 51067,
     "51_fredericksburg": 51630,
     "51_galax": 51640,
     "51_hampton": 51650,
@@ -29026,8 +28867,6 @@
     "51_poquoson": 51735,
     "51_portsmouth": 51740,
     "51_radford": 51750,
-    "51_richmond": 51159,
-    "51_roanoke": 51161,
     "51_salem": 51775,
     "51_staunton": 51790,
     "51_suffolk": 51800,
@@ -29035,6 +28874,9 @@
     "51_waynesboro": 51820,
     "51_williamsburg": 51830,
     "51_winchester": 51840,
+    "78_stcroix": 78010,
+    "78_stjohn": 78020,
+    "78_stthomas": 78030,
     "50_addison": 50001,
     "50_bennington": 50003,
     "50_caledonia": 50005,
@@ -29237,35 +29079,6 @@
     "56_teton": 56039,
     "56_uinta": 56041,
     "56_washakie": 56043,
-    "56_weston": 56045,
-    "02_chugach": 2063,
-    "02_copperriver": 2066,
-    "02_hoonahangoon": 2105,
-    "02_petersburg": 2195,
-    "02_skagway": 2230,
-    "02_wrangell": 2275,
-    "02_yakutat": 2282,
-    "60_eastern": 60010,
-    "60_manua": 60020,
-    "60_roseisland": 60030,
-    "60_swainsisland": 60040,
-    "60_western": 60050,
-    "09_capitol": 9110,
-    "09_greaterbridgeport": 9120,
-    "09_lowerconnecticutrivervalley": 9130,
-    "09_naugatuckvalley": 9140,
-    "09_northeasternconnecticut": 9150,
-    "09_northwesthills": 9160,
-    "09_southcentralconnecticut": 9170,
-    "09_southeasternconnecticut": 9180,
-    "09_westernconnecticut": 9190,
-    "66_guam": 66010,
-    "69_northernislands": 69085,
-    "69_rota": 69100,
-    "69_saipan": 69110,
-    "69_tinian": 69120,
-    "78_stcroix": 78010,
-    "78_stjohn": 78020,
-    "78_stthomas": 78030
+    "56_weston": 56045
   }
 }
