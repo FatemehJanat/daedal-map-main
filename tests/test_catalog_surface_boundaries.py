@@ -48,9 +48,9 @@ class CatalogSurfaceBoundaryTests(unittest.TestCase):
         self.assertTrue(has_catalog_product_surface(record, "mcp"))
         self.assertTrue(is_mcp_distribution_source(record))
 
-    def test_legacy_api_ready_is_only_a_mcp_migration_bridge(self) -> None:
-        self.assertTrue(is_mcp_distribution_source({"api_ready": True, "catalog_surfaces": ["api"]}))
-        self.assertFalse(is_mcp_distribution_source({"api_ready": True, "catalog_surfaces": ["research"]}))
+    def test_api_surface_alone_is_not_public_mcp_distribution(self) -> None:
+        self.assertFalse(is_mcp_distribution_source({"catalog_surfaces": ["api"]}))
+        self.assertFalse(is_mcp_distribution_source({"catalog_surfaces": ["research", "mcp"]}))
 
     def test_filter_catalog_for_product_surface_keeps_research_only_out_of_explore(self) -> None:
         catalog = {

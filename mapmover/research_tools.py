@@ -852,11 +852,33 @@ def _query_rows_duckdb(
         con.register("artifact_rows", df)
         where_parts = []
         params = []
+
+        def comparison_identifier(field: str, expected: dict, identifier: str) -> str:
+            """Cast a text-encoded numeric column only for numeric ranges.
+
+            Hydrated artifacts preserve source values, and some otherwise
+            yearly datasets therefore carry ``year`` as a VARCHAR. DuckDB
+            will not compare that to the numeric bounds the Research model
+            emits. Detect a wholly numeric column rather than guessing from
+            its name, so timestamps and ordinary text retain their native
+            comparison semantics.
+            """
+            if not any(key in expected for key in ("min", "max")):
+                return identifier
+            raw_values = df[field].dropna()
+            if raw_values.empty:
+                return identifier
+            coerced = pd.to_numeric(raw_values, errors="coerce")
+            if len(coerced) and coerced.notna().all():
+                return f"TRY_CAST({identifier} AS DOUBLE)"
+            return identifier
+
         for field, expected in (tool_input.get("filters") or {}).items():
             if field not in df.columns:
                 continue
             ident = _quote_identifier(field)
             if isinstance(expected, dict):
+                comparison_ident = comparison_identifier(field, expected, ident)
                 if "hierarchy_any" in expected:
                     hierarchy_parts = []
                     for condition in expected.get("hierarchy_any") or []:
@@ -895,10 +917,10 @@ def _query_rows_duckdb(
                         where_parts.append("(" + " OR ".join(hierarchy_parts) + ")")
                     continue
                 if "min" in expected:
-                    where_parts.append(f"{ident} >= ?")
+                    where_parts.append(f"{comparison_ident} >= ?")
                     params.append(expected["min"])
                 if "max" in expected:
-                    where_parts.append(f"{ident} <= ?")
+                    where_parts.append(f"{comparison_ident} <= ?")
                     params.append(expected["max"])
                 if "eq" in expected:
                     where_parts.append(f"{ident} = ?")

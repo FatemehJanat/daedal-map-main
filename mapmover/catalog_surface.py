@@ -85,16 +85,8 @@ def has_catalog_product_surface(record: dict | None, surface: str | None) -> boo
 
 
 def is_mcp_distribution_source(record: dict | None) -> bool:
-    """Return public-MCP eligibility, including one-release legacy migration.
-
-    Catalogs built before the explicit ``mcp`` surface used ``api_ready`` for
-    this exact decision. New catalogs never emit that field; accepting it here
-    prevents a staged runtime deployment from briefly emptying public discovery
-    before its regenerated catalog arrives.
-    """
-    if has_catalog_product_surface(record, "mcp"):
-        return has_catalog_product_surface(record, "api")
-    return bool(isinstance(record, dict) and record.get("api_ready")) and has_catalog_product_surface(record, "api")
+    """Return public-MCP eligibility from explicit lifecycle surfaces only."""
+    return has_catalog_product_surface(record, "api") and has_catalog_product_surface(record, "mcp")
 
 
 def filter_catalog_for_product_surface(catalog: dict, surface: str | None) -> dict:

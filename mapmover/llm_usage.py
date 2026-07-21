@@ -222,14 +222,21 @@ def ensure_recorder(
     if recorder is not None:
         return recorder, False
     caller_ctx = classify_caller(auth_user=None, ip_hash=None)
+    recorder = LLMUsageRecorder(
+        surface=surface,
+        call_kind=call_kind,
+        session_id=session_id,
+        request_id=request_id,
+        **caller_ctx,
+    )
+    # Direct in-process lanes (including Research QA) do not construct an HTTP
+    # route context. Preserve their explicit suite/run environment attribution
+    # on the recorder so the emitted Supabase event is traceable to the suite.
+    qa_suite_metadata = extract_qa_suite_metadata(None)
+    if qa_suite_metadata:
+        recorder.add_metadata(**qa_suite_metadata)
     return (
-        LLMUsageRecorder(
-            surface=surface,
-            call_kind=call_kind,
-            session_id=session_id,
-            request_id=request_id,
-            **caller_ctx,
-        ),
+        recorder,
         True,
     )
 
