@@ -39,6 +39,71 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual("EP062026", composed["storm_id"])
         self.assertTrue(composed["forecast_track"])
 
+    def test_basin_authority_wins_while_it_is_fresh(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        composed = ops._compose_hurricane_candidates({
+            "storm_id": "WP092026",
+            "basin": "WP",
+            "source_candidates": {
+                "JMA": {"source": "JMA", "current_position": {"timestamp": (now - timedelta(hours=4)).isoformat(), "latitude": 20, "longitude": 130}},
+                "JTWC": {"source": "JTWC", "current_position": {"timestamp": (now - timedelta(hours=1)).isoformat(), "latitude": 20, "longitude": 130}},
+            },
+        })
+
+        self.assertEqual("JMA", composed["selected_observed_source"])
+
+    def test_overlapping_source_fills_in_when_basin_authority_is_stale(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        composed = ops._compose_hurricane_candidates({
+            "storm_id": "WP092026",
+            "basin": "WP",
+            "source_candidates": {
+                "JMA": {"source": "JMA", "current_position": {"timestamp": (now - timedelta(hours=7)).isoformat(), "latitude": 20, "longitude": 130}},
+                "JTWC": {"source": "JTWC", "current_position": {"timestamp": (now - timedelta(hours=1)).isoformat(), "latitude": 20, "longitude": 130}},
+            },
+        })
+
+        self.assertEqual("JTWC", composed["selected_observed_source"])
+
+    def test_track_slots_keep_authority_and_fill_only_its_missing_gap(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0, minute=0, second=0)
+        snapshot = {
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "WP092026",
+                    "identity": {"canonical_id": "WP092026"},
+                    "name": "BAVI",
+                    "year": now.year,
+                    "basin": "WP",
+                    "source": "JMA",
+                    "selected_observed_source": "JMA",
+                    "observed_track": [
+                        {"timestamp": (now - timedelta(hours=6)).isoformat(), "latitude": 18.0, "longitude": 132.0},
+                        {"timestamp": now.isoformat(), "latitude": 20.0, "longitude": 130.0},
+                    ],
+                    "current_position": {"timestamp": now.isoformat(), "latitude": 20.0, "longitude": 130.0},
+                }],
+            },
+        }
+        history = [{
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "WP092026",
+                    "identity": {"canonical_id": "WP092026"},
+                    "name": "BAVI",
+                    "year": now.year,
+                    "basin": "WP",
+                    "source": "JTWC",
+                    "current_position": {"timestamp": (now - timedelta(hours=3)).isoformat(), "latitude": 19.0, "longitude": 131.0},
+                }],
+            },
+        }]
+
+        augmented = ops._with_hurricane_history_tracks(snapshot, history)
+        points = augmented["payload_summary"]["storms"][0]["observed_track"]
+
+        self.assertEqual([[132.0, 18.0], [131.0, 19.0], [130.0, 20.0]], [[point["longitude"], point["latitude"]] for point in points])
+
     def test_retired_ibtracs_display_payload_is_not_a_live_hurricane_feed(self):
         payloads = ops._report_display_payload_by_feed({
             "display_payloads": [

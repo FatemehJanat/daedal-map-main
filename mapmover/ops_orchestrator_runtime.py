@@ -64,6 +64,14 @@ HURRICANE_BASIN_SOURCE_PRIORITY = {
     "IO": {"JTWC": 70, "JMA": 25, "NHC": 20, "GDACS": 10},
     "SH": {"JTWC": 70, "JMA": 30, "NHC": 20, "GDACS": 10},
 }
+# A current source is authoritative while its advisory is still reasonably
+# current.  Beyond this window, a basin-overlapping warning centre may take
+# over the live marker/forecast until the primary source resumes.
+HURRICANE_AUTHORITY_FALLBACK_MAX_AGE_HOURS = 6
+# Observed tracks are intentionally composited at this cadence.  It matches
+# the native 3–6h advisory cadence, collapses repeated poll copies, and lets
+# a fallback fill a genuine primary-source gap without creating zigzags.
+HURRICANE_TRACK_SLOT_HOURS = 3
 HURRICANE_ACTIVE_FIX_MAX_AGE_HOURS = 18
 HURRICANE_SOURCE_PAGES = {
     "NHC": "https://www.nhc.noaa.gov/cyclones/",
@@ -131,29 +139,55 @@ def _hurricane_has_forecast(candidate: dict) -> bool:
     return bool(candidate.get("forecast_points") or candidate.get("forecast_track"))
 
 
+def _hurricane_candidate_is_fresh(candidate: dict, *, now: datetime | None = None) -> bool:
+    observed_at = _hurricane_candidate_time(candidate)
+    if observed_at == datetime.min.replace(tzinfo=timezone.utc):
+        return False
+    reference = now or datetime.now(timezone.utc)
+    age_hours = (reference - observed_at).total_seconds() / 3600.0
+    return -1.0 <= age_hours <= HURRICANE_AUTHORITY_FALLBACK_MAX_AGE_HOURS
+
+
+def _select_hurricane_authority_candidate(
+    storm: dict,
+    candidates: list[dict],
+    *,
+    usable,
+    now: datetime | None = None,
+) -> dict | None:
+    """Select the basin authority, falling back only when it is missing/stale."""
+    eligible = [
+        item for item in candidates
+        if usable(item) and str(item.get("source") or "").strip().upper() != "GDACS"
+    ]
+    if not eligible:
+        return None
+    fresh = [item for item in eligible if _hurricane_candidate_is_fresh(item, now=now)]
+    pool = fresh or eligible
+    return max(
+        pool,
+        key=lambda item: (
+            _hurricane_source_priority_for_storm(storm, item.get("source")),
+            _hurricane_candidate_time(item),
+        ),
+    )
+
+
 def _compose_hurricane_candidates(storm: dict) -> dict:
     """Choose one observed and one forecast authority for a canonical storm."""
     candidates = [item for item in (storm.get("source_candidates") or {}).values() if isinstance(item, dict)]
     if not candidates:
         return storm
-    def rank(candidate: dict) -> tuple[datetime, int]:
-        # Freshness is the safety check; basin authority breaks ties between
-        # contemporaneous advisories.  This avoids replacing a current JTWC
-        # fix with an older JMA/GDACS record merely because of its basin rank.
-        return (_hurricane_candidate_time(candidate), _hurricane_source_priority_for_storm(storm, candidate.get("source")))
-    # GDACS is an alert/impact source. Its location is often the last known
-    # fix stamped with the alert poll time, so it must never outrank a warning
-    # centre and replace that agency's observed trail with a single point.
-    observed = max(
-        (
-            item for item in candidates
-            if _hurricane_has_position(item)
-            and str(item.get("source") or "").strip().upper() != "GDACS"
-        ),
-        key=rank,
-        default=None,
+    observed = _select_hurricane_authority_candidate(
+        storm,
+        candidates,
+        usable=_hurricane_has_position,
     )
-    forecast = max((item for item in candidates if _hurricane_has_forecast(item)), key=rank, default=None)
+    forecast = _select_hurricane_authority_candidate(
+        storm,
+        candidates,
+        usable=_hurricane_has_forecast,
+    )
     selected = dict(observed or forecast or storm)
     if forecast:
         for field in ("forecast_points", "forecast_track", "uncertainty_geometry", "forecast_horizon_hours", "valid_through"):
@@ -1469,6 +1503,9 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         timestamp = str(point.get("timestamp") or fallback_timestamp or "").strip()
         if not timestamp:
             return
+        observed_at = _parse_iso_datetime(timestamp)
+        if observed_at is None:
+            return
         try:
             latitude = float(point.get("latitude"))
             longitude = float(point.get("longitude"))
@@ -1477,24 +1514,26 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
         storm_id = str(target.get("storm_id") or "").strip()
         if not storm_id:
             return
-        # A canonical storm can have nearly simultaneous fixes from two
-        # warning centres.  Exact timestamps differ by minutes, so keeping
-        # both produces the parallel/red "split" history seen near Shanghai.
-        # The compositor already selected the authoritative observed source;
-        # history must obey the same choice.
-        # Only a live composited storm has an explicit source decision.  A
-        # retained-only historical storm has no such decision; locking it to
-        # the first collector would discard later, better fixes (for example
-        # GDACS first, then JTWC/JMA for Maysak).
-        preferred_source = str(target.get("selected_observed_source") or "").strip().upper()
-        if preferred_source and candidate_source and candidate_source != preferred_source:
-            return
+        # One source-owned fix per three-hour slot.  This keeps the primary
+        # warning centre's geometry coherent while allowing an overlapping
+        # source to fill an actual gap instead of producing parallel/fan
+        # tracks from every collector poll.
+        slot_hour = (observed_at.hour // HURRICANE_TRACK_SLOT_HOURS) * HURRICANE_TRACK_SLOT_HOURS
+        slot_at = observed_at.replace(hour=slot_hour, minute=0, second=0, microsecond=0)
+        slot_key = slot_at.isoformat()
         storm_positions = positions.setdefault(storm_id, {})
         priority = _hurricane_source_priority_for_storm(target, source)
-        existing = storm_positions.get(timestamp)
-        if existing and int(existing.get("_source_priority") or 0) > priority:
+        existing = storm_positions.get(slot_key)
+        existing_priority = int(existing.get("_source_priority") or 0) if existing else -1
+        existing_timestamp = _parse_iso_datetime(existing.get("timestamp")) if existing else None
+        # Basin authority wins an overlap; the later same-source fix is the
+        # most accurate representative for its slot.
+        if existing and (
+            existing_priority > priority
+            or (existing_priority == priority and existing_timestamp is not None and existing_timestamp >= observed_at)
+        ):
             return
-        storm_positions[timestamp] = {
+        storm_positions[slot_key] = {
             **point,
             "timestamp": timestamp,
             "latitude": latitude,
