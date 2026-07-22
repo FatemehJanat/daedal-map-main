@@ -6,6 +6,39 @@ from mapmover import ops_orchestrator_runtime as ops
 
 
 class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
+    def test_gdacs_alert_timestamp_cannot_replace_advisory_track(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        composed = ops._compose_hurricane_candidates({
+            "storm_id": "EP062026",
+            "basin": "EP",
+            "source_candidates": {
+                "NHC": {
+                    "storm_id": "EP062026",
+                    "source": "NHC",
+                    "current_position": {
+                        "timestamp": (now - timedelta(hours=2)).isoformat(),
+                        "latitude": 16.6,
+                        "longitude": -120.3,
+                    },
+                    "observed_track": [{"timestamp": (now - timedelta(hours=3)).isoformat(), "latitude": 16.3, "longitude": -119.0}],
+                    "forecast_track": {"type": "LineString", "coordinates": [[-120.3, 16.6], [-121.4, 16.9]]},
+                },
+                "GDACS": {
+                    "storm_id": "GDACS-TC1001289",
+                    "source": "GDACS",
+                    "current_position": {
+                        "timestamp": now.isoformat(),
+                        "latitude": 16.6,
+                        "longitude": -120.3,
+                    },
+                },
+            },
+        })
+
+        self.assertEqual("NHC", composed["selected_observed_source"])
+        self.assertEqual("EP062026", composed["storm_id"])
+        self.assertTrue(composed["forecast_track"])
+
     def test_retired_ibtracs_display_payload_is_not_a_live_hurricane_feed(self):
         payloads = ops._report_display_payload_by_feed({
             "display_payloads": [

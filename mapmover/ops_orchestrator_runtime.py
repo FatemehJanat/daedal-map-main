@@ -141,7 +141,18 @@ def _compose_hurricane_candidates(storm: dict) -> dict:
         # contemporaneous advisories.  This avoids replacing a current JTWC
         # fix with an older JMA/GDACS record merely because of its basin rank.
         return (_hurricane_candidate_time(candidate), _hurricane_source_priority_for_storm(storm, candidate.get("source")))
-    observed = max((item for item in candidates if _hurricane_has_position(item)), key=rank, default=None)
+    # GDACS is an alert/impact source. Its location is often the last known
+    # fix stamped with the alert poll time, so it must never outrank a warning
+    # centre and replace that agency's observed trail with a single point.
+    observed = max(
+        (
+            item for item in candidates
+            if _hurricane_has_position(item)
+            and str(item.get("source") or "").strip().upper() != "GDACS"
+        ),
+        key=rank,
+        default=None,
+    )
     forecast = max((item for item in candidates if _hurricane_has_forecast(item)), key=rank, default=None)
     selected = dict(observed or forecast or storm)
     if forecast:

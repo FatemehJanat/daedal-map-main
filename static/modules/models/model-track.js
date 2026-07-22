@@ -280,13 +280,24 @@ export const TrackModel = {
 
     const map = MapAdapter.map;
 
-    // Check if source already exists - if so, just update data (no flash)
     const displayGeojson = this._withLiveWindFootprints(this._withForecastProbabilityEnvelopes(geojson));
+    const hasLineString = displayGeojson.features.some(
+      feature => feature?.geometry?.type === 'LineString'
+    );
+
+    // Check if source already exists - if so, just update data (no flash).
+    // A source can be created first from a point-only response, though (for
+    // example while an Ops snapshot is still loading). In that case its
+    // point layers cannot render later LineString tracks; rebuild once when
+    // the real track payload arrives.
     const existingSource = map.getSource(CONFIG.layers.hurricaneSource);
     if (existingSource) {
-      // Source exists - just update data, don't recreate layers
-      existingSource.setData(displayGeojson);
-      return true;
+      const hasTrackLayers = Boolean(map.getLayer(CONFIG.layers.hurricaneCircle + '-lines'));
+      if (!hasLineString || hasTrackLayers) {
+        existingSource.setData(displayGeojson);
+        return true;
+      }
+      this.clear();
     }
 
     // First time render - create source and layers
@@ -297,10 +308,6 @@ export const TrackModel = {
       type: 'geojson',
       data: displayGeojson
     });
-
-    const hasLineString = displayGeojson.features.some(
-      feature => feature?.geometry?.type === 'LineString'
-    );
 
     if (hasLineString) {
       // Render track lines for yearly overview
