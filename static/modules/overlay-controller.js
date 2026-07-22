@@ -373,13 +373,6 @@ const OVERLAY_ENDPOINTS = {
     yearField: 'year',
     maxYear: 2019  // Flood data ends at 2019
   },
-  drought: {
-    baseUrl: '/api/drought/geojson',
-    params: { country: 'CAN' },
-    eventType: 'drought',
-    yearField: 'year',
-    minYear: 2019  // Canada drought data starts at 2019
-  },
   landslides: {
     baseUrl: '/api/landslides/geojson',
     params: { min_deaths: '1', require_coords: 'true' },
@@ -580,23 +573,6 @@ const EVENT_LIFECYCLE = {
     },
     defaultDuration: 21 * 24 * 60 * 60 * 1000,  // 21 days
     fadeDuration: 7 * 24 * 60 * 60 * 1000       // 7 days
-  },
-
-  drought: {
-    // Monthly snapshot duration event
-    getStartMs: (f) => new Date(f.properties.timestamp).getTime(),
-    getEndMs: (f) => {
-      if (f.properties.end_timestamp) {
-        return new Date(f.properties.end_timestamp).getTime();
-      }
-      if (f.properties.duration_days) {
-        return new Date(f.properties.timestamp).getTime() +
-               f.properties.duration_days * 24 * 60 * 60 * 1000;
-      }
-      return new Date(f.properties.timestamp).getTime() + 30 * 24 * 60 * 60 * 1000;
-    },
-    defaultDuration: 30 * 24 * 60 * 60 * 1000,  // 30 days
-    fadeDuration: 0  // No fade between monthly snapshots
   },
 
   landslide: {

@@ -109,8 +109,7 @@ const OVERLAY_ICONS = {
 // Published Explore sources use their authored display_contract above.  Do not
 // add a new source here: give it an explicit display contract instead.
 const MODEL_OVERRIDES = {
-  'hurricanes_live': 'track',
-  'drought': 'polygon'
+  'hurricanes_live': 'track'
 };
 
 const OPS_FEED_TO_OVERLAY_IDS = {
