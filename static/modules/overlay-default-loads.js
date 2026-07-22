@@ -314,7 +314,8 @@ function buildExploreTenYearDisasterAction() {
       max: endMs,
       current: startMs,
       granularity: 'timestamp',
-      available: []
+      available: [],
+      overlayIds
     },
     _requestedPackCount: overlayIds.length
   };

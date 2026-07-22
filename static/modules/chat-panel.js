@@ -1537,6 +1537,16 @@ export const ChatManager = {
       const timeline = action.timeline;
       const timeSlider = window.TimeSlider;
       if (successCount > 0 && timeline && timeSlider?.setTimeRange) {
+        // Range loads run concurrently. Re-assert the authored overlay set
+        // after the batch so a catalog/list refresh during one child request
+        // cannot leave data cached but no overlays active to render it.
+        const timelineOverlayIds = Array.isArray(timeline.overlayIds)
+          ? timeline.overlayIds.map((value) => String(value || '').trim()).filter(Boolean)
+          : [];
+        for (const overlayId of timelineOverlayIds) {
+          OverlaySelector?.showOverlay?.(overlayId, options.mode || this.mode);
+          OverlaySelector?.setActive?.(overlayId, true);
+        }
         timeSlider.setTimeRange({
           min: timeline.min,
           max: timeline.max,
@@ -1547,6 +1557,12 @@ export const ChatManager = {
         timeSlider.resetTrimBounds?.();
         if (Number.isFinite(timeline.current)) {
           timeSlider.setTime(timeline.current, 'default-load');
+        }
+        // setTime notifies the active set above, but render explicitly too:
+        // this is the first frame of a preset and should not depend on the
+        // timestamp-throttle state left by an earlier conversation.
+        for (const overlayId of timelineOverlayIds) {
+          OverlayController?.renderCurrentData?.(overlayId);
         }
       }
 
