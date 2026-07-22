@@ -1335,32 +1335,71 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
         except Exception as exc:
             log.warning("prewarm hurricanes preload-range failed: %s", exc)
 
-    # --- wildfires (global files through 2024; route caches assembled df) ---
+    # --- wildfires (the same global + USA + CAN union as the route) ---------
     wf_base = global_dir / "disasters/wildfires/by_year_enriched"
     preload_ck = make_preload_cache_key("wildfires", min_area_km2=500, include_perimeter=True)
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
+            from .paths import COUNTRIES_DIR
+
+            wildfire_frames: list[pd.DataFrame] = []
+            # The browser's default request has no location filter, so it
+            # deliberately combines the regional source files with the global
+            # partitions. A global-only warm result would be fast but wrong.
+            regional_sources = (
+                ("NIFC", global_dir / "disasters/wildfires/sources/usa/fires_enriched.parquet", COUNTRIES_DIR / "USA/disasters/wildfires/fires_enriched.parquet"),
+                ("CNFDB", global_dir / "disasters/wildfires/sources/can/fires_enriched.parquet", COUNTRIES_DIR / "CAN/wildfires/fires_enriched.parquet"),
+            )
+            for source_name, preferred_path, fallback_path in regional_sources:
+                source_path = preferred_path if is_cloud_mode() or preferred_path.exists() else fallback_path
+                try:
+                    regional_df = select_rows(source_path)
+                    if regional_df.empty:
+                        continue
+                    regional_df["timestamp"] = pd.to_datetime(regional_df["timestamp"], errors="coerce")
+                    regional_df = regional_df[
+                        (regional_df["timestamp"] >= pd.to_datetime(preload_start))
+                        & (regional_df["timestamp"] <= pd.to_datetime(preload_end))
+                    ]
+                    if "area_km2" in regional_df.columns:
+                        regional_df = regional_df[regional_df["area_km2"] >= 500]
+                    elif "burned_acres" in regional_df.columns:
+                        regional_df["area_km2"] = regional_df["burned_acres"] * 0.00404686
+                        regional_df = regional_df[regional_df["area_km2"] >= 500]
+                    if not regional_df.empty:
+                        if "source" not in regional_df.columns:
+                            regional_df["source"] = source_name
+                        wildfire_frames.append(regional_df)
+                except Exception as exc:
+                    log.warning("prewarm wildfires %s source failed: %s", source_name, exc)
+
             year_files = [
                 wf_base / f"fires_{yr}_enriched.parquet"
                 for yr in range(preload_start_year, min(preload_end_year, 2024) + 1)
             ]
-            df = select_filtered_partitioned_rows(
+            global_df = select_filtered_partitioned_rows(
                 year_files,
                 min_value_filters={"area_km2": 500},
             )
+            if not global_df.empty:
+                global_df["timestamp"] = pd.to_datetime(global_df["timestamp"], errors="coerce")
+                global_df = global_df[
+                    (global_df["timestamp"] >= pd.to_datetime(preload_start))
+                    & (global_df["timestamp"] <= pd.to_datetime(preload_end))
+                ]
+                if "land_cover" not in global_df.columns:
+                    global_df["land_cover"] = ""
+                if "source" not in global_df.columns:
+                    global_df["source"] = "global_fire_atlas"
+                if "iso3" in global_df.columns:
+                    global_df = global_df[~global_df["iso3"].isin(["USA", "CAN"])]
+                if not global_df.empty:
+                    wildfire_frames.append(global_df)
+
+            df = pd.concat(wildfire_frames, ignore_index=True) if wildfire_frames else pd.DataFrame()
             if not df.empty:
-                import pandas as _pd
-                df["timestamp"] = _pd.to_datetime(df["timestamp"], errors="coerce")
-                df = df[(df["timestamp"] >= _pd.to_datetime(preload_start)) & (df["timestamp"] <= _pd.to_datetime(preload_end))]
-                if "land_cover" not in df.columns:
-                    df["land_cover"] = ""
-                if "source" not in df.columns:
-                    df["source"] = "global_fire_atlas"
-                if "iso3" in df.columns:
-                    df = df[~df["iso3"].isin(["USA", "CAN"])]
-                if not df.empty:
-                    cache_set(preload_ck, df, permanent=True)
+                cache_set(preload_ck, df, permanent=True)
             log.info("prewarm wildfires preload-range: %d rows in %.1fs", len(df), time.monotonic() - t0)
         except Exception as exc:
             log.warning("prewarm wildfires preload-range failed: %s", exc)

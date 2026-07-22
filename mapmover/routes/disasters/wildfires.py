@@ -292,9 +292,16 @@ async def get_wildfires_geojson(
                 for row in records:
                     ts = row.get("timestamp")
                     ts_str = ts.isoformat() if ts is not None and pd.notna(ts) and hasattr(ts, "isoformat") else (str(ts) if pd.notna(ts) else None)
+                    if include_perimeter and row.get("perimeter") and pd.notna(row.get("perimeter")):
+                        try:
+                            geom = json_lib.loads(row["perimeter"]) if isinstance(row["perimeter"], str) else row["perimeter"]
+                        except Exception:
+                            geom = {"type": "Point", "coordinates": [float(row["longitude"]), float(row["latitude"])]}
+                    else:
+                        geom = {"type": "Point", "coordinates": [float(row["longitude"]), float(row["latitude"])]}
                     features.append({
                         "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [float(row["longitude"]), float(row["latitude"])]},
+                        "geometry": geom,
                         "properties": {
                             "event_id": row.get("event_id", ""),
                             "area_km2": float(row["area_km2"]) if pd.notna(row.get("area_km2")) else None,
@@ -311,6 +318,7 @@ async def get_wildfires_geojson(
                             "iso3": row.get("iso3", ""),
                         },
                     })
+                    add_display_lifecycle_properties(row, features[-1]["properties"])
                 return msgpack_response({
                     "type": "FeatureCollection",
                     "features": features,
