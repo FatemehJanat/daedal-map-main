@@ -21,8 +21,7 @@ const DISASTER_PACKS = new Set([
   'tsunamis',
   'tornadoes',
   'floods',
-  'landslides',
-  'drought'
+  'landslides'
 ]);
 
 const SOURCE_TO_OVERLAY = {
@@ -36,8 +35,7 @@ const SOURCE_TO_OVERLAY = {
   tsunamis_events: 'tsunamis',
   tornadoes_events: 'tornadoes',
   floods_events: 'floods',
-  landslides_events: 'landslides',
-  drought_events: 'drought'
+  landslides_events: 'landslides'
 };
 
 function getCurrentUtcYear() {

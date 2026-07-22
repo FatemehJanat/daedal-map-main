@@ -31,7 +31,6 @@ const TYPE_TO_MODEL = {
   // shape at runtime: polygon when geometry exists, otherwise point/radius.
   wildfire: 'point-radius',
   flood: 'point-radius',
-  drought: 'polygon',        // Drought polygons for choropleth animation
   ash_cloud: 'polygon',
   drought_area: 'polygon'
 };

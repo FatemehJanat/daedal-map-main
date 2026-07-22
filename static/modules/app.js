@@ -54,7 +54,6 @@ const DISPLAY_SOURCE_EVENT_TYPE_HINTS = [
   ['tsunami', 'tsunami'],
   ['tornado', 'tornado'],
   ['flood', 'flood'],
-  ['drought', 'drought'],
   ['landslide', 'landslide']
 ];
 
