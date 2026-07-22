@@ -1024,7 +1024,16 @@ def make_cache_key(source: str, **params) -> str:
         -> "floods:include_geometry:True:year:2021"
     """
     relevant = {k: v for k, v in params.items() if v is not None and v is not False}
-    parts = [source] + [f"{k}:{v}" for k, v in sorted(relevant.items())]
+
+    def cache_value(value: object) -> str:
+        # FastAPI parses query thresholds as floats while metadata/prewarm
+        # defaults are often authored as integers. They represent the same
+        # request and must address the same cache entry (500 == 500.0).
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    parts = [source] + [f"{key}:{cache_value(value)}" for key, value in sorted(relevant.items())]
     return ":".join(parts)
 
 
