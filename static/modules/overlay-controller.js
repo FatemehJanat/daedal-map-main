@@ -927,32 +927,6 @@ function filterByLifecycle(features, currentMs, eventType) {
   }).filter(Boolean);
 }
 
-function filterByTemporalWindow(features, minMs, maxMs, eventType) {
-  return features.map(f => {
-    const lifecycle = resolveFeatureLifecycleWithFallback(f, eventType);
-    if (!lifecycle) {
-      return null;
-    }
-    const { startMs, endMs, fadeDuration } = lifecycle;
-    const visibleEndMs = endMs + fadeDuration;
-    const overlapsWindow = visibleEndMs >= minMs && startMs <= maxMs;
-    if (!overlapsWindow) {
-      return null;
-    }
-
-    return {
-      ...f,
-      properties: {
-        ...f.properties,
-        _opacity: 1.0,
-        _phase: 'active',
-        _radiusProgress: 1.0,
-        _animationProgress: 1.0
-      }
-    };
-  }).filter(Boolean);
-}
-
 /**
  * Ease out quadratic - starts fast, slows down
  */
@@ -3592,33 +3566,23 @@ export const OverlayController = {
 
     if (useTimestamp && yearOrTimestamp) {
       const currentMs = yearOrTimestamp;
-      const hasTemporalBounds = Boolean(TimeSlider?.hasActiveTrimBounds?.());
-      const bounds = hasTemporalBounds ? TimeSlider.getEffectiveBounds?.() : null;
-      const filtered = hasTemporalBounds && Number.isFinite(bounds?.min) && Number.isFinite(bounds?.max)
-        ? filterByTemporalWindow(
-            cachedData.features,
-            bounds.min,
-            bounds.max,
-            endpoint.eventType
-          )
-        : filterByLifecycle(
-            cachedData.features,
-            currentMs,
-            endpoint.eventType
-          );
+      // Trim bounds constrain the playhead; they must not change event
+      // filtering into "everything that overlaps this whole window." Doing
+      // that made every hurricane track and event visible at once as soon as
+      // a user narrowed the timeline. Rendering always answers the same
+      // question: which features are active at the current timestamp?
+      const filtered = filterByLifecycle(
+        cachedData.features,
+        currentMs,
+        endpoint.eventType
+      );
 
       filteredGeojson = {
         type: 'FeatureCollection',
         features: filtered
       };
-      if (hasTemporalBounds && Number.isFinite(bounds?.min) && Number.isFinite(bounds?.max)) {
-        const minStr = new Date(bounds.min).toISOString().split('T')[0];
-        const maxStr = new Date(bounds.max).toISOString().split('T')[0];
-        console.log(`OverlayController: Temporal window filtered ${cachedData.features.length} -> ${filtered.length} for ${minStr} to ${maxStr}`);
-      } else {
-        const dateStr = new Date(currentMs).toISOString().split('T')[0];
-        console.log(`OverlayController: Lifecycle filtered ${cachedData.features.length} -> ${filtered.length} for ${dateStr}`);
-      }
+      const dateStr = new Date(currentMs).toISOString().split('T')[0];
+      console.log(`OverlayController: Lifecycle filtered ${cachedData.features.length} -> ${filtered.length} for ${dateStr}`);
     } else if (endpoint.yearField && yearOrTimestamp) {
       // LEGACY: Year-based filtering
       const yearNum = parseInt(yearOrTimestamp);

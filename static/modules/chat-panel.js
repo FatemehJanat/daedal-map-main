@@ -1531,6 +1531,25 @@ export const ChatManager = {
         Array.from({ length: concurrency }, () => runNext())
       );
 
+      // A curated multi-load may define one shared playback window. Apply it
+      // only after every child range has contributed its cache coverage;
+      // otherwise each child recalculate can resurrect older timeline bounds.
+      const timeline = action.timeline;
+      const timeSlider = window.TimeSlider;
+      if (successCount > 0 && timeline && timeSlider?.setTimeRange) {
+        timeSlider.setTimeRange({
+          min: timeline.min,
+          max: timeline.max,
+          granularity: timeline.granularity || 'timestamp',
+          available: Array.isArray(timeline.available) ? timeline.available : [],
+          replace: true
+        });
+        timeSlider.resetTrimBounds?.();
+        if (Number.isFinite(timeline.current)) {
+          timeSlider.setTime(timeline.current, 'default-load');
+        }
+      }
+
       if (successCount > 0 && !options.suppressResultMessage) {
         const labelText = joinLabelsForMessage(loadedLabels);
         const configuredSummary = String(action.summary || '').trim();

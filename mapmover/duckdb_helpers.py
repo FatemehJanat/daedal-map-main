@@ -1058,8 +1058,21 @@ def is_default_preload_range(start: str | None, end: str | None) -> bool:
 
 
 def make_preload_cache_key(source: str, **params) -> str:
-    """Canonical cache key for the frontend's default disaster preload workflow."""
-    return make_cache_key(source, preset="preload_default_10_years", **params)
+    """Canonical cache key for the frontend's rolling disaster preload workflow.
+
+    The slice is permanent for the lifetime of a runtime process, so its key
+    includes the computed UTC-year window.  A process that survives New Year
+    therefore builds a fresh slice instead of treating last year's ten-year
+    DataFrame as coverage for the new rolling window.
+    """
+    start_year, end_year = get_default_preload_year_window(relative_years=10)
+    return make_cache_key(
+        source,
+        preset="preload_default_10_years",
+        window_start_year=start_year,
+        window_end_year=end_year,
+        **params,
+    )
 
 
 def select_compatible_preload_slice(
@@ -1180,23 +1193,11 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     # Prewarm the same relative-year window the Explore preset uses.
     preload_start_year, preload_end_year = get_default_preload_year_window(relative_years=10)
-    animation_years = list(range(preload_start_year, preload_end_year + 1))
     preload_start = f"{preload_start_year:04d}-01-01 00:00:00"
     preload_end = f"{preload_end_year:04d}-12-31 23:59:59"
 
     # --- earthquakes (min_magnitude 5.5 from overlay-controller.js) ----------
     eq_path = global_dir / "disasters/earthquakes/events.parquet"
-    for yr in animation_years:
-        ck = make_cache_key("earthquakes", year=yr, min_magnitude=5.5)
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                df = select_filtered_event_rows(eq_path, year=yr, min_value_filters={"magnitude": 5.5})
-                if not df.empty:
-                    cache_set(ck, df, ttl=60)
-                log.info("prewarm earthquakes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm earthquakes year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("earthquakes", min_magnitude=5.5)
     if cache_get(preload_ck) is None:
         try:
@@ -1210,17 +1211,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     # --- tsunamis (default preset is 3m+ wave height) ------------------------
     ts_path = global_dir / "disasters/tsunamis/events.parquet"
-    for yr in animation_years:
-        ck = make_cache_key("tsunamis", year=yr, min_height_m=3)
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                df = select_filtered_event_rows(ts_path, year=yr, min_value_filters={"max_water_height_m": 3})
-                if not df.empty:
-                    cache_set(ck, df, ttl=60)
-                log.info("prewarm tsunamis year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm tsunamis year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("tsunamis", min_height_m=3)
     if cache_get(preload_ck) is None:
         try:
@@ -1239,17 +1229,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     # --- floods (default preset is severity 2+, data currently ends in 2019) --
     fl_path = resolve_flood_events_path(global_dir)
-    for yr in [y for y in animation_years if y <= 2019]:
-        ck = make_cache_key("floods", year=yr, min_severity=2, include_geometry=True)
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                df = select_filtered_event_rows(fl_path, year=yr, min_value_filters={"severity": 2})
-                if not df.empty:
-                    cache_set(ck, df, ttl=60)
-                log.info("prewarm floods year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm floods year=%d failed: %s", yr, exc)
     flood_preload_end_year = min(preload_end_year, 2019)
     if preload_start_year <= flood_preload_end_year:
         preload_ck = make_preload_cache_key("floods", min_severity=2, include_geometry=True)
@@ -1272,17 +1251,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     # --- volcanoes/eruptions (default preset is VEI 3+, exclude ongoing) -----
     vol_path = global_dir / "disasters/volcanoes/events.parquet"
-    for yr in animation_years:
-        ck = make_cache_key("volcanoes", year=yr, min_vei=3)
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                df = select_filtered_event_rows(vol_path, year=yr, min_value_filters={"VEI": 3})
-                if not df.empty:
-                    cache_set(ck, df, ttl=60)
-                log.info("prewarm volcanoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm volcanoes year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("volcanoes", min_vei=3, exclude_ongoing=True)
     if cache_get(preload_ck) is None:
         try:
@@ -1303,17 +1271,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
 
     # --- tornadoes (default preset is EF2+, post-fetch scale filter) ----------
     tor_path = global_dir / "disasters/tornadoes/events.parquet"
-    for yr in animation_years:
-        ck = make_cache_key("tornadoes", year=yr, min_scale="EF2")
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                df = select_filtered_event_rows(tor_path, year=yr)
-                if not df.empty:
-                    cache_set(ck, df, ttl=60)
-                log.info("prewarm tornadoes year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm tornadoes year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("tornadoes", min_scale="EF2")
     if cache_get(preload_ck) is None:
         try:
@@ -1329,26 +1286,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
     # Warm DuckDB metadata cache for both files; route handler caches the join.
     hur_storms_path = global_dir / "disasters/hurricanes/storms.parquet"
     hur_positions_path = global_dir / "disasters/hurricanes/positions.parquet"
-    for yr in animation_years:
-        ck = make_cache_key("hurricanes", year=yr, min_category="Cat1")
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                storms_df = select_filtered_event_rows(hur_storms_path, year=yr)
-                if not storms_df.empty:
-                    # Filter Cat1+ (matches overlay-controller.js default)
-                    cat_order = {"TD": 0, "TS": 1, "Cat1": 2, "Cat2": 3, "Cat3": 4, "Cat4": 5, "Cat5": 6}
-                    storms_df = storms_df[storms_df["max_category"].map(lambda x: cat_order.get(x, 0) >= 2)]
-                    if not storms_df.empty:
-                        storm_ids = storms_df["storm_id"].tolist()
-                        peak_positions = select_peak_positions_by_storm_ids(hur_positions_path, storm_ids)
-                        if not peak_positions.empty:
-                            joined = storms_df.merge(peak_positions[["storm_id", "latitude", "longitude"]], on="storm_id", how="inner", suffixes=("", "_pos"))
-                            if not joined.empty:
-                                cache_set(ck, joined, ttl=60)
-                log.info("prewarm hurricanes year=%d: %d storms in %.1fs", yr, len(storms_df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm hurricanes year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("hurricanes_tracks", min_category="Cat1")
     if cache_get(preload_ck) is None:
         try:
@@ -1398,30 +1335,8 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
         except Exception as exc:
             log.warning("prewarm hurricanes preload-range failed: %s", exc)
 
-    # --- wildfires (per-year global files through 2024; route caches assembled df)
-    # Warm DuckDB metadata cache for the per-year parquet files.
+    # --- wildfires (global files through 2024; route caches assembled df) ---
     wf_base = global_dir / "disasters/wildfires/by_year_enriched"
-    for yr in animation_years:
-        if yr > 2024:
-            continue  # global wildfire data only goes to 2024
-        ck = make_cache_key("wildfires", year=yr, min_area_km2=500)
-        if cache_get(ck) is None:
-            try:
-                t0 = time.monotonic()
-                wf_path = wf_base / f"fires_{yr}_enriched.parquet"
-                df = select_filtered_event_rows(wf_path, min_value_filters={"area_km2": 500})
-                if not df.empty:
-                    import pandas as _pd
-                    df["timestamp"] = _pd.to_datetime(df["timestamp"], errors="coerce")
-                    df["year"] = df["timestamp"].dt.year
-                    df = df[df["year"] == yr]
-                    if "land_cover" not in df.columns:
-                        df["land_cover"] = ""
-                    if not df.empty:
-                        cache_set(ck, df, ttl=60)
-                log.info("prewarm wildfires year=%d: %d rows in %.1fs", yr, len(df), time.monotonic() - t0)
-            except Exception as exc:
-                log.warning("prewarm wildfires year=%d failed: %s", yr, exc)
     preload_ck = make_preload_cache_key("wildfires", min_area_km2=500, include_perimeter=True)
     if cache_get(preload_ck) is None:
         try:

@@ -305,6 +305,17 @@ function buildExploreTenYearDisasterAction() {
       'earthquakes (M5.5+), hurricanes (Cat1+), volcanoes (VEI 3+), ' +
       'wildfires (500 km²+), tsunamis (3m+), tornadoes (EF2+), and floods (severity 2+). ' +
       'Use the timeline to move through the available history, or ask to narrow by place, time, or event.',
+    // This preset owns its bounded Explore timeline. The range must not be
+    // inherited from an earlier overlay/chat load (for example 1970-2026).
+    // An empty available list selects the shared linear timestamp animator;
+    // events themselves still determine what appears at each frame.
+    timeline: {
+      min: startMs,
+      max: endMs,
+      current: startMs,
+      granularity: 'timestamp',
+      available: []
+    },
     _requestedPackCount: overlayIds.length
   };
 }
