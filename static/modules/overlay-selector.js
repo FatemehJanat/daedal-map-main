@@ -59,8 +59,18 @@ function getDisplayContract(sources = []) {
     navigation_geometry: 2,
     admin_choropleth: 1
   };
+  const eventRenderingPriority = {
+    // A combined hazard overlay can contain a point-only reporting source and
+    // a prepared GeoJSON event source. Prefer the richest authored display
+    // variant instead of whichever source happened to be catalogued first.
+    geojson_first_event: 4,
+    track_event: 3,
+    polygon_event: 2,
+    point_radius_event: 1
+  };
   return contracts.sort((left, right) => (
-    (priority[right.family] || 0) - (priority[left.family] || 0)
+    ((priority[right.family] || 0) * 10 + (eventRenderingPriority[right.rendering_model] || 0)) -
+    ((priority[left.family] || 0) * 10 + (eventRenderingPriority[left.rendering_model] || 0))
   ))[0];
 }
 

@@ -9,7 +9,9 @@ import { PointRadiusModel, setDependencies as setPointDeps } from './model-point
 import { TrackModel, setDependencies as setTrackDeps } from './model-track.js';
 import { PolygonModel, setDependencies as setPolygonDeps } from './model-polygon.js';
 
-// Map event types to model IDs
+// Compatibility mapping for focused sequences and legacy payloads that do not
+// carry an overlay display contract. Normal Explore overlay rendering resolves
+// its model from display_contract.rendering_model below.
 const TYPE_TO_MODEL = {
   // Point + Radius events (Model A)
   earthquake: 'point-radius',
@@ -33,6 +35,23 @@ const TYPE_TO_MODEL = {
   ash_cloud: 'polygon',
   drought_area: 'polygon'
 };
+
+const RENDERING_MODEL_TO_MODEL = {
+  point_radius_event: 'point-radius',
+  geojson_first_event: 'point-radius',
+  track_event: 'track',
+  polygon_event: 'polygon'
+};
+
+function renderingModelForContract(displayContract) {
+  if (!displayContract || typeof displayContract !== 'object') return '';
+  if (displayContract.family !== 'event_overlay') return '';
+  return String(displayContract.rendering_model || '').trim();
+}
+
+function isGeojsonFirstContract(displayContract) {
+  return renderingModelForContract(displayContract) === 'geojson_first_event';
+}
 
 // Model registry
 const models = {
@@ -126,6 +145,18 @@ export const ModelRegistry = {
   },
 
   /**
+   * Resolve an event renderer from its authored display contract. The optional
+   * event-type fallback is only for retained legacy/focused paths which do not
+   * have an overlay contract in scope.
+   */
+  getModelForDisplayContract(displayContract, fallbackEventType = '') {
+    const renderingModel = renderingModelForContract(displayContract);
+    const modelId = RENDERING_MODEL_TO_MODEL[renderingModel];
+    if (modelId) return models[modelId] || null;
+    return fallbackEventType ? this.getModelForType(fallbackEventType) : null;
+  },
+
+  /**
    * Get model by ID
    * @param {string} modelId - Model ID (e.g., 'point-radius')
    * @returns {Object|null} Model object or null
@@ -144,24 +175,22 @@ export const ModelRegistry = {
   },
 
   /**
-   * Render data using the payload shape rather than hazard-specific defaults.
-   * Wildfires and floods are geojson-first event families: polygons render via
-   * PolygonModel when present, and remaining point features fall back to
-   * PointRadiusModel.
+   * Render data using its authored contract. GeoJSON-first event sources split
+   * prepared polygons from their declared point/radius fallback in one shared
+   * renderer path. `eventType` remains hazard identity for popup/style data.
    * @param {Object} geojson - GeoJSON data
    * @param {string} eventType - Event type
    * @param {Object} options - Render options
    * @returns {boolean} True if rendered
    */
   render(geojson, eventType, options = {}) {
-    // Geojson-first split render for hazards that can legitimately carry both
-    // event polygons and fallback event points in the same payload.
-    if (eventType === 'wildfire' || eventType === 'flood') {
+    const displayContract = options.displayContract;
+    if (isGeojsonFirstContract(displayContract)) {
       const features = Array.isArray(geojson?.features) ? geojson.features : [];
       if (!features.length) {
         models['polygon'].clearType?.(eventType);
         models['point-radius'].clearType?.(eventType);
-        console.log(`ModelRegistry: Cleared ${eventType} split render (no features)`);
+        console.log(`ModelRegistry: Cleared ${eventType} GeoJSON-first render (no features)`);
         return true;
       }
 
@@ -197,7 +226,7 @@ export const ModelRegistry = {
           models['point-radius'].clearType?.(eventType);
         }
 
-        console.log(`ModelRegistry: ${eventType} split render - ${polygonFeatures.length} polygons, ${pointFeatures.length} points`);
+        console.log(`ModelRegistry: ${eventType} GeoJSON-first render - ${polygonFeatures.length} polygons, ${pointFeatures.length} points`);
         return true;
       }
 
@@ -205,8 +234,7 @@ export const ModelRegistry = {
       models['polygon'].clearType?.(eventType);
     }
 
-    // Default: use model from TYPE_TO_MODEL mapping
-    const model = this.getModelForType(eventType);
+    const model = this.getModelForDisplayContract(displayContract, eventType);
     if (model) {
       model.render(geojson, eventType, options);
       return true;

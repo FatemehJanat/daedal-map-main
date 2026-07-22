@@ -293,6 +293,15 @@ function isSharedMetricOverlay(overlayId) {
   return config?.model === 'choropleth';
 }
 
+function getOverlayDisplayContract(overlayId) {
+  const contract = OverlaySelector?.getOverlayConfig?.(overlayId)?.displayContract;
+  return contract && typeof contract === 'object' ? contract : null;
+}
+
+function isGeojsonFirstOverlay(overlayId) {
+  return getOverlayDisplayContract(overlayId)?.rendering_model === 'geojson_first_event';
+}
+
 /**
  * Gardner-Knopoff window calculation for aftershocks.
  * Returns time window in days based on mainshock magnitude.
@@ -1627,6 +1636,7 @@ export const OverlayController = {
     this._cleanupOverlayAnimations(overlayId);
 
     const rendered = ModelRegistry?.render(displayPayload.geojson, endpoint.eventType, {
+      displayContract: getOverlayDisplayContract(overlayId),
       onEventClick: (props) => this.handleEventClick(overlayId, props)
     });
     if (rendered) {
@@ -1703,6 +1713,7 @@ export const OverlayController = {
     };
 
     const rendered = ModelRegistry?.render(displayGeojson, endpoint.eventType, {
+      displayContract: getOverlayDisplayContract(overlayId),
       onEventClick: (props) => this.handleEventClick(overlayId, props)
     });
     if (rendered) {
@@ -3628,6 +3639,7 @@ export const OverlayController = {
 
     // Render using appropriate model
     const rendered = ModelRegistry?.render(filteredGeojson, endpoint.eventType, {
+      displayContract: getOverlayDisplayContract(overlayId),
       onEventClick: (props) => this.handleEventClick(overlayId, props)
     });
 
@@ -3686,7 +3698,10 @@ export const OverlayController = {
     this._cleanupOverlayAnimations(overlayId);
 
     // Clear visual layers from map (but keep dataCache intact)
-    const model = ModelRegistry?.getModelForType(endpoint.eventType);
+    const model = ModelRegistry?.getModelForDisplayContract(
+      getOverlayDisplayContract(overlayId),
+      endpoint.eventType
+    );
     if (model) {
       if (model.clearType) {
         model.clearType(endpoint.eventType);
@@ -3695,11 +3710,12 @@ export const OverlayController = {
       }
     }
 
-    // Also clear polygon layers for split-render types. Unconditional:
+    // Also clear polygon layers for authored GeoJSON-first render contracts.
+    // Unconditional:
     // the polygon model's activeTypes flag can desync from on-map layers
     // (re-render fast path), and clearType is already existence-safe.
     const eventType = endpoint.eventType;
-    if (eventType === 'wildfire' || eventType === 'flood') {
+    if (isGeojsonFirstOverlay(overlayId)) {
       const polygonModel = ModelRegistry?.getModel('polygon');
       polygonModel?.clearType?.(eventType);
     }
@@ -4054,7 +4070,10 @@ export const OverlayController = {
       // Projection/style switches can leave the map in an in-between state
       // where a source still exists but its custom layers were dropped. Force a
       // visual rebuild from cache instead of relying on model.update/setData.
-      const model = ModelRegistry?.getModelForType(endpoint.eventType);
+      const model = ModelRegistry?.getModelForDisplayContract(
+        getOverlayDisplayContract(overlayId),
+        endpoint.eventType
+      );
       if (model) {
         if (model.clearType) {
           model.clearType(endpoint.eventType);
@@ -4063,9 +4082,9 @@ export const OverlayController = {
         }
       }
 
-      // Split-render event types own a secondary polygon model on top of the
+      // GeoJSON-first contracts own a secondary polygon model on top of the
       // point/event model. Clear that too so the cached render fully rebuilds.
-      if (endpoint.eventType === 'wildfire' || endpoint.eventType === 'flood') {
+      if (isGeojsonFirstOverlay(overlayId)) {
         const polygonModel = ModelRegistry?.getModel('polygon');
         if (polygonModel?.clearType) {
           polygonModel.clearType(endpoint.eventType);
