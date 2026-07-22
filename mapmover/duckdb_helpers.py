@@ -1332,6 +1332,9 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                                     "num_positions",
                                     "start_date",
                                     "end_date",
+                                    "display_start_timestamp",
+                                    "display_end_timestamp",
+                                    "display_animation_kind",
                                     "made_landfall",
                                 ]
                             ],
