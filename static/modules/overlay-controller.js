@@ -427,9 +427,10 @@ const OVERLAY_ENDPOINTS = {
 };
 
 /**
- * Event lifecycle configuration for timestamp-based filtering.
- * Each disaster type defines how to calculate start/end times and fade duration.
- * See docs/future/rolling_time.md for full documentation.
+ * Legacy event lifecycle compatibility for payloads that predate the prepared
+ * display lifecycle fields. Published Explore event payloads provide
+ * display_start_timestamp, display_end_timestamp, and (when
+ * applicable) display_animation_kind directly from prepared data instead.
  */
 const EVENT_LIFECYCLE = {
   earthquake: {
@@ -602,6 +603,10 @@ const EVENT_LIFECYCLE = {
   }
 };
 
+// A map fade is shared renderer polish, not a source fact. Prepared event
+// data owns only the active start/end interval.
+const PREPARED_EVENT_FADE_MS = 7 * 24 * 60 * 60 * 1000;
+
 function parseTimeMs(value) {
   if (value == null || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -623,6 +628,7 @@ function firstFiniteNumber(values) {
 
 function resolveFeatureStartMs(props = {}) {
   return parseTimeMs(
+    props.display_start_timestamp ??
     props.start_timestamp ??
     props.start_time ??
     props.start_date ??
@@ -672,6 +678,7 @@ function resolveFeatureFadeMs(props = {}) {
 
 function resolveFeatureEndMs(props = {}, startMs = null) {
   const explicitEnd = parseTimeMs(
+    props.display_end_timestamp ??
     props.end_timestamp ??
     props.end_time ??
     props.end_date ??
@@ -735,7 +742,16 @@ function resolveLegacyFeatureLifecycle(feature, eventType) {
 }
 
 function resolveFeatureLifecycleWithFallback(feature, eventType) {
+  const props = feature?.properties || {};
   const explicitLifecycle = resolveFeatureLifecycle(feature);
+  // A prepared lifecycle is authoritative. Do not recompute it from a
+  // hazard name or raw factual fields in the browser.
+  if (props.display_start_timestamp != null || props.display_end_timestamp != null) {
+    return explicitLifecycle && {
+      ...explicitLifecycle,
+      fadeDuration: explicitLifecycle.fadeDuration || PREPARED_EVENT_FADE_MS
+    };
+  }
   const legacyLifecycle = resolveLegacyFeatureLifecycle(feature, eventType);
 
   if (!explicitLifecycle) {
@@ -776,13 +792,6 @@ function resolveFeatureLifecycleWithFallback(feature, eventType) {
  */
 function filterByLifecycle(features, currentMs, eventType) {
   const config = EVENT_LIFECYCLE[eventType];
-  if (!config) {
-    // Fallback: show all features at full opacity
-    return features.map(f => ({
-      ...f,
-      properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
-    }));
-  }
 
   return features.map(f => {
     const lifecycle = resolveFeatureLifecycleWithFallback(f, eventType);
@@ -836,10 +845,20 @@ function filterByLifecycle(features, currentMs, eventType) {
       _radiusProgress: radiusProgress
     };
 
-    // Calculate expanding wave radius based on event type
+    // Prepared sources declare the animation kind and authored wave values.
+    // The hazard-name branches below remain only for older cached payloads.
     const elapsed = currentMs - startMs;
+    const animationKind = String(f.properties?.display_animation_kind || '');
+    const preparedWaveSpeed = firstFiniteNumber([f.properties?.display_wave_speed_km_per_ms]);
+    const preparedMaxRadius = firstFiniteNumber([f.properties?.display_max_radius_km]);
 
-    if (eventType === 'earthquake') {
+    if (animationKind === 'radial_expansion' && preparedWaveSpeed != null && preparedMaxRadius != null) {
+      const currentRadius = Math.min(elapsed * preparedWaveSpeed, preparedMaxRadius);
+      props._waveRadiusKm = currentRadius;
+      props._radiusProgress = preparedMaxRadius > 0 ? currentRadius / preparedMaxRadius : 1.0;
+    }
+
+    if (!animationKind && eventType === 'earthquake') {
       // Aftershock zone expansion: ~0.3-3 km/h based on magnitude
       // Data-driven speeds from aftershock distance/time analysis
       const waveSpeed = config.getWaveSpeedKmPerMs?.(f) || config.waveSpeedKmPerMs || 0.00000139;
@@ -850,7 +869,7 @@ function filterByLifecycle(features, currentMs, eventType) {
       props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
     }
 
-    if (eventType === 'volcano') {
+    if (!animationKind && eventType === 'volcano') {
       // Ash cloud expansion: VEI-based speed (10-100 km/h)
       const waveSpeed = config.getWaveSpeedKmPerMs?.(f) || config.waveSpeedKmPerMs || 0.0000028;
       const maxRadius = config.getMaxWaveRadiusKm?.(f) || 100;
@@ -859,7 +878,7 @@ function filterByLifecycle(features, currentMs, eventType) {
       props._radiusProgress = maxRadius > 0 ? currentRadius / maxRadius : 1.0;
     }
 
-    if (eventType === 'tsunami') {
+    if (!animationKind && eventType === 'tsunami') {
       // Tsunami waves travel ~720 km/h, expand to furthest runup location
       // All events in events.parquet are sources (runups are in separate file)
       const waveSpeed = config.waveSpeedKmPerMs || 0.0002;  // 720 km/h
@@ -870,7 +889,7 @@ function filterByLifecycle(features, currentMs, eventType) {
     }
 
     // Hurricane track progressive display - trim LineString based on time progress
-    if (eventType === 'hurricane' && f.geometry?.type === 'LineString') {
+    if ((animationKind === 'progressive_track' || (!animationKind && eventType === 'hurricane')) && f.geometry?.type === 'LineString') {
       const totalDuration = endMs - startMs;
       // Calculate animation progress (0 to 1) based on time within active period
       let animationProgress;
@@ -909,14 +928,6 @@ function filterByLifecycle(features, currentMs, eventType) {
 }
 
 function filterByTemporalWindow(features, minMs, maxMs, eventType) {
-  const config = EVENT_LIFECYCLE[eventType];
-  if (!config) {
-    return features.map(f => ({
-      ...f,
-      properties: { ...f.properties, _opacity: 1.0, _phase: 'active', _radiusProgress: 1.0 }
-    }));
-  }
-
   return features.map(f => {
     const lifecycle = resolveFeatureLifecycleWithFallback(f, eventType);
     if (!lifecycle) {

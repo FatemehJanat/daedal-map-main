@@ -7,7 +7,7 @@ from mapmover.duckdb_helpers import cache_get, cache_set, duckdb_available, is_d
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
-from .helpers import filter_by_time_range, msgpack_error, msgpack_response
+from .helpers import add_display_lifecycle_properties, filter_by_time_range, msgpack_error, msgpack_response
 
 
 router = APIRouter()
@@ -435,6 +435,7 @@ async def get_storm_tracks_geojson(
                     },
                 }
             )
+            add_display_lifecycle_properties(storm, features[-1]["properties"])
 
         if missing_metadata_ids:
             sample_ids = ", ".join(missing_metadata_ids[:5])

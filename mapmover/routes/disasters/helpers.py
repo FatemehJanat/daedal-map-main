@@ -142,6 +142,31 @@ def safe_bool(row, col, default=False):
     return bool(val) if pd.notna(val) else default
 
 
+DISPLAY_LIFECYCLE_FIELDS = (
+    "display_start_timestamp",
+    "display_end_timestamp",
+    "display_animation_kind",
+    "display_wave_speed_km_per_ms",
+    "display_max_radius_km",
+)
+
+
+def add_display_lifecycle_properties(row, props: dict) -> dict:
+    """Copy prepared presentation timing into a GeoJSON feature payload.
+
+    These fields are authored during source preparation. Routes only serialize
+    them; the browser must not recreate them from an event-type heuristic.
+    """
+    import pandas as pd
+
+    for field in DISPLAY_LIFECYCLE_FIELDS:
+        value = row.get(field)
+        if value is None or pd.isna(value):
+            continue
+        props[field] = value.isoformat() if hasattr(value, "isoformat") else value.item() if hasattr(value, "item") else value
+    return props
+
+
 def build_geojson_features(df, property_builders: dict, lat_col: str = "latitude", lon_col: str = "longitude"):
     """Build GeoJSON point features from a DataFrame."""
     if df.empty or lat_col not in df.columns or lon_col not in df.columns:
@@ -157,6 +182,7 @@ def build_geojson_features(df, property_builders: dict, lat_col: str = "latitude
     features = []
     for row in records:
         props = {name: builder(row) for name, builder in property_builders.items()}
+        add_display_lifecycle_properties(row, props)
         features.append(
             {
                 "type": "Feature",

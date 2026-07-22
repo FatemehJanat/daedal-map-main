@@ -10,7 +10,7 @@ from mapmover.duckdb_helpers import (
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
-from .helpers import filter_by_time_range, msgpack_error, msgpack_response
+from .helpers import add_display_lifecycle_properties, filter_by_time_range, msgpack_error, msgpack_response
 
 
 router = APIRouter()
@@ -146,6 +146,7 @@ async def get_tornadoes_geojson(
                     },
                 }
             )
+            add_display_lifecycle_properties(row, features[-1]["properties"])
 
         return msgpack_response({"type": "FeatureCollection", "features": features})
     except Exception as e:

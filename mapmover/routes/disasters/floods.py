@@ -10,7 +10,7 @@ from mapmover.duckdb_helpers import (
 from mapmover.logging_analytics import logger
 from mapmover.paths import GLOBAL_DIR
 
-from .helpers import filter_by_time_range, msgpack_error, msgpack_response
+from .helpers import add_display_lifecycle_properties, filter_by_time_range, msgpack_error, msgpack_response
 
 
 router = APIRouter()
@@ -160,6 +160,7 @@ async def get_floods_geojson(
                 "iso3": str(row.get("iso3", "")) if pd.notna(row.get("iso3")) else None,
                 "loc_confidence": float(row["loc_confidence"]) if pd.notna(row.get("loc_confidence")) else None,
             }
+            add_display_lifecycle_properties(row, props)
 
             features.append({"type": "Feature", "geometry": geom, "properties": props})
 
