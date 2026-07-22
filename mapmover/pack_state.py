@@ -97,6 +97,12 @@ def _build_overlay_tree_for_sources(sources: list[dict]) -> dict:
             "pack_id": source.get("pack_id"),
             "scope": source.get("scope"),
             "data_type": source.get("data_type"),
+            "geojson_shape": source.get("geojson_shape"),
+            "geometry_family": source.get("geometry_family"),
+            # The active runtime tree is rebuilt from entitled catalog sources.
+            # Preserve the authored display decision here instead of asking the
+            # browser to infer one from generic data_type labels.
+            "display_contract": source.get("display_contract"),
             "default_load": source.get("default_load"),
             "default_question": source.get("default_question"),
             "default_response": source.get("default_response"),

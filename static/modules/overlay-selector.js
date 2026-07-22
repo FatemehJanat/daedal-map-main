@@ -14,7 +14,8 @@ import { getResearchDefaultOverlayIds } from './research/default-overlays.js';
 import { getOpsDefaultOverlayIds, getOpsPublicDefaultOverlayIds } from './ops/default-overlays.js';
 import { setSourceVersion } from './overlay-cache.js';
 
-// Model mapping based on data_type
+// Legacy compatibility map. New Explore sources select a renderer through the
+// authored display_contract carried by /api/catalog/overlays.
 const DATA_TYPE_TO_MODEL = {
   'events': 'point-radius',
   'metrics': 'choropleth',
@@ -22,6 +23,57 @@ const DATA_TYPE_TO_MODEL = {
   'geometry': 'polygon',
   'tract_status': 'choropleth'
 };
+
+const DISPLAY_FAMILY_TO_MODEL = {
+  admin_choropleth: 'choropleth',
+  geometry_overlay: 'polygon',
+  navigation_geometry: 'polygon',
+  point_collection: 'point-radius',
+  building_overlay: 'polygon',
+  raster_grid: 'weather-grid',
+  raster_scene: 'ocean-raster'
+};
+
+const EVENT_RENDERING_MODEL_TO_MODEL = {
+  point_radius_event: 'point-radius',
+  geojson_first_event: 'point-radius',
+  track_event: 'track',
+  polygon_event: 'polygon'
+};
+
+function getDisplayContract(sources = []) {
+  const contracts = sources
+    .map((source) => source?.display_contract)
+    .filter((contract) => contract && typeof contract === 'object');
+  if (!contracts.length) return null;
+
+  // An overlay may combine a yearly aggregate with its event source. The
+  // event/raster/point renderer is the specific visual leaf; an aggregate is
+  // an analytical companion, not a reason to downgrade it to choropleth.
+  const priority = {
+    event_overlay: 5,
+    raster_scene: 4,
+    raster_grid: 4,
+    point_collection: 3,
+    geometry_overlay: 2,
+    navigation_geometry: 2,
+    admin_choropleth: 1
+  };
+  return contracts.sort((left, right) => (
+    (priority[right.family] || 0) - (priority[left.family] || 0)
+  ))[0];
+}
+
+function getOverlayModel(overlayId, sources = [], fallbackDataType = 'metrics') {
+  const contract = getDisplayContract(sources);
+  if (contract?.family === 'event_overlay') {
+    return EVENT_RENDERING_MODEL_TO_MODEL[contract.rendering_model] || 'point-radius';
+  }
+  if (contract?.family && DISPLAY_FAMILY_TO_MODEL[contract.family]) {
+    return DISPLAY_FAMILY_TO_MODEL[contract.family];
+  }
+  return MODEL_OVERRIDES[overlayId] || DATA_TYPE_TO_MODEL[fallbackDataType] || 'point-radius';
+}
 
 // Icon mapping for overlay types
 const OVERLAY_ICONS = {
@@ -53,18 +105,12 @@ const OVERLAY_ICONS = {
   'buoys': 'B'
 };
 
-// Special model overrides (some overlays need specific models)
+// Compatibility overrides for operational or not-yet-migrated overlays only.
+// Published Explore sources use their authored display_contract above.  Do not
+// add a new source here: give it an explicit display contract instead.
 const MODEL_OVERRIDES = {
-  'hurricanes': 'track',
   'hurricanes_live': 'track',
-  'drought': 'polygon',
-  'distributed_manufacturing': 'point-radius',
-  // Event overlays whose catalog grouping can lead with a metrics-type
-  // source: without a pin, buildCategoriesFromTree classifies them as
-  // choropleth and hideOverlay takes the shared-metric shortcut, leaving
-  // the event layers on the map when toggled off.
-  'wildfires': 'point-radius',
-  'floods': 'point-radius'
+  'drought': 'polygon'
 };
 
 const OPS_FEED_TO_OVERLAY_IDS = {
@@ -454,7 +500,8 @@ function buildCategoriesFromTree(overlayTree) {
         // Get data_type from first source
         const firstSource = overlayData.sources?.[0];
         const dataType = firstSource?.data_type || 'events';
-        const model = MODEL_OVERRIDES[overlayId] || DATA_TYPE_TO_MODEL[dataType] || 'point-radius';
+        const displayContract = getDisplayContract(overlayData.sources);
+        const model = getOverlayModel(overlayId, overlayData.sources, dataType);
         if (model !== 'choropleth') {
           allChildrenAreChoropleths = false;
         }
@@ -466,6 +513,7 @@ function buildCategoriesFromTree(overlayTree) {
           default: false,
           locked: false,
           model: model,
+          displayContract,
           icon: OVERLAY_ICONS[overlayId] || overlayId[0].toUpperCase(),
           hasYearFilter: dataType === 'events',
           sources: overlayData.sources || [],
@@ -508,7 +556,8 @@ function buildCategoriesFromTree(overlayTree) {
       }
       const firstSource = categoryData.sources?.[0];
       const dataType = firstSource?.data_type || 'metrics';
-      const model = DATA_TYPE_TO_MODEL[dataType] || 'choropleth';
+      const displayContract = getDisplayContract(categoryData.sources);
+      const model = getOverlayModel(categoryId, categoryData.sources, dataType);
 
       const overlay = {
         id: categoryId,
@@ -517,6 +566,7 @@ function buildCategoriesFromTree(overlayTree) {
         default: false,
         locked: false,
         model: model,
+        displayContract,
         icon: OVERLAY_ICONS[categoryId] || categoryId[0].toUpperCase(),
         hasYearFilter: dataType === 'events',
         sources: categoryData.sources || [],
