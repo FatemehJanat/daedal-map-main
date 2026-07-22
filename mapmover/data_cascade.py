@@ -17,6 +17,8 @@ Uses:
 
 from typing import Optional, Dict, List, Any, Union
 
+import pandas as pd
+
 from .runtime.geography_reference import load_conversions as load_conversions_impl
 from .runtime.admin_hierarchy import (
     get_ancestors as get_ancestors_impl,
