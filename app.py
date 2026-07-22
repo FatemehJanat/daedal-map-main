@@ -52,7 +52,6 @@ from mapmover.order_queue import processor as order_processor
 from mapmover.routes.chat import router as chat_router
 from mapmover.routes.api_query import router as api_query_router
 from mapmover.routes.artifacts import router as artifacts_router
-from mapmover.routes.disasters.drought import router as drought_router
 from mapmover.routes.disasters.earthquakes import router as earthquakes_router
 from mapmover.routes.disasters.floods import router as floods_router
 from mapmover.routes.disasters.hurricanes import router as hurricanes_router
@@ -552,7 +551,6 @@ app.include_router(tsunamis_router)
 app.include_router(hurricanes_router)
 app.include_router(tornadoes_router)
 app.include_router(floods_router)
-app.include_router(drought_router)
 app.include_router(wildfires_router)
 app.include_router(weather_router)
 app.include_router(chat_router)
