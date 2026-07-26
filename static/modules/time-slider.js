@@ -157,8 +157,11 @@ export const TimeSlider = {
   speedLabel: null,        // DOM element showing speed (e.g., "1yr/sec")
   loopCheckbox: null,      // DOM element for loop checkbox
   loopEnabled: true,       // Whether animation should loop (default on)
-  stepsPerFrame: 97,       // Current speed (default: ~1yr/sec at 15 FPS)
-  speedSliderValue: 0.72, // Current slider position (0-1), default = ~1yr/sec
+  // The initial playback rate must be derived from the same logarithmic
+  // slider position the +/- controls use.  `97` was the old 15fps value;
+  // at 30fps it displayed as 2yr/sec until the first button click reset it.
+  stepsPerFrame: TIME_SYSTEM.sliderToStepsPerFrame(0.72),
+  speedSliderValue: 0.72,
   _inEventMode: false,     // True when animating specific event (vs world view)
   _previousSpeedSlider: null, // Saved speed when entering event mode
   playTimeout: null,       // For new stepsPerFrame-based playback
@@ -2109,8 +2112,8 @@ export const TimeSlider = {
     this.useTimestamps = false;
 
     // Clear unified speed control state (Phase 7)
-    this.stepsPerFrame = 97;  // Reset to default (~1yr/sec)
-    this.speedSliderValue = 0.72; // Reset to ~1yr/sec preset
+    this.speedSliderValue = 0.72;
+    this.stepsPerFrame = TIME_SYSTEM.sliderToStepsPerFrame(this.speedSliderValue);
     this.loopEnabled = true;  // Keep loop enabled (default on)
     this._inEventMode = false;
     this._previousSpeedSlider = null;
