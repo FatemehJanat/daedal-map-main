@@ -55,6 +55,26 @@ _ADMIN_TEXT_ALIASES = {
 }
 _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 
+
+def normalize_geometry_longitude(value: float) -> float:
+    """Normalize a wrapped map longitude to the GeoJSON/geometry convention.
+
+    MapLibre may report an equivalent wrapped longitude such as ``200.8`` for
+    a Pacific click. Geometry banks use the conventional ``[-180, 180)``
+    domain, so containment must use the normalized coordinate. The caller may
+    still retain the original requested longitude for display/audit.
+    """
+    longitude = float(value)
+    return ((longitude + 180.0) % 360.0) - 180.0
+
+
+def _attach_requested_point(payload: dict[str, Any], *, lon: float, lat: float, normalized_lon: float) -> dict[str, Any]:
+    if normalized_lon != lon:
+        payload["requested_point"] = {"lon": lon, "lat": lat}
+        payload["point"] = {"lon": normalized_lon, "lat": lat}
+    return payload
+
+
 def _resolve_point_to_marine_stack(
     lon: float,
     lat: float,
@@ -740,14 +760,22 @@ def resolve_point_to_loc_id_stack(
     *,
     include_geometry: bool = False,
 ) -> dict[str, Any]:
-    raw = legacy_resolve_point_to_location(lon, lat, include_geometry=include_geometry)
+    requested_lon = float(lon)
+    requested_lat = float(lat)
+    normalized_lon = normalize_geometry_longitude(requested_lon)
+    raw = legacy_resolve_point_to_location(normalized_lon, requested_lat, include_geometry=include_geometry)
     if not isinstance(raw, dict):
-        return {"point": {"lon": float(lon), "lat": float(lat)}, "error": "point resolver returned invalid payload"}
+        return _attach_requested_point(
+            {"point": {"lon": normalized_lon, "lat": requested_lat}, "error": "point resolver returned invalid payload"},
+            lon=requested_lon,
+            lat=requested_lat,
+            normalized_lon=normalized_lon,
+        )
     if raw.get("error"):
-        marine_result = _resolve_point_to_marine_stack(lon, lat, include_geometry=include_geometry)
+        marine_result = _resolve_point_to_marine_stack(normalized_lon, requested_lat, include_geometry=include_geometry)
         if marine_result is not None:
-            return marine_result
-        return raw
+            return _attach_requested_point(marine_result, lon=requested_lon, lat=requested_lat, normalized_lon=normalized_lon)
+        return _attach_requested_point(raw, lon=requested_lon, lat=requested_lat, normalized_lon=normalized_lon)
 
     matches: dict[str, dict[str, Any]] = {}
     for item in raw.get("stack") or []:
@@ -834,7 +862,7 @@ def resolve_point_to_loc_id_stack(
     }
     if include_geometry and "geojson" in raw:
         result["geojson"] = raw["geojson"]
-    return result
+    return _attach_requested_point(result, lon=requested_lon, lat=requested_lat, normalized_lon=normalized_lon)
 
 
 def resolve_place_to_loc_id_stack(

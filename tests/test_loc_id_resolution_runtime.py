@@ -231,6 +231,29 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
             resolved = resolve_point_to_loc_id_stack(0, 0)
         self.assertEqual(resolved["error"], "No containing country found")
 
+    def test_point_stack_normalizes_wrapped_map_longitude_before_marine_lookup(self):
+        marine_payload = {
+            "point": {"lon": -159.174187, "lat": 30.849742},
+            "matched": {"loc_id": "XOP", "name": "Pacific Ocean", "family": "water_body"},
+            "stack": [{"loc_id": "XOP", "name": "Pacific Ocean", "family": "water_body"}],
+            "deepest_resolved_loc_id": "XOP",
+            "deepest_resolved_family": "water_body",
+        }
+        with patch(
+            "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",
+            return_value={"error": "No containing country found"},
+        ) as legacy, patch(
+            "mapmover.runtime.loc_id_resolution._resolve_point_to_marine_stack",
+            return_value=marine_payload,
+        ) as marine:
+            resolved = resolve_point_to_loc_id_stack(200.825813, 30.849742)
+
+        legacy.assert_called_once_with(-159.17418699999996, 30.849742, include_geometry=False)
+        marine.assert_called_once_with(-159.17418699999996, 30.849742, include_geometry=False)
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "XOP")
+        self.assertEqual(resolved["requested_point"], {"lon": 200.825813, "lat": 30.849742})
+        self.assertEqual(resolved["point"], {"lon": -159.17418699999996, "lat": 30.849742})
+
     def test_point_stack_prefers_spine_water_body_over_marine_overlap(self):
         with patch(
             "mapmover.runtime.loc_id_resolution.legacy_resolve_point_to_location",

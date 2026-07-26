@@ -5,7 +5,8 @@ the GeoBoundaries banks. Marine loc_ids live in a separate overlay namespace and
 need their own resolver:
 
   - EEZ-<ISO3> / EEZ-MRGID-<n>  -> geometry/marine/eez.parquet
-  - X* water-body codes (XOP..) -> geometry/marine/water_bodies.parquet
+  - X* water-body aggregate codes (XOP..) -> geometry/marine/water_bodies.parquet
+  - MRGID-<n> individual named waters -> geometry/marine/iho_sea_areas.parquet
 
 This is the geometry counterpart to the shared grid helper's classification
 (is_eez_loc_id / is_water_body_loc_id): given marine loc_ids, return their
@@ -15,6 +16,7 @@ not specific to one pack.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -22,24 +24,37 @@ import pandas as pd
 
 from ..duckdb_helpers import parquet_available, select_columns_from_parquet
 from ..paths import GEOMETRY_DIR
-from .geography_reference import is_eez_loc_id, is_water_body_loc_id
+from .geography_reference import is_eez_loc_id, is_named_water_loc_id, is_water_body_loc_id
 
 MARINE_DIR = GEOMETRY_DIR / "marine"
 EEZ_PATH = MARINE_DIR / "eez.parquet"
 WATER_BODIES_PATH = MARINE_DIR / "water_bodies.parquet"
+NAMED_WATER_PATH = MARINE_DIR / "iho_sea_areas.parquet"
+NAMED_WATER_INDEX_PATH = MARINE_DIR / "iho_sea_areas_index.json"
 
 _MARINE_COLUMNS = ["loc_id", "name", "geometry", "centroid_lon", "centroid_lat"]
 
 
 def is_marine_loc_id(loc_id: str | None) -> bool:
-    """True for either marine overlay family (EEZ or X* water body)."""
-    return is_eez_loc_id(loc_id) or is_water_body_loc_id(loc_id)
+    """True for either marine overlay family or canonical named water."""
+    return is_eez_loc_id(loc_id) or is_water_body_loc_id(loc_id) or is_named_water_loc_id(loc_id)
+
+
+def named_water_bank_approved() -> bool:
+    """Do not expose candidate sea geometry until its source review is explicit."""
+    try:
+        data = json.loads(NAMED_WATER_INDEX_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("license_review_status") == "approved"
 
 
 def marine_bank_for_loc_id(loc_id: str | None) -> Optional[Path]:
     """Return the marine geometry bank that owns this loc_id, or None."""
     if is_eez_loc_id(loc_id):
         return EEZ_PATH
+    if is_named_water_loc_id(loc_id):
+        return NAMED_WATER_PATH if named_water_bank_approved() else None
     if is_water_body_loc_id(loc_id):
         return WATER_BODIES_PATH
     return None
@@ -47,14 +62,18 @@ def marine_bank_for_loc_id(loc_id: str | None) -> Optional[Path]:
 
 def has_marine_geometry() -> bool:
     """True when at least one marine bank is readable (local or cloud)."""
-    return parquet_available(EEZ_PATH) or parquet_available(WATER_BODIES_PATH)
+    return (
+        parquet_available(EEZ_PATH)
+        or parquet_available(WATER_BODIES_PATH)
+        or (named_water_bank_approved() and parquet_available(NAMED_WATER_PATH))
+    )
 
 
 def resolve_marine_geometry_source(loc_id: str | None) -> dict:
     """Mirror geometry_loader.resolve_country_geometry_source for marine loc_ids.
 
     Keys: `parquet_file` (path or None), `source_kind` (`marine_bank`/`missing`),
-    `marine_kind` (`marine_eez`/`water_body`/None).
+    `marine_kind` (`marine_eez`/`water_body`/`named_water`/None).
     """
     bank = marine_bank_for_loc_id(loc_id)
     if bank is None:
@@ -63,7 +82,11 @@ def resolve_marine_geometry_source(loc_id: str | None) -> dict:
     return {
         "parquet_file": bank if accessible else None,
         "source_kind": "marine_bank" if accessible else "missing",
-        "marine_kind": "marine_eez" if is_eez_loc_id(loc_id) else "water_body",
+        "marine_kind": (
+            "marine_eez" if is_eez_loc_id(loc_id)
+            else "named_water" if is_named_water_loc_id(loc_id)
+            else "water_body"
+        ),
     }
 
 
@@ -94,12 +117,15 @@ def load_marine_geometry(loc_ids: Optional[Iterable[str]] = None) -> pd.DataFram
     want = {str(x).strip() for x in loc_ids} if loc_ids is not None else None
     need_eez = want is None or any(is_eez_loc_id(x) for x in want)
     need_wb = want is None or any(is_water_body_loc_id(x) for x in want)
+    need_named_water = want is None or any(is_named_water_loc_id(x) for x in want)
 
     frames = []
     if need_eez:
         frames.append(_read_bank(EEZ_PATH, want))
     if need_wb:
         frames.append(_read_bank(WATER_BODIES_PATH, want))
+    if need_named_water and named_water_bank_approved():
+        frames.append(_read_bank(NAMED_WATER_PATH, want))
     if not frames:
         return pd.DataFrame(columns=_MARINE_COLUMNS)
     return pd.concat(frames, ignore_index=True).reset_index(drop=True)

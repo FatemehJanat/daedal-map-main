@@ -74,6 +74,16 @@ def is_eez_loc_id(loc_id: str | None) -> bool:
     return str(loc_id or "").strip().upper().startswith("EEZ-")
 
 
+def is_named_water_loc_id(loc_id: str | None) -> bool:
+    """True for canonical individual ocean/sea identifiers.
+
+    The geometry catalog decides whether a specific id is resolvable. This
+    classifier only identifies the namespace so every runtime caller routes it
+    through the named-water bank instead of an admin fallback.
+    """
+    return bool(re.fullmatch(r"MRGID-\d+", str(loc_id or "").strip().upper()))
+
+
 def _looks_like_geometry_admin_loc_id(value: str) -> bool:
     parts = value.split("-")
     return len(parts) > 1 and all(str(part).startswith("G") for part in parts[1:])
@@ -111,6 +121,8 @@ def classify_loc_id_family(loc_id: str | None) -> str | None:
         return "water_body"
     if is_eez_loc_id(value):
         return "marine_eez"
+    if is_named_water_loc_id(value):
+        return "water_body"
     if re.fullmatch(r"[A-Z]{3}", value):
         return "admin_0"
     if _looks_like_zcta_loc_id(value):
