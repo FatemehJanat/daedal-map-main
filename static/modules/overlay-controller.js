@@ -803,7 +803,18 @@ function filterByLifecycle(features, currentMs, eventType) {
     }
     const { startMs, endMs, fadeDuration } = lifecycle;
 
-    const fadeEndMs = endMs + fadeDuration;
+    // Source preparation owns the factual active interval.  The renderer owns
+    // the optional fade, and it must be long enough to survive the current
+    // playback sampling interval: otherwise a minutes-long tsunami (or a
+    // short tornado) can fall entirely between two 30fps world-view frames.
+    // `getVisibilityWindow()` is four real playback frames at the selected
+    // speed, so every event family gets the same bounded, speed-aware policy
+    // without storing a presentation fade in raw data.
+    const playbackVisibilityMs = Number(TimeSlider?.getVisibilityWindow?.());
+    const effectiveFadeDuration = Number.isFinite(playbackVisibilityMs)
+      ? Math.max(fadeDuration, playbackVisibilityMs)
+      : fadeDuration;
+    const fadeEndMs = endMs + effectiveFadeDuration;
 
     // Not visible yet
     if (currentMs < startMs) return null;
@@ -832,7 +843,7 @@ function filterByLifecycle(features, currentMs, eventType) {
     } else {
       // In fade period
       phase = 'fading';
-      opacity = 1.0 - (currentMs - endMs) / fadeDuration;
+      opacity = 1.0 - (currentMs - endMs) / effectiveFadeDuration;
       opacity = Math.max(0, Math.min(1, opacity));  // Clamp 0-1
       radiusProgress = 1.0;  // Full size during fade
     }
