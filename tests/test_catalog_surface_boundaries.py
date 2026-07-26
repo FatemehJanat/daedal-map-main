@@ -53,6 +53,17 @@ class CatalogSurfaceBoundaryTests(unittest.TestCase):
             }.get(key, default)):
                 self.assertTrue(request_uses_wip_catalog(request, auth_user))
 
+    def test_wip_selection_accepts_current_local_runtime_config(self) -> None:
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        auth_user = {"id": "user-1"}
+        with patch(
+            "mapmover.catalog_surface.load_account_context",
+            return_value={"plan_id": "master", "is_admin": False},
+        ):
+            with patch("mapmover.catalog_surface.os.getenv", side_effect=lambda key, default="": "1" if key == "USE_WIP_CATALOG" else default):
+                with patch("mapmover.runtime_config.get_runtime_config", return_value={"runtime_mode": "local"}):
+                    self.assertTrue(request_uses_wip_catalog(request, auth_user))
+
     def test_chat_rejects_wip_when_local_switch_is_not_active(self) -> None:
         request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.5"))
         with patch("mapmover.routes.chat_shared.request_uses_wip_catalog", return_value=False):

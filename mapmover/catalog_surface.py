@@ -150,6 +150,24 @@ def _is_loopback_host(value: str) -> bool:
         return False
 
 
+def _is_local_runtime() -> bool:
+    """Return whether this process is the local app runtime.
+
+    Older launch scripts set ``DEPLOYMENT=local``. The current local wrapper
+    instead owns this through runtime configuration, so both signals must be
+    accepted. Every WIP entry point uses this helper to avoid a successful
+    local toggle being followed by a published-catalog response.
+    """
+    if str(os.getenv("DEPLOYMENT", "")).strip().lower() == "local":
+        return True
+    try:
+        from mapmover.runtime_config import get_runtime_config
+
+        return str(get_runtime_config().get("runtime_mode", "")).strip().lower() == "local"
+    except Exception:
+        return False
+
+
 def request_can_use_wip_catalog(request, auth_user: dict | None) -> bool:
     """Return whether this caller is allowed to inspect the WIP catalog.
 
@@ -168,10 +186,9 @@ def request_can_use_wip_catalog(request, auth_user: dict | None) -> bool:
                 or bool(account_context.get("is_admin"))
             )
 
-    deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
     client = getattr(request, "client", None)
     client_host = getattr(client, "host", "") if client else ""
-    if deployment != "local" or not _is_loopback_host(client_host):
+    if not _is_local_runtime() or not _is_loopback_host(client_host):
         return False
 
     try:
@@ -193,14 +210,13 @@ def request_uses_wip_catalog(request, auth_user: dict | None) -> bool:
     WIP selection is a local-only explicit switch.  Authorization alone must
     not silently change a master's normal catalog to the draft catalog.
     """
-    deployment = str(os.getenv("DEPLOYMENT", "")).strip().lower()
     client = getattr(request, "client", None)
     client_host = getattr(client, "host", "") if client else ""
     local_switch_enabled = str(os.getenv("USE_WIP_CATALOG", "")).strip().lower() in {
         "1", "true", "yes", "on"
     }
     return (
-        deployment == "local"
+        _is_local_runtime()
         and _is_loopback_host(client_host)
         and local_switch_enabled
         and request_can_use_wip_catalog(request, auth_user)
