@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 from mapmover.catalog_surface import (
     catalog_product_surface,
@@ -11,7 +14,9 @@ from mapmover.catalog_surface import (
     is_mcp_distribution_source,
     normalize_catalog_surface,
     request_can_use_wip_catalog,
+    request_uses_wip_catalog,
 )
+from mapmover.routes.chat_shared import _catalog_surface_for_request
 
 
 class CatalogSurfaceBoundaryTests(unittest.TestCase):
@@ -27,9 +32,42 @@ class CatalogSurfaceBoundaryTests(unittest.TestCase):
     def test_wip_catalog_falls_back_to_local_loopback_only(self) -> None:
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
         auth_user = {"id": "user-1"}
-        with patch("mapmover.catalog_surface.load_account_context", return_value=None):
-            with patch("os.getenv", side_effect=lambda key, default="": "local" if key == "DEPLOYMENT" else default):
-                self.assertTrue(request_can_use_wip_catalog(request, auth_user))
+        with tempfile.TemporaryDirectory() as state_dir:
+            (Path(state_dir) / "local_wrapper_auth_state.json").write_text(
+                json.dumps({"authenticated": True, "plan_id": "master"}), encoding="utf-8"
+            )
+            with patch("mapmover.catalog_surface.load_account_context", return_value=None):
+                with patch("mapmover.paths.STATE_DIR", state_dir):
+                    with patch("os.getenv", side_effect=lambda key, default="": "local" if key == "DEPLOYMENT" else default):
+                        self.assertTrue(request_can_use_wip_catalog(request, auth_user))
+
+    def test_wip_selection_requires_local_runtime_switch(self) -> None:
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        auth_user = {"id": "user-1"}
+        with patch(
+            "mapmover.catalog_surface.load_account_context",
+            return_value={"plan_id": "master", "is_admin": False},
+        ):
+            with patch("os.getenv", side_effect=lambda key, default="": {
+                "DEPLOYMENT": "local", "USE_WIP_CATALOG": "1",
+            }.get(key, default)):
+                self.assertTrue(request_uses_wip_catalog(request, auth_user))
+
+    def test_chat_rejects_wip_when_local_switch_is_not_active(self) -> None:
+        request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.5"))
+        with patch("mapmover.routes.chat_shared.request_uses_wip_catalog", return_value=False):
+            surface, response = _catalog_surface_for_request(request, {"catalog_surface": "wip"}, {"id": "user-1"})
+
+        self.assertIsNone(surface)
+        self.assertEqual(403, response.status_code)
+
+    def test_chat_allows_wip_only_after_local_gate_passes(self) -> None:
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        with patch("mapmover.routes.chat_shared.request_uses_wip_catalog", return_value=True):
+            surface, response = _catalog_surface_for_request(request, {"catalog_surface": "wip"}, {"id": "user-1"})
+
+        self.assertEqual("wip", surface)
+        self.assertIsNone(response)
 
     def test_published_alias_maps_to_explore_product_surface(self) -> None:
         self.assertEqual(normalize_catalog_surface("published"), "published")

@@ -264,7 +264,7 @@ function shouldAutoFocusOnOverlayEnable(mode) {
 // Grid/field overlays cover the planet rather than discrete events; enabling
 // one means "show me the global picture", so they get a fixed world framing
 // instead of a feature-bounds fit.
-const GLOBAL_FOCUS_OVERLAY_IDS = new Set(['ocean-sst-grid', 'land-temperature-grid', 'aurora']);
+const GLOBAL_FOCUS_OVERLAY_IDS = new Set(['ocean-sst-grid', 'land-temperature-grid', 'cams-air-quality-grid', 'aurora']);
 
 function focusGlobalOverlayView() {
   return Boolean(MapAdapter?.focusOnFeatures?.([
@@ -905,12 +905,26 @@ export function applyOverlayCatalogResponse(response = {}) {
       }
       laneShownAdjustments.set(mode, shown);
     }
+    if (wipSourceIds.has('cams_air_quality')) {
+      const climate = ALL_CATEGORIES.find((category) => category.id === 'climate' && category.isCategory);
+      if (climate?.overlays && !climate.overlays.some((overlay) => overlay.id === 'cams-air-quality-grid')) {
+        climate.overlays.push({
+          id: 'cams-air-quality-grid', label: 'CAMS PM2.5',
+          description: 'Global modeled PM2.5: monthly reanalysis history plus recent forecast frames',
+          default: false, locked: false, model: 'ocean-raster', icon: 'A', hasYearFilter: false,
+          live: false, rasterSource: 'cams_air_quality', rasterBasins: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'],
+          rasterBasinsByLane: { explore: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], research: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], ops: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'] },
+          rasterCadence: 'daily', rasterCadenceByLane: { explore: 'daily', research: 'daily', ops: 'daily' },
+          rasterVariable: 'pm25_ug_m3', rasterMaskMode: 'none', alwaysVisible: true
+        });
+      }
+    }
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
     if (usContext?.overlays) {
       // WIP overlays are intentionally not part of the normal Explore
       // visibility allowlist.  Mark this local/admin-only test entry visible
       // once the server has already confirmed the WIP surface.
-      usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts (2020-25 test)', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
+      usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
     }
   }
   CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
@@ -1063,6 +1077,10 @@ export const OverlaySelector = {
   async init(options = {}) {
     const restoreState = options.restoreState !== false;
     this.currentLaneMode = getCurrentOverlayLaneMode();
+    // A catalog-surface change may remove a draft overlay that is currently
+    // rendered. Preserve this set so the normal listener path can explicitly
+    // clear it after the replacement catalog has loaded.
+    const activeBeforeCatalogReload = new Set(this.activeOverlays);
     // Find container first
     this.container = document.getElementById('overlaySelector');
     if (!this.container) {
@@ -1123,6 +1141,19 @@ export const OverlaySelector = {
       this.activeOverlays.clear();
       this.applyLaneDefaults(this.currentLaneMode);
     }
+
+    // Switching WIP off must remove its active map layers, not merely hide the
+    // checkbox. This is especially important in Ops, where a retained live or
+    // raster overlay could otherwise look like public runtime state. The same
+    // cleanup applies to every lane because catalog surface is shared locally.
+    const visibleOverlayIds = new Set(VISIBLE_OVERLAYS.map((overlay) => overlay.id));
+    const removedByCatalogSurface = [];
+    for (const overlayId of activeBeforeCatalogReload) {
+      if (!visibleOverlayIds.has(overlayId) && this.activeOverlays.has(overlayId)) {
+        this.activeOverlays.delete(overlayId);
+        removedByCatalogSurface.push(overlayId);
+      }
+    }
     this._rememberCurrentLaneState();
 
     // Initialize category expanded state
@@ -1139,6 +1170,12 @@ export const OverlaySelector = {
     this._setupEvents();
 
     this.initialized = true;
+    for (const overlayId of removedByCatalogSurface) {
+      this._notifyListeners(overlayId, false, {
+        suppressStatusMessage: true,
+        systemTransition: true
+      });
+    }
     console.log('OverlaySelector initialized with:', Array.from(this.activeOverlays));
   },
 
