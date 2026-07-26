@@ -143,6 +143,41 @@ function formatAlertTime(value) {
   }).format(date);
 }
 
+function escapePopupHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+}
+
+function formatPopupText(value) {
+  return escapePopupHtml(value).replace(/\r?\n/g, '<br>');
+}
+
+function nwsPopupDetail(label, value) {
+  return value ? `
+    <details class="nws-popup-detail">
+      <summary>${label}</summary>
+      <div class="nws-popup-detail-body">${formatPopupText(value)}</div>
+    </details>` : '';
+}
+
+function buildNwsPopupHtml(properties, historicalTextNotice = '') {
+  const p = properties || {};
+  const sourceUrl = typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)
+    ? p.alert_id
+    : (typeof p.source_product_url === 'string' && /^https?:/.test(p.source_product_url) ? p.source_product_url : '');
+  return `<div class="nws-alert-popup">
+    <div class="nws-popup-title">${escapePopupHtml(p.event)}</div>
+    <div class="nws-popup-classification">${escapePopupHtml(p.alert_family_label || '')}${p.severity ? ` | ${escapePopupHtml(p.severity)}` : ''}</div>
+    ${(p.urgency || p.certainty) ? `<div class="nws-popup-confidence">${escapePopupHtml(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${escapePopupHtml(p.certainty || '')}</div>` : ''}
+    ${historicalTextNotice ? `<div class="nws-popup-confidence">${escapePopupHtml(historicalTextNotice)}</div>` : ''}
+    ${(p.instruction || p.description || p.area) ? `<div class="nws-popup-details">${nwsPopupDetail('Instructions', p.instruction)}${nwsPopupDetail('Description', p.description)}${nwsPopupDetail('Areas', p.area)}</div>` : ''}
+    ${(p.start_time || p.issued_at) ? `<div class="nws-popup-expires"><span>Issued</span>${escapePopupHtml(formatAlertTime(p.start_time || p.issued_at))}</div>` : ''}
+    ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${escapePopupHtml(formatAlertTime(p.expires))}</div>` : ''}
+    ${sourceUrl ? `<a class="nws-popup-source" href="${escapePopupHtml(sourceUrl)}" target="_blank" rel="noopener" title="Opens the archived original NWS text product">Archived NWS product &rsaquo;</a>` : ''}
+  </div>`;
+}
+
 let MapAdapter = null;
 
 export const NwsAlertsOverlay = {
@@ -161,6 +196,7 @@ export const NwsAlertsOverlay = {
   _historicalHistory: null,
   _historicalHistories: new Map(),
   _historicalTimelineIndex: null,
+  _historicalPopupToken: 0,
   _legendEl: null,
   _legendClickHandler: null,
 
@@ -202,6 +238,7 @@ export const NwsAlertsOverlay = {
     this._stopPolling();
     if (!on) {
       this._historicalPendingTimestamp = null;
+      this._historicalPopupToken += 1;
       this._removeLayers();
       return;
     }
@@ -461,29 +498,11 @@ export const NwsAlertsOverlay = {
       const f = e.features && e.features[0];
       if (!f) return;
       const p = f.properties || {};
-      const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
-      const text = (v) => esc(v).replace(/\r?\n/g, '<br>');
-      const detail = (label, value) => value ? `
-        <details class="nws-popup-detail">
-          <summary>${label}</summary>
-          <div class="nws-popup-detail-body">${text(value)}</div>
-        </details>` : '';
-      const sourceUrl = typeof p.alert_id === 'string' && /^https?:/.test(p.alert_id)
-        ? p.alert_id
-        : (typeof p.source_product_url === 'string' && /^https?:/.test(p.source_product_url) ? p.source_product_url : '');
-      const html = `<div class="nws-alert-popup">
-        <div class="nws-popup-title">${esc(p.event)}</div>
-        <div class="nws-popup-classification">${esc(p.alert_family_label || '')}${p.severity ? ` | ${esc(p.severity)}` : ''}</div>
-        ${(p.urgency || p.certainty) ? `<div class="nws-popup-confidence">${esc(p.urgency || '')}${p.urgency && p.certainty ? ' / ' : ''}${esc(p.certainty || '')}</div>` : ''}
-        ${(p.instruction || p.description || p.area) ? `<div class="nws-popup-details">${detail('Instructions', p.instruction)}${detail('Description', p.description)}${detail('Areas', p.area)}</div>` : ''}
-        ${(p.start_time || p.issued_at) ? `<div class="nws-popup-expires"><span>Issued</span>${esc(formatAlertTime(p.start_time || p.issued_at))}</div>` : ''}
-        ${p.expires ? `<div class="nws-popup-expires"><span>Expires</span>${esc(formatAlertTime(p.expires))}</div>` : ''}
-        ${sourceUrl ? `<a class="nws-popup-source" href="${esc(sourceUrl)}" target="_blank" rel="noopener" title="Opens the archived original NWS text product">Archived NWS product &rsaquo;</a>` : ''}
-      </div>`;
+      const coords = [e.lngLat.lng, e.lngLat.lat];
+      const productId = this.historical ? String(p.product_id || '').trim() : '';
+      const popupToken = ++this._historicalPopupToken;
       MapAdapter?.registerFeaturePopupClick?.();
-      MapAdapter?.showPopup?.([e.lngLat.lng, e.lngLat.lat], html);
+      MapAdapter?.showPopup?.(coords, buildNwsPopupHtml(p, productId ? 'Loading archived bulletin text…' : ''));
       if (MapAdapter) {
         MapAdapter.popupLocked = true;
         MapAdapter.setSelectedPopupContext?.({
@@ -492,6 +511,22 @@ export const NwsAlertsOverlay = {
           properties: p,
         });
       }
+      if (!productId) return;
+      fetchMsgpack(`/api/wip/nws-alerts/text?product_id=${encodeURIComponent(productId)}`)
+        .then((textRecord) => {
+          if (popupToken !== this._historicalPopupToken || !this.historical) return;
+          const status = String(textRecord?.fetch_status || 'missing');
+          if (status === 'ok') {
+            MapAdapter?.showPopup?.(coords, buildNwsPopupHtml({ ...p, ...textRecord }));
+            return;
+          }
+          MapAdapter?.showPopup?.(coords, buildNwsPopupHtml(p, 'Archived bulletin text is unavailable for this alert.'));
+        })
+        .catch(() => {
+          if (popupToken === this._historicalPopupToken && this.historical) {
+            MapAdapter?.showPopup?.(coords, buildNwsPopupHtml(p, 'Archived bulletin text could not be loaded.'));
+          }
+        });
     };
     this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
     this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
