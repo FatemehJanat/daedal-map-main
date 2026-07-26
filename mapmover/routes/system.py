@@ -164,7 +164,6 @@ def _local_wrapper_auth_state_path() -> Path:
 def _local_wrapper_state_allowed(request: Request) -> bool:
     from mapmover.paths import INSTALL_MODE, RUNTIME_MODE
 
-    access_mode = str(os.getenv("DAEDALMAP_ACCESS_MODE", "")).strip().lower()
     host = ""
     try:
         host = str(request.client.host if request.client else "").strip()
@@ -173,7 +172,6 @@ def _local_wrapper_state_allowed(request: Request) -> bool:
     return (
         str(INSTALL_MODE).strip().lower() == "local"
         and str(RUNTIME_MODE).strip().lower() == "local"
-        and access_mode == "local_wrapper"
         and _is_loopback_host(host)
     )
 
@@ -4135,7 +4133,6 @@ async def get_auth_config():
     local_wrapper_enabled = (
         str(INSTALL_MODE).strip().lower() == "local"
         and str(RUNTIME_MODE).strip().lower() == "local"
-        and str(os.getenv("DAEDALMAP_ACCESS_MODE", "")).strip().lower() == "local_wrapper"
     )
     return {
         "enabled": enabled,
