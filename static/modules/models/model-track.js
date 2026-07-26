@@ -30,6 +30,8 @@ export const TrackModel = {
   // Click handler reference for cleanup
   clickHandler: null,
   emptyClickHandler: null,
+  forecastPopupCloseHandler: null,
+  _clearForecastHover: null,
 
   // Drill-down callback for popup sequence button
   _drillDownCallback: null,
@@ -565,6 +567,9 @@ export const TrackModel = {
         const coords = e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null;
         // Show unified disaster popup
         if (coords) {
+          // A clicked forecast should retain the same uncertainty context as
+          // its hover state for the lifetime of the locked popup.
+          this._showForecastHover?.(String(props.storm_id || ''));
           DisasterPopup.show(coords, props, 'hurricane');
         }
       }
@@ -580,7 +585,11 @@ export const TrackModel = {
       map.getCanvas().style.cursor = 'pointer';
     });
 
-    const clearForecastHover = () => {
+    const clearForecastHover = (force = false) => {
+      // Leaving the line after clicking must not make the cone vanish under
+      // the locked popup. It is cleared when that popup closes or the user
+      // clicks empty map space instead.
+      if (!force && MapAdapter?.popupLocked) return;
       for (const [layerId, trackKind] of [
         [CONFIG.layers.hurricaneCircle + '-forecast-probability-hover', 'forecast_uncertainty'],
         [CONFIG.layers.hurricaneCircle + '-forecast-cones-hover', 'forecast_uncertainty_envelope']
@@ -607,6 +616,13 @@ export const TrackModel = {
         ]);
       }
     };
+    this._clearForecastHover = clearForecastHover;
+    this._showForecastHover = showForecastHover;
+    if (this.forecastPopupCloseHandler && MapAdapter?.popup?.off) {
+      MapAdapter.popup.off('close', this.forecastPopupCloseHandler);
+    }
+    this.forecastPopupCloseHandler = () => clearForecastHover(true);
+    MapAdapter?.popup?.on?.('close', this.forecastPopupCloseHandler);
     map.on('mouseenter', CONFIG.layers.hurricaneCircle + '-forecast-lines', (e) => {
       map.getCanvas().style.cursor = 'pointer';
       const stormId = String(e.features?.[0]?.properties?.storm_id || '');
@@ -849,6 +865,7 @@ export const TrackModel = {
       if (!features.length) {
         MapAdapter.popupLocked = false;
         MapAdapter.hidePopup();
+        this._clearForecastHover?.(true);
       }
     };
     map.on('click', this.emptyClickHandler);
@@ -1038,6 +1055,12 @@ export const TrackModel = {
       map.off('click', this.emptyClickHandler);
       this.emptyClickHandler = null;
     }
+    if (this.forecastPopupCloseHandler && MapAdapter?.popup?.off) {
+      MapAdapter.popup.off('close', this.forecastPopupCloseHandler);
+    }
+    this.forecastPopupCloseHandler = null;
+    this._clearForecastHover = null;
+    this._showForecastHover = null;
 
     // Remove layers (both point and line variants)
     const layersToRemove = [
