@@ -1818,15 +1818,17 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
     for feed in effective_feeds:
         snapshot = snapshots.get(feed)
         entries = _ops_timeline_entries(feed, snapshot, load_current_state_history(feed))
-        cadence_seconds = _ops_timeline_cadence_seconds(snapshot)
         frames: list[dict] = []
         for index, entry in enumerate(entries):
             start = _ops_timeline_entry_time(entry)
             if start is None:
                 continue
             next_start = _ops_timeline_entry_time(entries[index + 1]) if index + 1 < len(entries) else None
-            fallback_end = start + timedelta(seconds=cadence_seconds) if cadence_seconds else None
-            end = next_start or fallback_end
+            # A current state remains authoritative until a newer retained
+            # state replaces it. Do not expire the latest event frame merely
+            # because a collector is late relative to its expected cadence:
+            # that made a live hurricane count coexist with an empty map.
+            end = next_start
             if end is not None and end < range_start:
                 continue
             display_payload = _build_snapshot_display_payload(feed, entry)

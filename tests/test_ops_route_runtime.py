@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
 from mapmover.ops_route_runtime import _public_default_ops_feeds
@@ -201,6 +202,28 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=[])
         self.assertEqual(72, timeline["history_hours"])
         self.assertEqual({}, timeline["feeds"])
+
+    def test_latest_event_snapshot_does_not_expire_at_expected_poll_time(self):
+        original_history = ops_orchestrator_runtime.load_current_state_history
+        original_snapshot = ops_orchestrator_runtime.load_current_state_snapshot
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "published_at": now.isoformat(),
+            "expected_next_at": (now - timedelta(minutes=5)).isoformat(),
+            "payload_hash": "latest",
+            "payload_summary": {
+                "events": [{"event_id": "q1", "longitude": -122.3, "latitude": 47.6}],
+            },
+        }
+        try:
+            ops_orchestrator_runtime.load_current_state_history = lambda _feed: []
+            ops_orchestrator_runtime.load_current_state_snapshot = lambda _feed: snapshot
+            timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=["earthquakes"])
+        finally:
+            ops_orchestrator_runtime.load_current_state_history = original_history
+            ops_orchestrator_runtime.load_current_state_snapshot = original_snapshot
+
+        self.assertIsNone(timeline["feeds"]["earthquakes"][-1]["end_at"])
 
 
 if __name__ == "__main__":
