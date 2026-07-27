@@ -900,13 +900,35 @@ export function applyOverlayCatalogResponse(response = {}) {
     // These sources are useful WIP catalog fixtures but have no current-state
     // Ops contract. They must not be promoted into an Ops tray merely because
     // the local WIP catalog exposes their Explore data.
-    const OPS_EXPLORE_ONLY_WIP_SOURCES = new Set(['epa_aqs']);
+    const OPS_EXPLORE_ONLY_WIP_SOURCES = new Set([
+      'epa_aqs',
+      'fema_nri',
+      'future_nri',
+    ]);
+    // These are either shared Explore rendering controls rather than data
+    // products, or are static/reference products with no current-state Ops
+    // contract.  Keep them testable in Explore/Research WIP, but never let a
+    // broad WIP source response turn them into apparent live Ops feeds.
+    const OPS_EXPLORE_ONLY_WIP_OVERLAYS = new Set([
+      'demographics',
+      'geography',
+      'zip_codes',
+      'tribal_areas',
+      'watersheds',
+      'parks',
+      'risk',
+      'nri_risk',
+    ]);
     if (wipSourceIds.size) {
       for (const overlay of getAllOverlaysFromCategories(ALL_CATEGORIES)) {
         const sourceIds = overlay.sourceIds || [];
-        const isOpsExploreOnly = wipMode === 'ops'
-          && sourceIds.length > 0
-          && sourceIds.every((sourceId) => OPS_EXPLORE_ONLY_WIP_SOURCES.has(sourceId));
+        const isNriSource = sourceIds.some((sourceId) => sourceId.startsWith('nri_'));
+        const isOpsExploreOnly = wipMode === 'ops' && (
+          OPS_EXPLORE_ONLY_WIP_OVERLAYS.has(overlay.id)
+          || isNriSource
+          || (sourceIds.length > 0
+            && sourceIds.every((sourceId) => OPS_EXPLORE_ONLY_WIP_SOURCES.has(sourceId)))
+        );
         if (!isOpsExploreOnly && sourceIds.some((sourceId) => wipSourceIds.has(sourceId))) {
           wipShown.add(overlay.id);
         }
