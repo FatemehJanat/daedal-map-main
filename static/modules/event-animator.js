@@ -101,9 +101,11 @@ const UPDATE_INTERVALS = {
 // Point-in-time events that don't have duration (instant events)
 const INSTANT_EVENTS = ['earthquake', 'volcano', 'tornado', 'tsunami'];
 
-// Tsunami wave propagation speed (approximate deep ocean speed)
-// Used for radial mode to calculate arrival times
-const TSUNAMI_SPEED_KMH = 700;  // ~700 km/h in deep ocean
+// Focused tsunami playback is an explanatory spatial animation, not a claim
+// about physical travel time. The ring is normalized to each event's observed
+// runup extent and then holds at that evidence-backed boundary briefly.
+const RADIAL_PROPAGATION_DURATION_MS = 24 * 60 * 60 * 1000;
+const RADIAL_HOLD_FRAMES = 6;
 
 // Number of frames to generate for any animation
 // 150 frames provides smooth playback (can stretch to 10s at 15fps or run at 3s at 50fps)
@@ -621,7 +623,6 @@ export const EventAnimator = {
     // Arrival time = source_time + (distance / wave_speed)
     // This keeps runups in sync with the expanding wave circle
     let maxDistanceKm = 0;
-    let maxArrivalTime = sourceTime;
     let farthestRunup = null;
     let runupCount = 0;
 
@@ -644,35 +645,28 @@ export const EventAnimator = {
         continue;  // Skip runups with no distance data
       }
 
-      const arrivalHours = distKm / TSUNAMI_SPEED_KMH;
-      const arrivalMs = arrivalHours * 60 * 60 * 1000;
-      const arrivalTime = sourceTime + arrivalMs;
       runupCount++;
 
-      // Track farthest runup (by arrival time)
-      if (arrivalTime > maxArrivalTime) {
-        maxArrivalTime = arrivalTime;
-        farthestRunup = props.location_name || props.name || props.country || 'unknown';
-      }
-
-      // Track max distance for wave circle
+      // The farthest observed runup defines the visual horizon. Arrival
+      // positions are normalized after this full extent is known.
       if (distKm > maxDistanceKm) {
         maxDistanceKm = distKm;
+        farthestRunup = props.location_name || props.name || props.country || 'unknown';
       }
     }
 
     // Log diagnostic info
     console.log(`EventAnimator: Radial mode - ${runupCount} runups with distance data`);
 
-    // Stop exactly at the furthest recorded runup. A former 10% buffer plus
-    // a two-hour minimum could draw a wave hundreds or thousands of kilometres
-    // beyond the evidence for close-coast events.
-    const effectiveDurationMs = maxArrivalTime - sourceTime;
-    if (effectiveDurationMs <= 0) {
+    if (maxDistanceKm <= 0) {
       console.warn('EventAnimator: Radial mode has no runups with usable distance data');
       this.timestamps = [];
       return;
     }
+
+    const propagationDurationMs = RADIAL_PROPAGATION_DURATION_MS;
+    const holdDurationMs = propagationDurationMs * (RADIAL_HOLD_FRAMES / (ANIMATION_FRAME_COUNT - RADIAL_HOLD_FRAMES));
+    const effectiveDurationMs = propagationDurationMs + holdDurationMs;
 
     // Generate ANIMATION_FRAME_COUNT frames for consistent smooth playback
     // Same frame count as all other animation types
@@ -689,7 +683,9 @@ export const EventAnimator = {
 
     // Store source time for radial calculations
     this._radialSourceTime = sourceTime;
-    // Store the evidence-backed maximum wave radius for diagnostics.
+    this._radialPropagationDurationMs = propagationDurationMs;
+    this._radialHoldDurationMs = holdDurationMs;
+    // Store the evidence-backed maximum wave radius for rendering/diagnostics.
     this._radialMaxDistance = maxDistanceKm;
 
     // Initialize empty eventsByTime (radial mode uses timestamp-based visibility)
@@ -697,7 +693,7 @@ export const EventAnimator = {
 
     const durationHours = effectiveDurationMs / (60 * 60 * 1000);
     console.log(`EventAnimator: Radial mode - ${this.timestamps.length} time steps, ` +
-                `${durationHours.toFixed(1)}h animation, ${maxDistanceKm.toFixed(0)}km max distance (farthest: ${farthestRunup})`);
+                `${durationHours.toFixed(1)}h presentation, ${maxDistanceKm.toFixed(0)}km max distance (farthest: ${farthestRunup})`);
   },
 
   /**
@@ -859,10 +855,12 @@ export const EventAnimator = {
     const sourceTime = this._radialSourceTime;
     if (!sourceTime) return;
 
-    // Calculate wave distance at this simulation time
+    // Normalize ring radius to the event's furthest observed runup. During
+    // the short terminal hold it stays on that evidence-backed boundary.
     const elapsedMs = Math.max(0, simTime - sourceTime);
-    const elapsedHours = elapsedMs / (1000 * 60 * 60);
-    const waveRadiusKm = elapsedHours * TSUNAMI_SPEED_KMH;
+    const propagationDurationMs = this._radialPropagationDurationMs || RADIAL_PROPAGATION_DURATION_MS;
+    const progress = Math.min(1, elapsedMs / propagationDurationMs);
+    const waveRadiusKm = progress * (this._radialMaxDistance || 0);
 
     // Find the source in the map layer and update its properties
     const map = MapAdapter.map;
@@ -884,7 +882,7 @@ export const EventAnimator = {
     for (const feature of currentData.features) {
       if (feature.properties?.is_source === true) {
         feature.properties._waveRadiusKm = waveRadiusKm;
-        feature.properties._elapsedHours = elapsedHours;
+        feature.properties._radialProgress = progress;
         updated = true;
         break;
       }
@@ -1301,12 +1299,12 @@ export const EventAnimator = {
       return { source: null, runups: [], connections: [] };
     }
 
-    // Time elapsed since source event
+    // The focused playback clock is normalized to the observed runup extent.
+    // It reaches the furthest recorded runup at progress 1, then holds.
     const elapsedMs = timestamp - sourceTime;
-    const elapsedHours = elapsedMs / (1000 * 60 * 60);
-
-    // Wave travels at TSUNAMI_SPEED_KMH - use this for wave circle display
-    const waveDistanceKm = elapsedHours * TSUNAMI_SPEED_KMH;
+    const propagationDurationMs = this._radialPropagationDurationMs || RADIAL_PROPAGATION_DURATION_MS;
+    const progress = Math.min(1, Math.max(0, elapsedMs / propagationDurationMs));
+    const waveDistanceKm = progress * (this._radialMaxDistance || 0);
 
     // Track max distance among visible runups for return value
     let maxDistanceKm = 0;
@@ -1336,17 +1334,15 @@ export const EventAnimator = {
         continue;  // Skip runups with no distance data
       }
 
-      const arrivalHours = distKm / TSUNAMI_SPEED_KMH;
-      const arrivalMs = arrivalHours * 60 * 60 * 1000;
-      const arrivalTime = sourceTime + arrivalMs;
-
       // Runup is visible if wave has reached it
-      if (arrivalTime <= timestamp) {
+      if (distKm <= waveDistanceKm) {
         // Track max distance among visible runups
         if (distKm > maxDistanceKm) {
           maxDistanceKm = distKm;
         }
 
+        const arrivalProgress = this._radialMaxDistance > 0 ? distKm / this._radialMaxDistance : 1.0;
+        const arrivalTime = sourceTime + (propagationDurationMs * arrivalProgress);
         // Calculate recency based on time since arrival (not source time)
         const recency = useFade
           ? this._calculateRecency(arrivalTime, timestamp, windowMs)
@@ -1414,21 +1410,21 @@ export const EventAnimator = {
         _recency: 1.0,
         _isSource: true,
         _waveRadiusKm: waveDistanceKm,  // Wave front distance based on elapsed time
-        _elapsedHours: elapsedHours
+        _radialProgress: progress
       }
     } : {
       ...sourceEvent,
       _recency: 1.0,
       _isSource: true,
       _waveRadiusKm: waveDistanceKm,
-      _elapsedHours: elapsedHours
+      _radialProgress: progress
     };
 
     return {
       source: enrichedSource,
       runups: visibleRunups,
       connections: connections,
-      elapsedHours: elapsedHours,
+      progress,
       maxDistanceKm: maxDistanceKm,
       sourceTime: sourceTime
     };

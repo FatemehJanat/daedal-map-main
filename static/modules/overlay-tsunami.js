@@ -19,7 +19,7 @@ export function handleTsunamiRunups(controller, data, deps) {
   const sourceDate = sourceEvent.properties?.timestamp ? new Date(sourceEvent.properties.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : sourceYear;
   const started = EventAnimator.start({
     id: `tsunami-${eventId}`,
-    label: `Tsunami ${sourceDate}`,
+    label: `Tsunami ${sourceDate} — propagation`,
     mode: AnimationMode.RADIAL,
     events: geojson.features,
     eventType: 'tsunami',
@@ -34,6 +34,9 @@ export function handleTsunamiRunups(controller, data, deps) {
     zoom: 7,
     autoPlay: true,
     autoPlayDelayMs: session.autoPlayDelayMs,
+    // This is a source-to-runup explanation. Keep reached runups visible
+    // through the terminal hold instead of fading early observations away.
+    useFade: false,
     onExit: () => {
       session.restore();
     }
