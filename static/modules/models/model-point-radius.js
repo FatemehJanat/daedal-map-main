@@ -29,8 +29,9 @@ const DISASTER_ICON_SVGS = {
   `,
   tsunami: `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-      <path d="M4 15 C7 10, 11 10, 14 15 C15.5 17.4, 18.1 17.6, 20 16" fill="none" stroke="#f8fbff" stroke-width="2.5" stroke-linecap="round"/>
-      <path d="M4 19 C6.7 16, 9.8 16.4, 12.4 18.8" fill="none" stroke="#f8fbff" stroke-width="2.1" stroke-linecap="round" opacity="0.9"/>
+      <path d="M3.5 15.2 C6.6 9.4, 10.6 8.8, 13.5 14.8 C15.1 18.1, 18.1 18.4, 20.5 15.9" fill="none" stroke="#f8fbff" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M9.8 10.7 C11.1 7.1, 13.5 5.5, 16.1 5.2 C14.5 7.1, 14.8 9.5, 16.6 11.2" fill="none" stroke="#f8fbff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M3.8 19.1 C6.8 16.5, 10.2 16.7, 13 19.1 C14.8 20.5, 17.2 20.2, 19.5 18.7" fill="none" stroke="#f8fbff" stroke-width="2.15" stroke-linecap="round" opacity="0.92"/>
     </svg>
   `,
   wildfire: `
@@ -66,7 +67,10 @@ const DISASTER_ICON_SVGS = {
 const DISASTER_ICON_SCALE = 1.4;
 const DISASTER_ICON_TYPE_SCALE = {
   volcano: 1.25,
-  tsunami: 1.08
+  // Tsunamis are comparatively sparse at the 10-year Explore scale, so give
+  // their wave mark enough visual weight to remain identifiable among points.
+  // This is 1.5x the former 1.08 tsunami scale.
+  tsunami: 1.62
 };
 
 // Dependencies set via setDependencies

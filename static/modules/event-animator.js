@@ -664,12 +664,15 @@ export const EventAnimator = {
     // Log diagnostic info
     console.log(`EventAnimator: Radial mode - ${runupCount} runups with distance data`);
 
-    // Animation duration is from source time to last arrival + 10% buffer
-    const animationDurationMs = (maxArrivalTime - sourceTime) * 1.1;
-
-    // Minimum 2 hours of simulation time even for close runups
-    const minAnimationMs = 2 * 60 * 60 * 1000;
-    const effectiveDurationMs = Math.max(animationDurationMs, minAnimationMs);
+    // Stop exactly at the furthest recorded runup. A former 10% buffer plus
+    // a two-hour minimum could draw a wave hundreds or thousands of kilometres
+    // beyond the evidence for close-coast events.
+    const effectiveDurationMs = maxArrivalTime - sourceTime;
+    if (effectiveDurationMs <= 0) {
+      console.warn('EventAnimator: Radial mode has no runups with usable distance data');
+      this.timestamps = [];
+      return;
+    }
 
     // Generate ANIMATION_FRAME_COUNT frames for consistent smooth playback
     // Same frame count as all other animation types
@@ -686,8 +689,8 @@ export const EventAnimator = {
 
     // Store source time for radial calculations
     this._radialSourceTime = sourceTime;
-    // Store max distance for wave circle display (not for visibility check)
-    this._radialMaxDistance = maxDistanceKm * 1.1;
+    // Store the evidence-backed maximum wave radius for diagnostics.
+    this._radialMaxDistance = maxDistanceKm;
 
     // Initialize empty eventsByTime (radial mode uses timestamp-based visibility)
     this._eventsByTime = {};
@@ -863,7 +866,10 @@ export const EventAnimator = {
 
     // Find the source in the map layer and update its properties
     const map = MapAdapter.map;
-    const sourceId = 'events-point-radius';  // From model-point-radius CONFIG
+    // PointRadiusModel owns one GeoJSON source per event type (for example,
+    // `tsunami-source`). The former shared source id was retired, which left
+    // radial tsunami wave updates writing to no source at all.
+    const sourceId = `${this.config?.eventType || 'tsunami'}-source`;
 
     // Get current source data
     const source = map.getSource(sourceId);

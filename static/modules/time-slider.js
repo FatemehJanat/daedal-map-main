@@ -859,18 +859,12 @@ export const TimeSlider = {
     const durationMs = eventEndTime - eventStartTime;
     let suggestedSlider;
 
-    if (this.useIndexedScale && Array.isArray(this.sortedTimes) && this.sortedTimes.length > 1) {
-      const TARGET_SECONDS = 5;
-      const targetDisplayFrames = TARGET_SECONDS * (TIME_SYSTEM?.MAX_FPS || 60);
-      const pointsPerFrame = this.sortedTimes.length / Math.max(1, targetDisplayFrames);
-      const clampedSteps = Math.max(
-        TIME_SYSTEM?.MIN_STEPS_PER_FRAME || 0.001,
-        Math.min(TIME_SYSTEM?.MAX_STEPS_PER_FRAME || 100, pointsPerFrame)
-      );
-      suggestedSlider = TIME_SYSTEM.stepsPerFrameToSlider(clampedSteps);
-    } else {
-      suggestedSlider = this.calculateEventSpeed(durationMs);
-    }
+    // Playback always advances in real timestamps, including an indexed
+    // slider scale. Its speed must therefore come from the time range—not
+    // from the number of display frames. Treating 150 generated frames as
+    // 150 six-hour steps made short focused animations (notably tsunamis)
+    // complete almost instantly and reveal their full geometry at once.
+    suggestedSlider = this.calculateEventSpeed(durationMs);
 
     // Store previous speed for restoration
     this._previousSpeedSlider = this.speedSliderValue;

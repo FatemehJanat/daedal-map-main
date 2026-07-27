@@ -2579,6 +2579,14 @@ export const OverlayController = {
     return {
       timestamp: this.getCurrentTimestamp(),
       year: this.getCurrentYear(),
+      // Focused animations temporarily take over the same slider. Preserve
+      // the user's actual controls, not just the selected point in time.
+      timeSlider: TimeSlider ? {
+        speedSliderValue: Number(TimeSlider.speedSliderValue),
+        loopEnabled: Boolean(TimeSlider.loopEnabled),
+        boundMinTime: TimeSlider.boundMinTime,
+        boundMaxTime: TimeSlider.boundMaxTime
+      } : null,
       camera,
       activeOverlayIds: this.captureFocusedOverlayIds()
     };
@@ -2635,6 +2643,19 @@ export const OverlayController = {
         TimeSlider.setActiveScale('primary');
         if (viewState?.timestamp != null && TimeSlider.setTime) {
           TimeSlider.setTime(viewState.timestamp, 'api');
+        }
+
+        const savedSlider = viewState?.timeSlider;
+        if (Number.isFinite(savedSlider?.speedSliderValue) && TimeSlider.setSpeedFromSlider) {
+          TimeSlider.setSpeedFromSlider(savedSlider.speedSliderValue);
+          if (TimeSlider.speedSlider) TimeSlider.speedSlider.value = savedSlider.speedSliderValue;
+        }
+        if (typeof savedSlider?.loopEnabled === 'boolean') {
+          TimeSlider.loopEnabled = savedSlider.loopEnabled;
+          if (TimeSlider.loopCheckbox) TimeSlider.loopCheckbox.checked = savedSlider.loopEnabled;
+        }
+        if (savedSlider && TimeSlider.setTrimBounds) {
+          TimeSlider.setTrimBounds(savedSlider?.boundMinTime ?? null, savedSlider?.boundMaxTime ?? null);
         }
       }
       if (!this.suppressTimelineAutoShow && Object.keys(yearRangeCache).length > 0) {

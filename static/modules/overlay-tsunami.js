@@ -15,7 +15,6 @@ export function handleTsunamiRunups(controller, data, deps) {
   if (!sourceCoords) return console.warn('OverlayController: No source event found in tsunami data');
   MapAdapter?.hidePopup?.();
   MapAdapter.popupLocked = false;
-  MapAdapter.map.flyTo({ center: sourceCoords, zoom: 7, duration: 1500 });
   const sourceYear = sourceEvent.properties?.year || new Date().getFullYear();
   const sourceDate = sourceEvent.properties?.timestamp ? new Date(sourceEvent.properties.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : sourceYear;
   const started = EventAnimator.start({
@@ -28,6 +27,13 @@ export function handleTsunamiRunups(controller, data, deps) {
     granularity: '12m',
     renderer: 'point-radius',
     rendererOptions: { eventType: 'tsunami' },
+    // Match earthquake focused sequences: let the entry transition settle,
+    // then start the propagation automatically instead of requiring another
+    // play/click action from the user.
+    center: { lon: sourceCoords[0], lat: sourceCoords[1] },
+    zoom: 7,
+    autoPlay: true,
+    autoPlayDelayMs: session.autoPlayDelayMs,
     onExit: () => {
       session.restore();
     }
