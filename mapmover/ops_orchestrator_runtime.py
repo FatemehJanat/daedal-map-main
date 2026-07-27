@@ -1811,7 +1811,7 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
     # collection so a timeline with only external frames remains valid.
     requested_hours = max([
         max(1, int(history_hours)),
-        *(_ops_history_display_hours_for_snapshot(snapshot) for snapshot in snapshots.values()),
+        *(_ops_timeline_display_hours_for_snapshot(snapshot) for snapshot in snapshots.values()),
     ])
     range_start = now - timedelta(hours=requested_hours)
     feeds: dict[str, list[dict]] = {}
@@ -2330,6 +2330,19 @@ def _ops_history_display_hours_for_snapshot(snapshot: dict | None) -> int:
         except Exception:
             pass
     return min(DEFAULT_OPS_HISTORY_DISPLAY_HOURS, _ops_history_retention_hours_for_snapshot(snapshot))
+
+
+def _ops_timeline_display_hours_for_snapshot(snapshot: dict | None) -> int:
+    """Return the short interactive cursor window without reducing retention."""
+    history_hours = _ops_history_display_hours_for_snapshot(snapshot)
+    if isinstance(snapshot, dict):
+        try:
+            hours = int(snapshot.get("ops_timeline_display_hours") or history_hours)
+            if hours > 0:
+                return min(hours, history_hours)
+        except (TypeError, ValueError):
+            pass
+    return history_hours
 
 
 def _mentioned_feeds(query: str, effective_feeds: list[str]) -> list[str]:

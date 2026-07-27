@@ -184,6 +184,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
             "published_at": "2026-07-27T00:00:00+00:00",
             "ops_history_retention_hours": 720,
             "ops_history_display_hours": 720,
+            "ops_timeline_display_hours": 72,
             "payload_summary": {"event_count": 0},
         }
         try:
@@ -194,7 +195,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
             ops_orchestrator_runtime.load_current_state_history = original_history
             ops_orchestrator_runtime.load_current_state_snapshot = original_snapshot
 
-        self.assertEqual(720, timeline["history_hours"])
+        self.assertEqual(72, timeline["history_hours"])
 
     def test_timeline_allows_external_provider_only_request(self):
         timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=[])

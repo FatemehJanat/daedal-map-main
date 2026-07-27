@@ -74,10 +74,11 @@ def _snapshot_time(snapshot: dict) -> datetime | None:
     return None
 
 
-def _snapshot_display_history_hours(snapshot: dict | None) -> int:
+def _snapshot_timeline_history_hours(snapshot: dict | None) -> int:
     try:
-        hours = int((snapshot or {}).get("ops_history_display_hours") or 72)
-        return max(1, hours)
+        history_hours = int((snapshot or {}).get("ops_history_display_hours") or 72)
+        timeline_hours = int((snapshot or {}).get("ops_timeline_display_hours") or history_hours)
+        return max(1, min(timeline_hours, history_hours))
     except (TypeError, ValueError):
         return 72
 
@@ -135,7 +136,7 @@ def _local_nws_timeline_entries() -> list[dict]:
         if at is not None:
             deduped[(at.isoformat(), str(entry.get("payload_hash") or ""))] = entry
     ordered = sorted(deduped.values(), key=lambda entry: _snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_snapshot_display_history_hours(current))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_snapshot_timeline_history_hours(current))
     return [
         entry for entry in ordered
         if (_snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
@@ -211,7 +212,7 @@ def _local_point_timeline_entries(overlay_id: str) -> list[dict]:
         at = _snapshot_time(entry)
         if at is not None:
             deduped[(at.isoformat(), str(entry.get("payload_hash") or ""))] = entry
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_snapshot_display_history_hours(current))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_snapshot_timeline_history_hours(current))
     return [
         entry for entry in sorted(
             deduped.values(), key=lambda item: _snapshot_time(item) or datetime.min.replace(tzinfo=timezone.utc)
