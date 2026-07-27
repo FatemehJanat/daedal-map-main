@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 import json
 from pathlib import Path
@@ -28,6 +28,17 @@ class ApiMetricSpec:
 
 
 @dataclass(frozen=True)
+class ApiAnalysisDimensionSpec:
+    """A source-approved entity dimension for aggregate research queries."""
+
+    dimension_id: str
+    column: str
+    label_fields: tuple[str, ...] = ()
+    max_groups: int = 100
+    requires_time_filter: bool = False
+
+
+@dataclass(frozen=True)
 class ApiSourceSpec:
     source_id: str
     pack_id: str
@@ -44,6 +55,7 @@ class ApiSourceSpec:
     default_limit: int = DEFAULT_LIMIT
     max_limit: int = MAX_LIMIT
     metadata_source_id: str | None = None
+    analysis_dimensions: dict[str, ApiAnalysisDimensionSpec] = field(default_factory=dict)
 
 
 CURRENCY_SOURCE_SPEC = ApiSourceSpec(
@@ -574,7 +586,13 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
                 description="Count of events matching the applied filters",
             ),
         )
-    location_field = str(source_defaults["location_field"])
+    # Source metadata owns the canonical filter location. The runtime defaults
+    # only seed legacy sources that have not declared their own contract.
+    # This is essential for event tables whose stable event ``loc_id`` differs
+    # from their geometry-backed filter location (for example, marine events).
+    location_field = str(
+        metadata.get("location_field") or source_defaults["location_field"]
+    ).strip()
     temporal_coverage = metadata.get("temporal_coverage") if isinstance(metadata.get("temporal_coverage"), dict) else {}
     time_field = temporal_coverage.get("field") or source_defaults.get("time_field")
     time_granularity = normalize_time_granularity(
@@ -653,6 +671,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         if field_name:
             sortable_fields.add(field_name)
     sortable_fields.update(metrics.keys())
+    analysis_dimensions = parse_analysis_dimensions(metadata, available_columns=available_cols)
 
     return ApiSourceSpec(
         source_id=source_id,
@@ -670,6 +689,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         default_limit=int(metadata.get("default_limit") or source_defaults["default_limit"]),
         max_limit=int(metadata.get("max_limit") or source_defaults["max_limit"]),
         metadata_source_id=metadata_source_id,
+        analysis_dimensions=analysis_dimensions,
     )
 
 
@@ -694,6 +714,50 @@ def normalize_time_value_for_response(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
     return value
+
+
+def parse_analysis_dimensions(
+    metadata: dict[str, Any],
+    *,
+    available_columns: set[str] | None = None,
+) -> dict[str, ApiAnalysisDimensionSpec]:
+    """Read the small, source-owned aggregate-query contract.
+
+    This deliberately does not promote arbitrary Parquet columns into public
+    group-bys.  A source must opt a stable entity key in explicitly.
+    """
+    contract = metadata.get("analysis_contract")
+    contract = contract if isinstance(contract, dict) else {}
+    declared = contract.get("groupable_dimensions")
+    if not isinstance(declared, dict):
+        return {}
+    parsed: dict[str, ApiAnalysisDimensionSpec] = {}
+    for raw_id, raw_spec in declared.items():
+        dimension_id = str(raw_id or "").strip()
+        detail = raw_spec if isinstance(raw_spec, dict) else {}
+        column = str(detail.get("column") or dimension_id).strip()
+        if not dimension_id or not column:
+            continue
+        if available_columns is not None and column not in available_columns:
+            continue
+        raw_labels = detail.get("label_fields")
+        labels = tuple(
+            field_name
+            for field_name in (str(value).strip() for value in (raw_labels or []))
+            if field_name and (available_columns is None or field_name in available_columns)
+        ) if isinstance(raw_labels, list) else ()
+        try:
+            max_groups = int(detail.get("max_groups") or 100)
+        except (TypeError, ValueError):
+            max_groups = 100
+        parsed[dimension_id] = ApiAnalysisDimensionSpec(
+            dimension_id=dimension_id,
+            column=column,
+            label_fields=labels,
+            max_groups=max(1, min(max_groups, MAX_LIMIT)),
+            requires_time_filter=bool(detail.get("requires_time_filter", False)),
+        )
+    return parsed
 
 
 def get_api_source_spec(source_id: str) -> ApiSourceSpec | None:
@@ -1216,6 +1280,8 @@ def execute_dataset_query(
     compare_filters: list[tuple[str, str, Any]] | None = None,
     sort_items: list[tuple[str, str]] | None = None,
     limit: int | None = None,
+    aggregate_dimension_columns: list[str] | None = None,
+    aggregate_label_columns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     from .duckdb_helpers import _normalize_ts_for_duckdb
 
@@ -1293,7 +1359,18 @@ def execute_dataset_query(
     if requested_event_count_only:
         parquet_uri = params[0]
         where_params = params[1:]
-        group_by_columns = [col for col in groupable_selected if col != "event_count"]
+        # Legacy event-count requests group by the regular selected columns
+        # (location/time).  An explicit aggregate request instead groups only
+        # by its source-approved entity dimensions.
+        group_by_columns = (
+            [col for col in (aggregate_dimension_columns or []) if col in available_cols]
+            if aggregate_dimension_columns is not None
+            else [col for col in groupable_selected if col != "event_count"]
+        )
+        label_columns = [
+            col for col in (aggregate_label_columns or [])
+            if col in available_cols and col not in group_by_columns
+        ]
         select_parts: list[str] = []
         group_by_ordinals: list[str] = []
         event_count_params: list[Any] = []
@@ -1314,6 +1391,10 @@ def execute_dataset_query(
             select_parts.append(quote_ident(col))
             group_by_ordinals.append(str(group_index))
             group_index += 1
+        # Labels are descriptive only.  They are deliberately aggregated, not
+        # added to GROUP BY, because names can be null or non-unique.
+        for col in label_columns:
+            select_parts.append(f"MIN({quote_ident(col)}) AS {quote_ident(col)}")
         select_parts.append("COUNT(*) AS event_count")
         sql = f"SELECT {', '.join(select_parts)} FROM read_parquet(?)"
         aggregate_params: list[Any] = [*event_count_params, parquet_uri, *where_params]

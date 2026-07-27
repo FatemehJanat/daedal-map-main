@@ -452,12 +452,18 @@ def _read_local_live_state_snapshot(collector: str) -> dict | None:
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
     if runtime_mode != "local" or not re.fullmatch(r"[A-Za-z0-9_-]+", collector):
         return None
-    path = DATA_ROOT / "live_state" / "collectors" / collector / "snapshot.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
+    paths = (
+        DATA_ROOT / "live_state" / "collectors" / collector / "snapshot.json",
+        PRIVATE_ROOT / "live" / "state" / collector / "snapshot.json",
+    )
+    for path in paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def _is_live_state_snapshot(payload: object) -> bool:
@@ -1846,6 +1852,15 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
                 for key in ("station_id", "lat", "lon", "sst_c", "air_c", "wave_m", "wind_mps", "obs_utc")
                 if isinstance(coldest_row, dict) and key in coldest_row
             },
+        }
+    if collector == "airnow":
+        return {
+            "reporting_area_count": summary.get("reporting_area_count"),
+            "by_parameter": summary.get("by_parameter"),
+            "worst_aqi": summary.get("worst_aqi"),
+            "worst_area": summary.get("worst_area"),
+            "observation_kind": summary.get("observation_kind"),
+            "coverage_note": summary.get("coverage_note"),
         }
     compact: dict = {}
     for key in ("event_count", "incident_count", "storm_count", "position_count", "rate_count", "alert_count"):

@@ -53,6 +53,12 @@ def get_tsunami_property_builders():
         "deaths": lambda r: safe_int(r, "deaths"),
         "damage_millions": lambda r: safe_float(r, "damage_millions"),
         "loc_id": lambda r: r.get("loc_id", ""),
+        # Source preparation derives these from unchanged event coordinates
+        # against the reviewed named-water and physical-surface banks. They
+        # are distinct from the stable event `loc_id` and must reach every
+        # surface that consumes the canonical Explore event table.
+        "marine_loc_id": lambda r: safe_str(r, "marine_loc_id", None),
+        "physical_surface": lambda r: safe_str(r, "physical_surface", None),
         "latitude": lambda r: safe_float(r, "latitude"),
         "longitude": lambda r: safe_float(r, "longitude"),
         "is_source": lambda r: True,

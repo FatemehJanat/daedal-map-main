@@ -198,6 +198,8 @@ export function createLivePointOverlay(config) {
         const html = `<div style="font-family:monospace;font-size:12px;max-width:220px">
           ${titleVal ? `<div style="font-weight:bold">${esc(config.popup.titlePrefix || '')}${esc(titleVal)}</div>` : ''}
           ${rows}
+          ${config.popup?.notice ? `<div style="margin-top:6px;color:#9aa4bf;font-size:11px">${esc(config.popup.notice)}</div>` : ''}
+          ${config.popup?.sourceUrl ? `<div style="margin-top:4px;font-size:11px"><a href="${esc(config.popup.sourceUrl)}" target="_blank" rel="noopener">Source</a></div>` : ''}
         </div>`;
         // Live points participate in the one shared popup contract. This keeps
         // a buoy click above the point/raster inspector rather than opening a
@@ -290,10 +292,33 @@ const BUOYS_CONFIG = {
   },
 };
 
+const AIRNOW_ICON_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 34">
+  <path d="M14 2 C8 2 4 6.7 4 12.5 C4 20.5 14 31 14 31 C14 31 24 20.5 24 12.5 C24 6.7 20 2 14 2 Z" fill="#8c1d40" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="14" cy="12" r="4.2" fill="#ffffff" opacity="0.9"/>
+</svg>`.trim();
+
+const AIRNOW_CONFIG = {
+  id: 'airnow', feedId: 'airnow', endpoint: '/api/ops/points/airnow',
+  colorBy: { prop: 'aqi', stops: [[0, '#00e400'], [51, '#ffff00'], [101, '#ff7e00'], [151, '#ff0000'], [201, '#8f3f97'], [301, '#7e0023']], nullColor: '#9aa4bf' },
+  icon: { svg: AIRNOW_ICON_SVG, pixelSize: [36, 44], minzoom: 3, size: ['interpolate', ['linear'], ['zoom'], 3, 0.55, 8, 0.9] },
+  popup: {
+    titleProp: 'reporting_area',
+    fields: [
+      { label: 'State / province', prop: 'state' }, { label: 'Pollutant', prop: 'parameter' },
+      { label: 'AQI', prop: 'aqi', digits: 0 }, { label: 'Category', prop: 'category' },
+      { label: 'Observed', prop: 'observed_at' }, { label: 'Reporting agency', prop: 'agency' },
+    ],
+    notice: 'Preliminary AirNow conditions; subject to change. Not regulatory or trend data.',
+    sourceUrl: 'https://www.airnow.gov/',
+  },
+};
+
 // Registry of live point overlays. Add a config here (+ a backend POINT_FEEDS
 // entry) to surface a new station/sensor feed.
 export const LIVE_POINT_OVERLAYS = {
   buoys: createLivePointOverlay(BUOYS_CONFIG),
+  airnow: createLivePointOverlay(AIRNOW_CONFIG),
 };
 
 export function getLivePointOverlay(overlayId) {

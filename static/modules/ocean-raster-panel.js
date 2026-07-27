@@ -15,9 +15,8 @@ export function setDependencies(deps) {
 }
 
 const PANEL_ID = 'ocean-raster-panel';
-const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly', air_temperature_2m_c: 'Temperature', air_temperature_2m_anomaly_c: 'Anomaly' };
-const DATASET_LABELS = { 'ocean-sst-grid': 'Ocean temperature', 'land-temperature-grid': 'Air temperature' };
-const VAR_UNIT = ' deg C';
+const VAR_LABELS = { sst_c: 'Temperature', sst_anom_c: 'Anomaly', air_temperature_2m_c: 'Temperature', air_temperature_2m_anomaly_c: 'Anomaly', pm25_ug_m3: 'PM2.5' };
+const DATASET_LABELS = { 'ocean-sst-grid': 'Ocean temperature', 'land-temperature-grid': 'Air temperature', 'cams-air-quality-grid': 'CAMS PM2.5' };
 
 let _overlayId = null;
 
@@ -243,7 +242,8 @@ function _renderLegend(panel) {
   if (!scale) { bar.style.background = '#444'; labels.innerHTML = ''; return; }
   const { css, min, max } = _gradientCss(scale);
   bar.style.background = css;
-  labels.innerHTML = `<span>${min}${VAR_UNIT}</span><span>${max}${VAR_UNIT}</span>`;
+  const unit = _model.getVariable(_overlayId) === 'pm25_ug_m3' ? ' ug/m3' : ' deg C';
+  labels.innerHTML = `<span>${min}${unit}</span><span>${max}${unit}</span>`;
 }
 
 export const OceanRasterPanel = {

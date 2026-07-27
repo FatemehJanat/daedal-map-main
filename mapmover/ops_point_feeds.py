@@ -35,6 +35,8 @@ class PointFeedSpec:
     lat_key: str = "lat"
     lon_key: str = "lon"
     property_keys: tuple[str, ...] = field(default_factory=tuple)  # props to carry per point
+    row_schema: tuple[str, ...] = field(default_factory=tuple)  # compact collector rows, when used
+    wip_only: bool = False
 
 
 # Registry of live point feeds. Add an entry to surface a new station/sensor feed.
@@ -45,6 +47,21 @@ POINT_FEEDS: dict[str, PointFeedSpec] = {
         lat_key="lat",
         lon_key="lon",
         property_keys=("station_id", "sst_c", "air_c", "wave_m", "wind_mps", "obs_utc"),
+    ),
+    "airnow": PointFeedSpec(
+        collector="airnow",
+        items_key="reporting_areas",
+        lat_key="lat",
+        lon_key="lon",
+        property_keys=(
+            "reporting_area", "state", "parameter", "aqi", "category", "observed_at",
+            "agency", "action_day",
+        ),
+        row_schema=(
+            "reporting_area", "state", "parameter", "aqi", "category", "lat", "lon",
+            "observed_at", "agency", "action_day",
+        ),
+        wip_only=True,
     ),
 }
 
@@ -57,6 +74,10 @@ def _assemble_points_geojson(spec: PointFeedSpec, summary: dict) -> dict:
     items = summary.get(spec.items_key) or []
     features = []
     for item in items:
+        if not isinstance(item, dict) and spec.row_schema and isinstance(item, (list, tuple)):
+            item = dict(zip(spec.row_schema, item))
+        if not isinstance(item, dict):
+            continue
         lat = item.get(spec.lat_key)
         lon = item.get(spec.lon_key)
         if lat is None or lon is None:

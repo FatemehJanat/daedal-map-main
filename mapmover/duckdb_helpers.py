@@ -501,7 +501,7 @@ def resolve_event_parquet_path(source_dir: Path, event_file_key: str = "events")
 # Query functions (all accept Path objects; path_to_uri is applied internally)
 # ---------------------------------------------------------------------------
 
-def select_distinct_event_loc_ids(areas_path: Path, affected_loc_id: str, exact: bool = False, limit: int | None = None) -> list[str]:
+def select_distinct_event_ids(areas_path: Path, affected_loc_id: str, exact: bool = False, limit: int | None = None) -> list[str]:
     if duckdb is None or not parquet_available(areas_path):
         return []
     uri = path_to_uri(areas_path)
@@ -517,10 +517,10 @@ def select_distinct_event_loc_ids(areas_path: Path, affected_loc_id: str, exact:
         )
         value = f"{escaped}%"
     sql = (
-        "SELECT DISTINCT event_loc_id "
+        "SELECT DISTINCT event_id "
         "FROM read_parquet(?) "
         f"WHERE affected_loc_id {comparator} ? "
-        "ORDER BY event_loc_id"
+        "ORDER BY event_id"
     )
     if not exact:
         sql = sql.replace("ORDER BY", "ESCAPE '\\' ORDER BY", 1)

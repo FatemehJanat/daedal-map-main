@@ -24,7 +24,7 @@ import json
 import pandas as pd
 from pathlib import Path
 from . import GLOBAL_DIR
-from .duckdb_helpers import parquet_available, select_distinct_event_loc_ids
+from .duckdb_helpers import parquet_available, select_distinct_event_ids
 from .runtime.geography_reference import translate_loc_id_to_geometry_id
 
 # Metadata cache
@@ -119,11 +119,11 @@ def apply_location_filters(
         if parquet_available(areas_path):
             try:
                 affected_loc_id = translate_loc_id_to_geometry_id(affected_loc_id)
-                affected_events = set(select_distinct_event_loc_ids(areas_path, affected_loc_id))
+                affected_events = set(select_distinct_event_ids(areas_path, affected_loc_id))
                 if not affected_events and areas_path.exists():
                     areas_df = pd.read_parquet(areas_path)
                     mask = areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
-                    affected_events = set(areas_df[mask]['event_loc_id'].unique())
+                    affected_events = set(areas_df[mask]['event_id'].unique())
                 df = df[df[event_id_col].isin(affected_events)]
             except Exception:
                 # If event_areas fails, return unfiltered (graceful degradation)
@@ -152,11 +152,11 @@ def get_affected_event_ids(
 
     try:
         affected_loc_id = translate_loc_id_to_geometry_id(affected_loc_id)
-        affected = set(select_distinct_event_loc_ids(areas_path, affected_loc_id))
+        affected = set(select_distinct_event_ids(areas_path, affected_loc_id))
         if not affected and areas_path.exists():
             areas_df = pd.read_parquet(areas_path)
             mask = areas_df['affected_loc_id'].str.startswith(affected_loc_id, na=False)
-            affected = areas_df[mask]['event_loc_id'].unique()
+            affected = areas_df[mask]['event_id'].unique()
         return set(affected)
     except Exception:
         return set()
@@ -184,7 +184,7 @@ def get_events_for_location(
 
     try:
         loc_id = translate_loc_id_to_geometry_id(loc_id)
-        affected_events = set(select_distinct_event_loc_ids(
+        affected_events = set(select_distinct_event_ids(
             areas_path,
             loc_id,
             exact=not include_children,
@@ -196,7 +196,7 @@ def get_events_for_location(
                 mask = areas_df['affected_loc_id'].str.startswith(loc_id, na=False)
             else:
                 mask = areas_df['affected_loc_id'] == loc_id
-            affected_events = areas_df[mask]['event_loc_id'].unique()
+            affected_events = areas_df[mask]['event_id'].unique()
 
         return {
             "count": len(affected_events),

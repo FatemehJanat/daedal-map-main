@@ -315,13 +315,13 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "get_tsunami_events",
             "title": "Get Tsunami Events",
-            "description": "Paid x402 canonical tool. Queries tsunamis_events for historical tsunami records and wave-height metrics. Best for event counts, max water height thresholds, and top-event lookups. Region filters may use ISO3 country ids or ocean-region ids such as XOO. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge.",
+            "description": "Paid x402 canonical tool. Queries tsunamis_events for historical tsunami records and water-height/runup metrics. Best for event counts, max water height thresholds, and top-event lookups. Region filters may use ISO3 country ids or geometry-backed named-water-body ids such as XSM for the Mediterranean Sea; XOO is deprecated. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing and idempotency."},
                     "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metric ids to return, such as 'event_count', 'max_water_height_m', or event attributes."},
-                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses. Tsunami queries commonly use year-style windows and may use ocean-region ids such as XOO."},
+                    "filters": {"type": "object", "description": "Structured filters including time ranges, region_ids, and compare clauses. Tsunami queries commonly use year-style windows and may use geometry-backed ocean/sea ids such as XSM."},
                     "sort": {"anyOf": [{"type": "array"}, {"type": "object"}], "description": "Optional sort instructions for row-returning queries."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum number of rows to return. For largest-wave or latest-event requests, include a narrow time range or region_ids before sorting."},
                     "output": {"type": "object", "description": "Optional output controls such as response format hints."},

@@ -56,6 +56,7 @@ from mapmover.api_query_runtime import (
 from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
+from mapmover.runtime.geography_reference import classify_loc_id_family
 from mapmover.security import get_client_ip, rate_limiter
 from mapmover.storage_mode import get_runtime_mode
 
@@ -487,10 +488,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
 
     if normalized_region_ids:
         if spec.location_filter_mode == "country_name_or_hierarchical_loc_id":
-            prefix_region_ids = [value for value in normalized_region_ids if value.startswith("X")]
-            country_region_ids = [value for value in normalized_region_ids if not value.startswith("X")]
-            if prefix_region_ids:
-                hierarchical_prefix_filters[spec.location_field] = prefix_region_ids
+            geometry_region_ids = [
+                value for value in normalized_region_ids
+                if classify_loc_id_family(value) in {"water_body", "marine_eez"}
+            ]
+            country_region_ids = [value for value in normalized_region_ids if value not in geometry_region_ids]
+            if geometry_region_ids:
+                hierarchical_prefix_filters[spec.location_field] = geometry_region_ids
             if country_region_ids:
                 country_names = [str(name).strip().upper() for name in get_country_names_from_codes(country_region_ids)]
                 country_names = [name for name in country_names if name]
@@ -550,7 +554,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 field_name,
                 available_columns=available_columns,
             )
-            if resolved_field_name not in spec.filterable_fields and resolved_field_name not in available_columns:
+            if resolved_field_name not in spec.filterable_fields:
                 available = sorted(spec.filterable_fields)
                 return error_response(
                     request_id,
@@ -606,7 +610,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 field_name,
                 available_columns=available_columns,
             )
-            if resolved_field_name not in spec.filterable_fields and resolved_field_name not in available_columns:
+            if resolved_field_name not in spec.filterable_fields:
                 available = sorted(spec.filterable_fields)
                 return error_response(
                     request_id,
@@ -651,7 +655,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 field_name,
                 available_columns=available_columns,
             )
-            if resolved_field_name not in available_compare_fields and resolved_field_name not in available_columns:
+            if resolved_field_name not in available_compare_fields:
                 available = sorted(available_compare_fields)
                 return error_response(
                     request_id,
@@ -673,6 +677,54 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                     source_id=source_id,
                 )
             compare_filters.append((resolved_field_name, op, value))
+
+    aggregation = payload.get("aggregation") or {}
+    if aggregation and not isinstance(aggregation, dict):
+        return error_response(
+            request_id, "invalid_aggregation", "aggregation must be an object.", 400,
+            retry_hint="Use {dimensions: [...], include_labels: [...]} only when the source publishes analysis dimensions.",
+            pack_id=spec.pack_id, source_id=source_id,
+        )
+    raw_dimension_ids = aggregation.get("dimensions") or []
+    if isinstance(raw_dimension_ids, str):
+        raw_dimension_ids = [raw_dimension_ids]
+    if not isinstance(raw_dimension_ids, list):
+        return error_response(request_id, "invalid_aggregation", "aggregation.dimensions must be a list.", 400, pack_id=spec.pack_id, source_id=source_id)
+    dimension_ids = [str(value or "").strip() for value in raw_dimension_ids if str(value or "").strip()]
+    if aggregation and not dimension_ids:
+        return error_response(request_id, "invalid_aggregation", "aggregation.dimensions must contain one published dimension.", 400, pack_id=spec.pack_id, source_id=source_id)
+    if len(dimension_ids) > 2:
+        return error_response(request_id, "invalid_aggregation", "At most two aggregation dimensions are supported.", 400, pack_id=spec.pack_id, source_id=source_id)
+    unknown_dimensions = [value for value in dimension_ids if value not in spec.analysis_dimensions]
+    if unknown_dimensions:
+        return error_response(
+            request_id, "dimension_not_groupable", "One or more aggregation dimensions are not published for this source.", 400,
+            details={"unknown_dimensions": unknown_dimensions, "groupable_dimensions": sorted(spec.analysis_dimensions)},
+            retry_hint="Use only analysis dimensions published with the source contract.",
+            pack_id=spec.pack_id, source_id=source_id,
+        )
+    if aggregation and metrics != ["event_count"]:
+        return error_response(
+            request_id, "aggregation_not_supported", "Aggregation v1 supports event_count only. Use a normal rows query for metric rankings.", 400,
+            pack_id=spec.pack_id, source_id=source_id,
+        )
+    selected_dimensions = [spec.analysis_dimensions[value] for value in dimension_ids]
+    if any(dimension.requires_time_filter for dimension in selected_dimensions) and not time_filter:
+        return error_response(request_id, "time_required", "This aggregation requires filters.time to bound the event scan.", 400, pack_id=spec.pack_id, source_id=source_id)
+    raw_labels = aggregation.get("include_labels") or []
+    if isinstance(raw_labels, str):
+        raw_labels = [raw_labels]
+    if not isinstance(raw_labels, list):
+        return error_response(request_id, "invalid_aggregation", "aggregation.include_labels must be a list.", 400, pack_id=spec.pack_id, source_id=source_id)
+    label_columns = [str(value or "").strip() for value in raw_labels if str(value or "").strip()]
+    allowed_labels = {label for dimension in selected_dimensions for label in dimension.label_fields}
+    invalid_labels = [value for value in label_columns if value not in allowed_labels]
+    if invalid_labels:
+        return error_response(
+            request_id, "label_not_available", "Requested label fields are not approved for the selected aggregation dimensions.", 400,
+            details={"invalid_labels": invalid_labels, "allowed_label_fields": sorted(allowed_labels)},
+            pack_id=spec.pack_id, source_id=source_id,
+        )
 
     requested_limit = payload.get("limit", spec.default_limit)
     try:
@@ -709,6 +761,14 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             pack_id=spec.pack_id,
             source_id=source_id,
         )
+    if selected_dimensions:
+        max_groups = min(dimension.max_groups for dimension in selected_dimensions)
+        if limit > max_groups:
+            return error_response(
+                request_id, "result_too_large", f"aggregation limit {limit} exceeds the approved maximum of {max_groups} groups.", 400,
+                details={"max_groups": max_groups}, retry_hint=f"Reduce limit to {max_groups} or less.",
+                pack_id=spec.pack_id, source_id=source_id,
+            )
 
     raw_sort = payload.get("sort") or []
     if raw_sort and isinstance(raw_sort, dict):
@@ -1068,8 +1128,9 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         settlement = (verifier_payload or {}).get("settlement") or {}
         settlement_id = str(settlement.get("settlement_id") or "").strip() or None
 
-    select_columns = [spec.location_field] + metric_columns
-    if spec.time_field:
+    select_columns = [] if selected_dimensions else [spec.location_field]
+    select_columns += metric_columns
+    if spec.time_field and not selected_dimensions:
         select_columns.insert(1, spec.time_field)
     for sort_field, _sort_direction in sort_items:
         if sort_field not in select_columns:
@@ -1086,6 +1147,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 compare_filters=compare_filters or None,
                 sort_items=sort_items,
                 limit=limit,
+                aggregate_dimension_columns=[dimension.column for dimension in selected_dimensions] if selected_dimensions else None,
+                aggregate_label_columns=label_columns or None,
             )
     except QueryConcurrencyLimitError as exc:
         return error_response(
@@ -1102,10 +1165,17 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     response_rows: list[dict[str, Any]] = []
     null_only_rows_omitted = 0
     for row in rows:
-        shaped = {
-            "loc_id": json_safe_value(row.get(spec.location_field)),
-        }
-        if spec.time_field:
+        shaped: dict[str, Any] = {}
+        if selected_dimensions:
+            shaped["dimensions"] = {
+                dimension.dimension_id: json_safe_value(row.get(dimension.column))
+                for dimension in selected_dimensions
+            }
+            if label_columns:
+                shaped["labels"] = {column: json_safe_value(row.get(column)) for column in label_columns}
+        else:
+            shaped["loc_id"] = json_safe_value(row.get(spec.location_field))
+        if spec.time_field and not selected_dimensions:
             shaped[spec.time_field] = json_safe_value(format_query_time_value(row.get(spec.time_field)))
         non_null_metric_count = 0
         for metric in metrics:
@@ -1147,6 +1217,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         "query_mode": spec.query_mode,
         "filters_applied": filters_applied,
         "sort": normalized_sort,
+        "aggregation": {"dimensions": dimension_ids, "include_labels": label_columns} if selected_dimensions else None,
         "row_count": len(response_rows),
         "truncated": False,
         "rows": response_rows,

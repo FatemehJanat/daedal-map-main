@@ -606,13 +606,13 @@ def resolve_admin_text_to_loc_id(
         if family == "event_or_entity":
             return {
                 "query": value,
-                "match_type": "direct_event_loc_id",
+                "match_type": "non_geometry_identifier",
                 "matches": {},
                 "deepest_resolved_loc_id": None,
                 "deepest_resolved_admin_level": None,
                 "should_persist_deepest_loc_id": False,
                 "loc_id_family": family,
-                "error": "event/entity loc_id requires exact-event routing",
+                "error": "non-geometry identifier requires exact event or entity routing",
             }
         loc_id = translate_geometry_id_to_local_id(value)
         admin_level = infer_admin_level_from_loc_id(loc_id)

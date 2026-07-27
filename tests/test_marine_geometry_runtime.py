@@ -9,6 +9,7 @@ from mapmover.runtime.marine_geometry import (
     marine_bank_for_loc_id,
     resolve_marine_geometry_source,
 )
+from mapmover.runtime.geography_reference import is_named_water_loc_id
 
 
 class MarineGeometryRuntimeTests(unittest.TestCase):
@@ -16,6 +17,8 @@ class MarineGeometryRuntimeTests(unittest.TestCase):
         self.assertTrue(is_marine_loc_id("EEZ-USA"))
         self.assertTrue(is_marine_loc_id("EEZ-MRGID-21801"))
         self.assertTrue(is_marine_loc_id("XSG"))
+        self.assertTrue(is_marine_loc_id("IHO1953-123"))
+        self.assertTrue(is_named_water_loc_id("IHO1953-123"))
         self.assertFalse(is_marine_loc_id("USA"))
         self.assertFalse(is_marine_loc_id("USA-CA-037"))
         self.assertFalse(is_marine_loc_id(""))

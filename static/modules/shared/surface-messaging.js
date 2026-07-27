@@ -159,6 +159,12 @@ export const SURFACE_MESSAGE_PROFILES = {
     exploreHints: 'Ask chat to focus on sea temperature, wind, waves, or one coastal region.',
     exploreExamples: ['show warmest ocean buoys', 'focus on Gulf Coast buoys'],
   },
+  airnow: {
+    label: 'AirNow AQI', singular: 'reporting area', plural: 'reporting areas',
+    exploreActiveDescription: 'preliminary AirNow reporting-area AQI',
+    exploreHints: 'Ask chat to focus on a region or explain the current AQI categories.',
+    exploreExamples: ['show the highest current AQI reporting areas', 'focus AirNow AQI on California'],
+  },
   nws_alerts: {
     label: 'NWS Alerts',
     singular: 'alert',

@@ -121,6 +121,22 @@ def _load_scene_catalog(source_id: str) -> dict | None:
                 {"period": "LAND_TEMPERATURE_LATEST", "file": "LAND_TEMPERATURE_LATEST.msgpack"},
             ],
         }
+    # CAMS is a local/WIP display-first fixture until its source and Ops gates
+    # pass. Keep its raster endpoint contract identical to the published
+    # scenes, but do not require public catalog membership to test the map.
+    if source_id == "cams_air_quality":
+        return {
+            "source_id": source_id,
+            "display_name": "CAMS Modeled Surface PM2.5 (WIP)",
+            "crs": "EPSG:4326",
+            "nodata": 255.0,
+            "value_unit": "ug m-3",
+            "relative_dir": "global/climate/cams_air_quality/rasters",
+            "scenes": [
+                {"period": "CAMS_PM25_WIP", "file": "CAMS_PM25_WIP.msgpack"},
+                {"period": "CAMS_EAC4_MONTHLY_WIP", "file": "CAMS_EAC4_MONTHLY_WIP.msgpack"},
+            ],
+        }
     metadata = load_source_metadata(source_id) or {}
     raster_products = metadata.get("raster_products") or {}
     scene_rasters = raster_products.get("scene_rasters") or {}
@@ -169,6 +185,8 @@ def _find_related_raster_source(source_id: str) -> str | None:
 def _raster_dirs_for_source(source_id: str, catalog: dict | None) -> tuple[Path | None, str | None]:
     if source_id == "era5_land_temperature":
         return GLOBAL_DIR / "climate" / "land_temperature" / "rasters", "global/climate/land_temperature/rasters"
+    if source_id == "cams_air_quality":
+        return GLOBAL_DIR / "climate" / "cams_air_quality" / "rasters", "global/climate/cams_air_quality/rasters"
     source_path = get_source_path(source_id)
     local_dir = source_path / "rasters" if source_path else None
     relative_dir = _normalize_raster_relative_dir((catalog or {}).get("relative_dir"))

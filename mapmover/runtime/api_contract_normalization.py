@@ -13,6 +13,11 @@ from mapmover.runtime.geography_reference import (
     resolve_country_subdivision_slug_loc_id,
 )
 from mapmover.runtime.region_expansion import expand_region as expand_runtime_region
+from mapmover.runtime.geometry_catalog import (
+    expand_geometry_loc_id,
+    is_deprecated_geometry_loc_id,
+    is_known_geometry_loc_id,
+)
 from mapmover.runtime.source_hints import get_single_metric_default
 
 
@@ -40,11 +45,17 @@ def _expand_machine_region_token(value: str) -> list[str]:
     if not normalized:
         return []
 
-    if "_" in normalized and REGION_ID_RE.match(normalized.upper()):
-        return [normalized.upper()]
+    if is_deprecated_geometry_loc_id(normalized):
+        return []
+
+    if is_known_geometry_loc_id(normalized):
+        return expand_geometry_loc_id(normalized)
 
     if normalized.isupper() and len(normalized) == 3 and normalized.isalpha():
-        return [normalized]
+        iso3_to_name = (load_iso_codes() or {}).get("iso3_to_name", {})
+        if normalized in iso3_to_name:
+            return [normalized]
+        return []
 
     if not LOC_IDISH_RE.match(normalized):
         return []

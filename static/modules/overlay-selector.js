@@ -924,6 +924,21 @@ export function applyOverlayCatalogResponse(response = {}) {
       wipShown.add('cams-air-quality-grid');
       laneShownAdjustments.set(wipMode, wipShown);
     }
+    // AirNow is an Ops-only WIP feed, not an Explore/catalog source. Keep its
+    // test overlay local and visible in Ops regardless of saved account feeds.
+    if (wipMode === 'ops') {
+      const climate = ALL_CATEGORIES.find((category) => category.id === 'climate' && category.isCategory);
+      if (climate?.overlays && !climate.overlays.some((overlay) => overlay.id === 'airnow')) {
+        climate.overlays.push({
+          id: 'airnow', label: 'AirNow AQI (WIP)',
+          description: 'Preliminary agency reporting-area AQI; not county or monitor data',
+          default: false, locked: false, model: 'airnow', icon: 'A', hasYearFilter: false,
+          live: true, sourceIds: ['airnow'], packIds: []
+        });
+      }
+      wipShown.add('airnow');
+      laneShownAdjustments.set(wipMode, wipShown);
+    }
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
     if (usContext?.overlays) {
       // WIP overlays are intentionally not part of the normal Explore

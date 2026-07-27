@@ -121,6 +121,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertIn("noaa_ndbc", feeds)
         self.assertIn("ocean_sst", feeds)
         self.assertIn("usa_nws_alerts", feeds)
+        self.assertNotIn("airnow", feeds)
 
 
 if __name__ == "__main__":

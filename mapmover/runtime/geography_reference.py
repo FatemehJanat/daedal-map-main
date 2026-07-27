@@ -81,7 +81,7 @@ def is_named_water_loc_id(loc_id: str | None) -> bool:
     classifier only identifies the namespace so every runtime caller routes it
     through the named-water bank instead of an admin fallback.
     """
-    return bool(re.fullmatch(r"MRGID-\d+", str(loc_id or "").strip().upper()))
+    return bool(re.fullmatch(r"(?:MRGID|IHO1953)-\d+", str(loc_id or "").strip().upper()))
 
 
 def _looks_like_geometry_admin_loc_id(value: str) -> bool:

@@ -732,10 +732,10 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 '{"metrics": ["magnitude", "timestamp", "place", "depth_km"], "filters": {"time": {"start": "2023-01-01", "end": "2023-12-31"}, "region_ids": ["TUR"]}, "sort": [{"field": "magnitude", "direction": "desc"}], "limit": 1}\n\n'
                 "## Paid: count tsunamis above 5m wave height since 1950 (x402 Base USDC)\n\n"
                 "Tool: get_tsunami_events\n"
-                '{"metrics": ["event_count"], "filters": {"time": {"start": "2000-01-01", "end": "2024-12-31"}, "region_ids": ["JPN", "IDN", "XOO"], "compare": [{"field": "max_water_height_m", "op": ">=", "value": 5}]}}\n\n'
+                '{"metrics": ["event_count"], "filters": {"time": {"start": 2000, "end": 2024}, "region_ids": ["JPN", "IDN", "XSM"], "compare": [{"field": "max_water_height_m", "op": ">=", "value": 5}]}}\n\n'
                 "## Filter reference\n\n"
                 "time: {start, end} required for event packs. Add granularity for FX (daily/weekly/monthly).\n"
-                "region_ids: list of loc_id codes - country level (JPN, USA, TUR) or ocean region (XOO for Pacific).\n"
+                "region_ids: list of canonical codes - country level (JPN, USA, TUR) or a geometry-backed named sea/ocean (XSM for Mediterranean Sea). XOO is deprecated.\n"
                 "compare: [{field, op, value}] for threshold filtering. Ops: >=, <=, >, <, ==.\n\n"
                 "Call prompts/list for parameterized versions of these examples.\n"
                 f"Full docs: {site_url}/docs/agent-examples\n"
@@ -748,7 +748,7 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 "# loc_id Guide\n\n"
                 f"Read the full guide at {site_url}/docs/loc-id.\n\n"
                 "loc_id is the shared geographic key used across packs. Country and hierarchical regional ids are common, "
-                "but tsunami examples can also use ocean-region ids such as XOO."
+                "but tsunami examples can also use geometry-backed named sea/ocean ids such as XSM."
             ),
         )
     if uri == "daedalmap://access":

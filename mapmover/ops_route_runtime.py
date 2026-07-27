@@ -18,6 +18,7 @@ from mapmover.routes.chat_shared import human_chat_rate_limit_response
 
 OPS_SUPPORTED_FEEDS = (
     "currency",
+    "airnow",
     "earthquakes",
     "hurricanes_live",
     "noaa_aurora",

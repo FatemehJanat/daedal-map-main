@@ -19,7 +19,9 @@ from mapmover.ops_ticker import (
     build_cached_nws_alerts_payload,
     build_cached_ticker_payload,
 )
-from mapmover.ops_point_feeds import build_cached_point_overlay, is_point_feed
+from mapmover.ops_point_feeds import POINT_FEEDS, build_cached_point_overlay, is_point_feed
+from mapmover.auth_context import get_authenticated_user
+from mapmover.catalog_surface import request_uses_wip_catalog
 from mapmover.orchestrator_registry import get_orchestrator
 from mapmover.routes.chat_shared import build_chat_error_payload, build_provider_error_payload, decode_json_or_msgpack_body, decode_request_body
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
@@ -112,6 +114,10 @@ async def ops_points_endpoint(overlay_id: str, req: Request):
     the click popup. See mapmover/ops_point_feeds.py POINT_FEEDS.
     """
     if not is_point_feed(overlay_id):
+        return msgpack_error(f"Unknown point feed: {overlay_id}", 404)
+    spec = POINT_FEEDS[str(overlay_id or "").strip()]
+    if spec.wip_only and not request_uses_wip_catalog(req, get_authenticated_user(req)):
+        # Do not advertise an unreviewed Ops feed through a public endpoint.
         return msgpack_error(f"Unknown point feed: {overlay_id}", 404)
     try:
         return msgpack_response(build_cached_point_overlay(overlay_id))
