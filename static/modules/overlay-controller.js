@@ -362,7 +362,11 @@ const OVERLAY_ENDPOINTS = {
   },
   tsunamis: {
     baseUrl: '/api/tsunamis/geojson',
-    params: { min_height_m: '3' },
+    // The event catalog is small enough for the default Explore window. Keep
+    // every recorded source event visible; height/runup is a comparison
+    // metric, not a visibility gate. Runup observations remain linked detail,
+    // rather than duplicate map events here.
+    params: {},
     animationEndpoint: '/api/tsunamis/{event_id}/animation',
     eventType: 'tsunami',
     yearField: 'year'

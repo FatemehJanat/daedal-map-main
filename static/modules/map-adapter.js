@@ -1431,22 +1431,30 @@ export const MapAdapter = {
         </div>
       `
       : '<div class="blank-map-popup-empty">No hierarchy stack returned.</div>';
-    const overlapsHtml = overlapFamilies.length
-      ? `
-        <div class="blank-map-popup-overlaps">
-          <div class="blank-map-popup-loc-id-label">Overlapping families</div>
-          <div class="blank-map-popup-overlap-panel">
-            ${overlapFamilies.map((entry) => `
-              <div class="blank-map-popup-stack-row">
-                <span class="blank-map-popup-stack-level">${formatLevelLabel(entry)}</span>
-                <span class="blank-map-popup-stack-name">${this._escapePopupHtml(entry?.name || entry?.loc_id || 'Unnamed')}</span>
-              </div>
-              <div class="blank-map-popup-overlap-loc-id">${this._escapePopupHtml(entry?.loc_id || '')}</div>
-            `).join('')}
-          </div>
+    const renderOverlapSection = (label, entries) => entries.length ? `
+      <div class="blank-map-popup-overlaps">
+        <div class="blank-map-popup-loc-id-label">${label}</div>
+        <div class="blank-map-popup-overlap-panel">
+          ${entries.map((entry) => `
+            <div class="blank-map-popup-stack-row">
+              <span class="blank-map-popup-stack-level">${formatLevelLabel(entry)}</span>
+              <span class="blank-map-popup-stack-name">${this._escapePopupHtml(entry?.name || entry?.loc_id || 'Unnamed')}</span>
+            </div>
+            <div class="blank-map-popup-overlap-loc-id">${this._escapePopupHtml(entry?.loc_id || '')}</div>
+          `).join('')}
         </div>
-      `
-      : '';
+      </div>
+    ` : '';
+    const broaderWaterBodies = overlapFamilies.filter((entry) => entry?.relationship === 'broader_water_body');
+    const overlappingJurisdictions = overlapFamilies.filter((entry) => entry?.relationship === 'marine_jurisdiction');
+    // Older resolver responses did not label overlap relationships. Keep the
+    // popup readable for them, but do not surface X* SST zones as locations.
+    const unclassifiedOverlaps = overlapFamilies.filter((entry) => !entry?.relationship && !String(entry?.loc_id || '').startsWith('X'));
+    const overlapsHtml = [
+      renderOverlapSection('Broader water body', broaderWaterBodies),
+      renderOverlapSection('Overlapping jurisdiction', overlappingJurisdictions),
+      renderOverlapSection('Overlapping geometry', unclassifiedOverlaps),
+    ].join('');
 
     if (!matched?.loc_id) {
       return `
