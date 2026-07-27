@@ -2,6 +2,7 @@ import unittest
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
 from mapmover.ops_route_runtime import _public_default_ops_feeds
+from mapmover.routes import ops as ops_routes
 
 
 class DummyCache:
@@ -122,6 +123,34 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertIn("ocean_sst", feeds)
         self.assertIn("usa_nws_alerts", feeds)
         self.assertNotIn("airnow", feeds)
+
+    def test_nws_timeline_reconstructs_full_alert_state_from_deltas(self):
+        original_history = ops_routes.load_current_state_history
+        original_snapshot = ops_routes.load_current_state_snapshot
+        first = {
+            "published_at": "2026-07-27T00:00:00+00:00",
+            "summary": {"alert_count": 1},
+            "delta": {"added": [{"alert_id": "a-1", "event": "Tornado Warning", "geometry": {"type": "Point", "coordinates": [-90, 35]}}], "updated": [], "removed": []},
+        }
+        second = {
+            "published_at": "2026-07-27T00:05:00+00:00",
+            "summary": {"alert_count": 1},
+            # Geometry is deliberately omitted from an unchanged-geometry update.
+            "delta": {"added": [], "updated": [{"alert_id": "a-1", "headline": "Updated warning"}], "removed": []},
+        }
+        try:
+            ops_routes.load_current_state_history = lambda _feed: [first, second]
+            ops_routes.load_current_state_snapshot = lambda _feed: None
+            entries = ops_routes._local_nws_timeline_entries()
+        finally:
+            ops_routes.load_current_state_history = original_history
+            ops_routes.load_current_state_snapshot = original_snapshot
+
+        self.assertEqual(2, len(entries))
+        reconstructed = entries[-1]["payload_summary"]["alerts"]
+        self.assertEqual(1, len(reconstructed))
+        self.assertEqual("Updated warning", reconstructed[0]["headline"])
+        self.assertEqual({"type": "Point", "coordinates": [-90, 35]}, reconstructed[0]["geometry"])
 
 
 if __name__ == "__main__":

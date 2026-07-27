@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
@@ -14,10 +16,13 @@ from mapmover.ops_route_runtime import (
     setup_required_ops_message,
     snapshot_ops_report,
 )
+from mapmover.ops_orchestrator_runtime import build_ops_timeline_payload, load_current_state_history, load_current_state_snapshot
+from mapmover.runtime_config import get_runtime_config
 from mapmover.ops_ticker import (
     build_cached_aurora_payload,
     build_cached_aurora_frames_payload,
     build_cached_nws_alerts_payload,
+    build_nws_alerts_payload_for_snapshot,
     build_cached_ticker_payload,
 )
 from mapmover.ops_point_feeds import POINT_FEEDS, build_cached_point_overlay, is_point_feed
@@ -52,6 +57,140 @@ def _ops_report_payload(route_context) -> dict:
         "watch": route_context.watch,
         "effective_feeds": route_context.effective_feeds,
         "ops_report": report,
+    }
+
+
+def _local_ops_timeline_enabled(req: Request) -> bool:
+    """Keep the experimental Ops scrubber out of every hosted deployment."""
+    client_host = str(getattr(getattr(req, "client", None), "host", "") or "").strip().lower()
+    runtime_mode = str(get_runtime_config().get("runtime_mode") or "").strip().lower()
+    deployment = str(os.getenv("DEPLOYMENT", "") or "").strip().lower()
+    return (
+        client_host in {"127.0.0.1", "::1", "localhost"}
+        and runtime_mode == "local"
+        and deployment in {"", "local"}
+    )
+
+
+def _snapshot_time(snapshot: dict) -> datetime | None:
+    for key in ("published_at", "fetched_at", "last_checked_at"):
+        value = str(snapshot.get(key) or "").replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            continue
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return None
+
+
+def _local_nws_timeline_entries() -> list[dict]:
+    """Return full NWS states reconstructed from retained alert deltas.
+
+    The NWS collector intentionally writes compact ``added``/``updated``/
+    ``removed`` history entries, rather than duplicating all active warning
+    geometry every five minutes.  A timeline frame, however, needs the full
+    active set at that moment.  Rebuild it here before applying the short map
+    window; starting from the complete retained log preserves warnings that
+    began before the visible 72-hour slice.
+    """
+    current = load_current_state_snapshot("usa_nws_alerts")
+    raw_entries = [entry for entry in load_current_state_history("usa_nws_alerts") if isinstance(entry, dict)]
+    raw_entries.sort(key=lambda entry: _snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
+
+    active_alerts: dict[str, dict] = {}
+    entries: list[dict] = []
+    for entry in raw_entries:
+        summary = entry.get("payload_summary") if isinstance(entry.get("payload_summary"), dict) else None
+        if summary is not None:
+            active_alerts = {
+                str(alert.get("alert_id") or "").strip(): dict(alert)
+                for alert in (summary.get("alerts") or [])
+                if isinstance(alert, dict) and str(alert.get("alert_id") or "").strip()
+            }
+            entries.append(entry)
+            continue
+
+        delta = entry.get("delta") if isinstance(entry.get("delta"), dict) else None
+        if delta is None:
+            continue
+        for removed in delta.get("removed") or []:
+            if isinstance(removed, dict):
+                active_alerts.pop(str(removed.get("alert_id") or "").strip(), None)
+        for change_key in ("added", "updated"):
+            for changed in delta.get(change_key) or []:
+                if not isinstance(changed, dict):
+                    continue
+                alert_id = str(changed.get("alert_id") or "").strip()
+                if not alert_id:
+                    continue
+                # Updated deltas omit unchanged geometry to stay compact. Merge
+                # into the prior alert so its source geometry remains usable.
+                active_alerts[alert_id] = {**active_alerts.get(alert_id, {}), **changed}
+        compact_summary = entry.get("summary") if isinstance(entry.get("summary"), dict) else {}
+        entries.append({
+            **entry,
+            "payload_summary": {**compact_summary, "alerts": list(active_alerts.values())},
+        })
+
+    if isinstance(current, dict):
+        entries.append(current)
+    deduped = {}
+    for entry in entries:
+        at = _snapshot_time(entry)
+        if at is not None:
+            deduped[(at.isoformat(), str(entry.get("payload_hash") or ""))] = entry
+    ordered = sorted(deduped.values(), key=lambda entry: _snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+    return [
+        entry for entry in ordered
+        if (_snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+    ]
+
+
+def _local_nws_timeline_frames() -> list[dict]:
+    """Return NWS cursor metadata without bulk-transferring warning geometry.
+
+    Three days of five-minute NWS snapshots can contain hundreds of county and
+    native warning polygons.  The browser receives this compact index once and
+    requests only the frame it lands on; the runtime's short cloud-history cache
+    supplies the matching retained snapshot.
+    """
+    ordered = _local_nws_timeline_entries()
+    frames = []
+    for index, entry in enumerate(ordered):
+        start = _snapshot_time(entry)
+        if start is None:
+            continue
+        next_start = _snapshot_time(ordered[index + 1]) if index + 1 < len(ordered) else None
+        frames.append({
+            "start_at": start.isoformat(),
+            "end_at": next_start.isoformat() if next_start is not None else None,
+            "payload_hash": entry.get("payload_hash"),
+            "timeline_provider": "nws_alerts",
+        })
+    return frames
+
+
+def _local_nws_timeline_frame_at(raw_at: object) -> dict | None:
+    """Build one display frame selected from the already-retained NWS history."""
+    try:
+        target = datetime.fromisoformat(str(raw_at or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    target = target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc)
+    selected = None
+    for entry in _local_nws_timeline_entries():
+        at = _snapshot_time(entry)
+        if at is not None and at <= target:
+            selected = entry
+        elif at is not None:
+            break
+    if selected is None:
+        return None
+    return {
+        "payload_hash": selected.get("payload_hash"),
+        "start_at": (_snapshot_time(selected) or target).isoformat(),
+        "geojson": build_nws_alerts_payload_for_snapshot(selected),
     }
 
 
@@ -216,6 +355,67 @@ async def ops_load_watch_endpoint(req: Request):
         return msgpack_response(payload)
     except Exception as exc:
         logger.exception("Ops watch load error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline")
+async def local_ops_timeline_endpoint(req: Request):
+    """Return retained Ops snapshots once for the localhost-only scrubber."""
+    if not _local_ops_timeline_enabled(req):
+        return msgpack_error("Not found", 404)
+    try:
+        body = await decode_request_body(req)
+        # Timeline selection is display-local.  Keep it outside watch_context
+        # so opening the scrubber cannot rewrite the account watch's active
+        # feed set (selected feeds and active overlays are different states).
+        requested_timeline_feeds = body.pop("timeline_feeds", [])
+        route_context, route_error, rejection_payload, rejection_status, rejection_headers = await prepare_ops_view_route_context(req, body)
+        if route_error:
+            return route_error
+        if rejection_payload is not None:
+            return msgpack_response(
+                rejection_payload,
+                status_code=rejection_status or 400,
+                headers=rejection_headers or {},
+            )
+        assert route_context is not None
+        requested = [
+            str(feed or "").strip()
+            for feed in (requested_timeline_feeds if isinstance(requested_timeline_feeds, list) else [])
+        ]
+        timeline_feeds = [
+            feed for feed in requested
+            if feed and feed in route_context.allowed_feeds
+        ]
+        timeline = build_ops_timeline_payload(effective_feeds=timeline_feeds)
+        if "usa_nws_alerts" in timeline_feeds:
+            frames = _local_nws_timeline_frames()
+            if frames:
+                timeline.setdefault("feeds", {})["usa_nws_alerts"] = frames
+        return msgpack_response({
+            "type": "local_ops_timeline",
+            "watch_id": route_context.watch.get("watch_id"),
+            "effective_feeds": route_context.effective_feeds,
+            "timeline": timeline,
+        })
+    except Exception as exc:
+        logger.exception("Local Ops timeline error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/nws-frame")
+async def local_ops_timeline_nws_frame_endpoint(req: Request):
+    """Return one retained NWS display frame for the localhost Ops cursor."""
+    if not _local_ops_timeline_enabled(req):
+        return msgpack_error("Not found", 404)
+    try:
+        body = await decode_request_body(req)
+        frame = _local_nws_timeline_frame_at(body.get("at"))
+        if frame is None:
+            return msgpack_error("No retained NWS frame at that time", 404)
+        return msgpack_response({"type": "local_ops_nws_frame", "frame": frame})
+    except Exception as exc:
+        logger.exception("Local Ops NWS timeline frame error")
         return msgpack_error(str(exc), 500)
 
 
