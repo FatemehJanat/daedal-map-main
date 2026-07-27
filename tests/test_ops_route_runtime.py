@@ -196,6 +196,11 @@ class OpsRouteRuntimeTest(unittest.TestCase):
 
         self.assertEqual(720, timeline["history_hours"])
 
+    def test_timeline_allows_external_provider_only_request(self):
+        timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=[])
+        self.assertEqual(72, timeline["history_hours"])
+        self.assertEqual({}, timeline["feeds"])
+
 
 if __name__ == "__main__":
     unittest.main()

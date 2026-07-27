@@ -1805,10 +1805,14 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
     # The cursor must cover the longest declared display window among its
     # active feeds. NWS deliberately keeps a longer full-snapshot window; do
     # not silently crop it back to the generic 72-hour default.
-    requested_hours = max(
+    # ``max(base, *values)`` turns into ``max(base)`` when this request only
+    # has external providers (Aurora/raster) and therefore no collector feed.
+    # In that one-argument form Python expects an iterable. Build one explicit
+    # collection so a timeline with only external frames remains valid.
+    requested_hours = max([
         max(1, int(history_hours)),
         *(_ops_history_display_hours_for_snapshot(snapshot) for snapshot in snapshots.values()),
-    )
+    ])
     range_start = now - timedelta(hours=requested_hours)
     feeds: dict[str, list[dict]] = {}
     for feed in effective_feeds:
