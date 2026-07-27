@@ -2251,6 +2251,7 @@ export const ChatManager = {
     this.renderOpsDisplayPayloads(payload);
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
+    await OverlayController?.hydrateActiveOpsRuntimeOverlays?.();
     return payload || null;
   },
 

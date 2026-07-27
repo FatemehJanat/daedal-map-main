@@ -1610,6 +1610,30 @@ export const OverlayController = {
     }
   },
 
+  async hydrateActiveOpsRuntimeOverlays() {
+    if (!this._isOpsMode()) return;
+    // Lane defaults are established before OverlayController subscribes to the
+    // selector. Re-run only the runtime-owned overlays once the watch is
+    // available so their retained-frame providers exist without requiring a
+    // user to toggle them off and on first.
+    const activeOverlayIds = OverlaySelector?.getActiveOverlays?.() || [];
+    for (const overlayId of activeOverlayIds) {
+      if (overlayId === 'aurora' || overlayId === 'nws_alerts' || getLivePointOverlay(overlayId)) {
+        await this.handleOverlayChange(overlayId, true, {
+          suppressStatusMessage: true,
+          systemTransition: true,
+        });
+      }
+    }
+    const activeFeedIds = Array.from(new Set(
+      activeOverlayIds.map((overlayId) => this._opsFeedIdForOverlay(overlayId)).filter(Boolean)
+    ));
+    void ChatManager?.refreshLocalOpsTimeline?.({
+      feedIds: activeFeedIds,
+      label: 'Ops watch timeline',
+    });
+  },
+
   renderOpsSnapshotOverlay(overlayId) {
     const payload = this.opsSnapshotPayloads.get(overlayId);
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
