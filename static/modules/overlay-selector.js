@@ -1122,7 +1122,9 @@ export const OverlaySelector = {
 
     try {
       // Fetch overlay tree from API
-      const response = await fetchMsgpack('/api/catalog/overlays');
+      const lane = this.currentLaneMode;
+      const useWip = window.localStorage.getItem(`useWipCatalog:${lane}`) === '1';
+      const response = await fetchMsgpack(`/api/catalog/overlays?catalog_surface=${useWip ? 'wip' : 'published'}&catalog_lane=${encodeURIComponent(lane)}`);
       applyOverlayCatalogResponse(response);
 
       console.log('OverlaySelector: Loaded', CATEGORIES.length, 'visible categories,', VISIBLE_OVERLAYS.length, 'visible overlays from catalog');

@@ -698,7 +698,8 @@ export const App = {
         // the initial WIP order has already loaded; use the same durable
         // preference for lazy viewport follow-ups.  The server still rejects
         // WIP if the requester is not an authorized local master/admin.
-        const localCatalogSurface = isLocalHost && window.localStorage.getItem('useWipCatalog') === '1'
+        const localLane = ChatManager?.mode || 'explore';
+        const localCatalogSurface = isLocalHost && window.localStorage.getItem(`useWipCatalog:${localLane}`) === '1'
           ? 'wip'
           : null;
         const response = await postMsgpack(apiUrl, {

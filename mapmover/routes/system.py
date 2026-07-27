@@ -2230,8 +2230,7 @@ async def get_catalog_overlays(req: Request):
 
 @router.post("/api/local/catalog-surface")
 async def set_local_catalog_surface(req: Request):
-    """Switch published/WIP catalog only for a local runtime session."""
-    from mapmover.data_loading import clear_catalog_cache
+    """Validate one lane's local WIP preference; never mutate process state."""
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
     _context, error = _require_local_or_admin(req)
     if error:
@@ -2246,9 +2245,10 @@ async def set_local_catalog_surface(req: Request):
         except Exception:
             body = {}
     use_wip = bool((body or {}).get("use_wip"))
-    os.environ["USE_WIP_CATALOG"] = "1" if use_wip else "0"
-    clear_catalog_cache()
-    return msgpack_response({"catalog_surface": "wip" if use_wip else "published"})
+    lane = str((body or {}).get("lane") or "").strip().lower()
+    if lane not in {"explore", "ops", "research"}:
+        return msgpack_error("A valid local catalog lane is required", 400)
+    return msgpack_response({"catalog_surface": "wip" if use_wip else "published", "lane": lane})
 
 
 @router.get("/api/runtime/packs/state")

@@ -1294,6 +1294,8 @@ export const ChatManager = {
     // surface in lockstep when that checkbox changes without reloading the
     // page or rebuilding the chat session.
     window.addEventListener('local-catalog-surface-changed', (event) => {
+      const lane = event?.detail?.lane;
+      if (lane && lane !== normalizeChatMode(this.mode)) return;
       this.setCatalogSurface(event?.detail?.catalogSurface);
     });
     App?.activateLaneMapView?.(this.mode, { force: true });
@@ -3086,7 +3088,7 @@ export const ChatManager = {
     } else {
       const localWipPreference = typeof window !== 'undefined'
         && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-        ? window.localStorage.getItem('useWipCatalog')
+        ? window.localStorage.getItem(`useWipCatalog:${normalizeChatMode(this.mode)}`)
         : null;
       // On the local app the account-panel WIP toggle is the source of truth
       // for both the overlay tray and chat/catalog discovery.  Outside local

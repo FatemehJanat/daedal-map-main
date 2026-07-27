@@ -27,11 +27,20 @@ let authBootSettled = false;
 let authBootWaiters = [];
 let runtimeSessionRefreshPromise = null;
 let localWrapperSyncPromise = null;
-let localCatalogSurfaceSyncValue = null;
 
 function isLocalLikeHost(hostname) {
   const value = String(hostname || '').trim().toLowerCase();
   return value === 'localhost' || value === '127.0.0.1' || value === '0.0.0.0';
+}
+
+function currentCatalogLane() {
+  if (document.body.classList.contains('chat-mode-ops')) return 'ops';
+  if (document.body.classList.contains('chat-mode-research')) return 'research';
+  return 'explore';
+}
+
+function localWipPreferenceKey(lane = currentCatalogLane()) {
+  return `useWipCatalog:${lane}`;
 }
 
 function isLocalWrapperEnabled() {
@@ -75,16 +84,15 @@ async function restoreLocalCatalogSurface() {
   // process starts with the published catalog. Restore it before app startup
   // reaches OverlaySelector, rather than waiting for the next checkbox click.
   if (!isLocalLikeHost(window.location.hostname) || !isAuthenticated()) return;
-  const useWip = window.localStorage.getItem('useWipCatalog') === '1';
-  if (localCatalogSurfaceSyncValue === useWip) return;
+  const lane = currentCatalogLane();
+  const useWip = window.localStorage.getItem(localWipPreferenceKey(lane)) === '1';
   try {
     const response = await fetch('/api/local/catalog-surface', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ use_wip: useWip })
+      body: JSON.stringify({ use_wip: useWip, lane })
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    localCatalogSurfaceSyncValue = useWip;
   } catch (error) {
     console.warn('Could not restore local catalog surface', error);
   }
@@ -514,10 +522,9 @@ function updateDom() {
     btn.textContent = 'Account';
     btn.disabled = false;
     btn.classList.add('logged-in');
-    const currentLane = document.body.classList.contains('chat-mode-ops') ? 'Ops'
-      : document.body.classList.contains('chat-mode-research') ? 'Research' : 'Explore';
+    const currentLane = currentCatalogLane();
     const localCatalogControl = isLocalLikeHost(window.location.hostname)
-      ? `<div style="margin-top:7px;padding-top:6px;border-top:1px solid #334155"><label style="display:block"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog <span style="color:#9aa4bf">(refreshes ${currentLane})</span></label><div style="margin:3px 0 0 20px;color:#9aa4bf;font-size:11px;line-height:1.35">Local test surface shared by Explore and Ops. Changing it reloads this lane’s overlay tray and chat catalog; it does not publish data or change public users.</div></div>`
+      ? `<br><label style="display:block;margin-top:4px"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog</label>`
       : '';
     const accountLabel = isLocalLikeHost(window.location.hostname)
       ? 'Open account settings (hosted sign-in may be required)'
@@ -532,7 +539,7 @@ function updateDom() {
     }
     const wipToggle = status.querySelector('[data-wip-catalog-toggle]');
     if (wipToggle) {
-      wipToggle.checked = window.localStorage.getItem('useWipCatalog') === '1';
+      wipToggle.checked = window.localStorage.getItem(localWipPreferenceKey(currentLane)) === '1';
       wipToggle.addEventListener('change', async () => {
         const useWip = wipToggle.checked;
         wipToggle.disabled = true;
@@ -540,16 +547,15 @@ function updateDom() {
           const response = await fetch('/api/local/catalog-surface', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ use_wip: useWip })
+            body: JSON.stringify({ use_wip: useWip, lane: currentLane })
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          window.localStorage.setItem('useWipCatalog', useWip ? '1' : '0');
-          localCatalogSurfaceSyncValue = useWip;
+          window.localStorage.setItem(localWipPreferenceKey(currentLane), useWip ? '1' : '0');
           // The local WIP switch is one runtime surface, not only an overlay
           // tray preference.  Tell chat to use the same catalog on its next
           // request so WIP sources can be discovered without being published.
           window.dispatchEvent(new CustomEvent('local-catalog-surface-changed', {
-            detail: { catalogSurface: useWip ? 'wip' : 'published' }
+            detail: { catalogSurface: useWip ? 'wip' : 'published', lane: currentLane }
           }));
           // Catalog membership is the only UI state that changed. Rebuild the
           // overlay tray in place; do not discard the map/chat session.

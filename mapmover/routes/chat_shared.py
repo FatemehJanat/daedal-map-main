@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from starlette.background import BackgroundTask
 
 from mapmover import logger
-from mapmover.catalog_surface import normalize_catalog_surface, request_uses_wip_catalog
+from mapmover.catalog_surface import normalize_catalog_surface, request_can_use_wip_catalog
 from mapmover.routes.disasters.helpers import msgpack_response
 from mapmover.security import get_client_ip, rate_limiter
 
@@ -296,12 +296,10 @@ def build_provider_error_payload(
 
 def _catalog_surface_for_request(req, body: dict, auth_user: dict | None) -> tuple[str | None, Response | None]:
     surface = normalize_catalog_surface(body.get("catalog_surface"))
-    # WIP is a local runtime test surface, not a hosted master-account view.
-    # Keep this identical for Explore, Research, and Ops: the server-side
-    # local switch must be enabled and the request must carry the local
-    # master/admin proof.  Merely being an admin on a public runtime must not
-    # make draft sources or experimental overlays observable there.
-    if surface == "wip" and not request_uses_wip_catalog(req, auth_user):
+    # The request body is the explicit lane-scoped WIP choice for chat. It
+    # needs local/admin authorization, but must not inherit another lane's
+    # process-wide switch.
+    if surface == "wip" and not request_can_use_wip_catalog(req, auth_user):
         return None, msgpack_response(
             {
                 "type": "error",

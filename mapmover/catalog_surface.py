@@ -18,6 +18,7 @@ CATALOG_FILE_SURFACES = {"published", "wip"}
 # surface vocabulary keeps catalog filtering and release tooling consistent.
 CATALOG_PRODUCT_SURFACES = {"explore", "research", "api", "mcp", "downloadable"}
 DEFAULT_RELEASED_CATALOG_SURFACES = ("explore", "research")
+LOCAL_RUNTIME_LANES = {"explore", "ops", "research"}
 
 
 def normalize_catalog_surface(value) -> str:
@@ -212,9 +213,14 @@ def request_uses_wip_catalog(request, auth_user: dict | None) -> bool:
     """
     client = getattr(request, "client", None)
     client_host = getattr(client, "host", "") if client else ""
-    local_switch_enabled = str(os.getenv("USE_WIP_CATALOG", "")).strip().lower() in {
-        "1", "true", "yes", "on"
-    }
+    # The caller must opt in on this request. Do not use a process-wide WIP
+    # environment flag: a local Explore checkbox must never change an Ops or
+    # Research request that happens to share the same server process.
+    query = getattr(request, "query_params", {})
+    headers = getattr(request, "headers", {})
+    requested_surface = str(query.get("catalog_surface") or headers.get("X-Daedal-Catalog-Surface") or "").strip().lower()
+    requested_lane = str(query.get("catalog_lane") or headers.get("X-Daedal-Catalog-Lane") or "").strip().lower()
+    local_switch_enabled = requested_surface == "wip" and requested_lane in LOCAL_RUNTIME_LANES
     return (
         _is_local_runtime()
         and _is_loopback_host(client_host)

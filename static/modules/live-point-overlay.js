@@ -118,6 +118,10 @@ export function createLivePointOverlay(config) {
           const bounds = map.getBounds();
           endpoint = `${config.endpoint}?bbox=${[bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',')}&zoom=${encodeURIComponent(map.getZoom().toFixed(2))}`;
         }
+        if (config.wipOnly) {
+          const joiner = endpoint.includes('?') ? '&' : '?';
+          endpoint = `${endpoint}${joiner}catalog_surface=wip&catalog_lane=ops`;
+        }
         const data = await fetchMsgpack(endpoint);
         const fc = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
         this.lastData = fc;
@@ -271,7 +275,7 @@ export function createLivePointOverlay(config) {
               detailButton.disabled = true;
               detailButton.textContent = 'Loading station details…';
               try {
-                const detail = await fetchMsgpack(`${config.popup.detailEndpoint}/${encodeURIComponent(p.location_id)}`);
+                const detail = await fetchMsgpack(`${config.popup.detailEndpoint}/${encodeURIComponent(p.location_id)}?catalog_surface=wip&catalog_lane=ops`);
                 const result = root.querySelector('[data-live-detail-result]');
                 if (result && detail && typeof detail === 'object') {
                   const readingText = this._fmt(detail.measurements, { format: 'measurements' }) || 'No current readings returned';
@@ -390,6 +394,7 @@ const AIRNOW_CONFIG = {
 const AIR_QUALITY_STATIONS_CONFIG = {
   id: 'air_quality_stations', feedId: 'air_quality_stations', endpoint: '/api/ops/points/air_quality_stations',
   viewportQuery: true,
+  wipOnly: true,
   colorBy: { directProp: 'marker_color', nullColor: '#9aa4bf' },
   popup: {
     titleProp: 'station_name',
