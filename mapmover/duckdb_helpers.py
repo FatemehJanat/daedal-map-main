@@ -1218,9 +1218,12 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
         except Exception as exc:
             log.warning("prewarm earthquakes preload-range failed: %s", exc)
 
-    # --- tsunamis (default preset is 3m+ wave height) ------------------------
+    # --- tsunamis (Explore default is every recorded event) ------------------
     ts_path = global_dir / "disasters/tsunamis/events.parquet"
-    preload_ck = make_preload_cache_key("tsunamis", min_height_m=3)
+    # This must use the same empty filter signature as OVERLAY_ENDPOINTS.
+    # Water height/runup is an analysis metric, not a map-visibility gate; the
+    # linked runup table is still fetched only for a selected event.
+    preload_ck = make_preload_cache_key("tsunamis")
     if cache_get(preload_ck) is None:
         try:
             t0 = time.monotonic()
@@ -1228,7 +1231,6 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
                 ts_path,
                 start=preload_start,
                 end=preload_end,
-                min_value_filters={"max_water_height_m": 3},
             )
             if not df.empty:
                 cache_set(preload_ck, df, permanent=True)
