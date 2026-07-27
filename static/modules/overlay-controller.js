@@ -1841,6 +1841,14 @@ export const OverlayController = {
         }
       }
     });
+    window.addEventListener('aurora-ops-frames-updated', () => {
+      if (!this._isOpsMode() || !AuroraOverlay?.enabled) return;
+      OpsTimeline.setExternalProvider(
+        'aurora',
+        AuroraOverlay.getOpsTimelineFrames?.() || [],
+        (timestamp) => AuroraOverlay.setOpsTimelineTime?.(timestamp)
+      );
+    });
 
     // Listen for TimeSlider changes (decoupled via listener pattern)
     if (TimeSlider) {

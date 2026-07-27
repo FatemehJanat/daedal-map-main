@@ -36,6 +36,7 @@ export const AuroraOverlay = {
   lastCells: null,
   lastDisplayCells: null,
   lastPayload: null,
+  forecastFrame: null,
 
   init(deps = {}) {
     if (this.initialized) return;
@@ -135,6 +136,13 @@ export const AuroraOverlay = {
       const cells = Array.isArray(data?.cells) ? data.cells : [];
       this.lastPayload = data && typeof data === 'object' ? data : null;
       this.lastCells = cells;
+      const forecastAt = Date.parse(String(this.lastPayload?.forecast_time || ''));
+      // OVATION supplies one source-native short-lead modeled frame. Include
+      // it only when its stated valid time is truly ahead of the local cursor;
+      // never turn an already-valid or missing timestamp into invented future.
+      this.forecastFrame = Number.isFinite(forecastAt) && forecastAt > Date.now() && cells.length
+        ? { at: forecastAt, cells, payload: this.lastPayload, frameKind: 'forecast' }
+        : null;
       this.lastDisplayCells = this._selectDisplayCells(cells, this.lastPayload);
       this._render(this.lastDisplayCells);
     } catch (err) {
@@ -248,6 +256,7 @@ export const AuroraOverlay = {
         return cells && Number.isFinite(at) ? { at, cells } : null;
       }).filter(Boolean);
       this.historyFrameIndex = Math.max(0, this.historyFrames.length - 1);
+      window.dispatchEvent(new CustomEvent('aurora-ops-frames-updated'));
     } catch (err) {
       console.warn('AuroraOverlay: history refresh failed', err);
       this.historyFrames = [];
@@ -298,26 +307,34 @@ export const AuroraOverlay = {
   },
 
   getOpsTimelineFrames() {
-    return this.historyFrames.map((frame, index) => ({
+    const frames = [
+      ...this.historyFrames.map((frame) => ({ ...frame, frameKind: 'observed' })),
+      ...(this.forecastFrame ? [this.forecastFrame] : []),
+    ].sort((left, right) => left.at - right.at);
+    return frames.map((frame, index) => ({
       start_at: new Date(frame.at).toISOString(),
-      end_at: this.historyFrames[index + 1]
-        ? new Date(this.historyFrames[index + 1].at).toISOString()
-        : null,
+      end_at: frames[index + 1] ? new Date(frames[index + 1].at).toISOString() : null,
+      frame_kind: frame.frameKind,
+      source_native_forecast: frame.frameKind === 'forecast',
     }));
   },
 
   setOpsTimelineTime(timestamp) {
     const target = Number(timestamp);
     if (!this.enabled || !Number.isFinite(target) || !this.historyFrames.length) return false;
+    const frames = [
+      ...this.historyFrames.map((frame) => ({ ...frame, frameKind: 'observed' })),
+      ...(this.forecastFrame ? [this.forecastFrame] : []),
+    ].sort((left, right) => left.at - right.at);
     let selected = null;
-    for (const frame of this.historyFrames) {
+    for (const frame of frames) {
       if (frame.at <= target) selected = frame;
       else break;
     }
     if (!selected) return false;
     this._stopShimmer();
     this._stopHistoryPlayback();
-    this._render(this._selectDisplayCells(selected.cells));
+    this._render(this._selectDisplayCells(selected.cells, selected.payload));
     return true;
   },
 };

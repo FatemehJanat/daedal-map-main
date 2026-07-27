@@ -12,7 +12,6 @@ import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 import { getLivePointOverlay } from './live-point-overlay.js';
 
 const CURSOR_STEP_MS = 5 * 60 * 1000;
-const FORECAST_HORIZON_MS = 5 * 24 * 60 * 60 * 1000;
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -86,7 +85,12 @@ export const OpsTimeline = {
       Object.entries(this.timeline.feeds || {}).filter(([id]) => !id.startsWith('external:'))
     );
     for (const [id, provider] of this.externalProviders) feeds[`external:${id}`] = provider.frames;
-    this.timeline = { ...this.timeline, feeds };
+    const providerRangeEnd = Math.max(
+      this.timeline.currentMs,
+      ...Object.values(feeds).flatMap((frames) => (Array.isArray(frames) ? frames : []))
+        .map((frame) => toMs(frame?.start_at)).filter(Number.isFinite)
+    );
+    this.timeline = { ...this.timeline, feeds, rangeEnd: providerRangeEnd };
     this._render();
     this.selectAt(this.selectedMs || this.timeline.currentMs, { preserveCurrent: true });
   },
@@ -131,12 +135,17 @@ export const OpsTimeline = {
     }
     const mergedFeeds = { ...feedFrames };
     for (const [id, provider] of this.externalProviders) mergedFeeds[`external:${id}`] = provider.frames;
+    const rangeEnd = Math.max(
+      currentMs,
+      ...Object.values(mergedFeeds).flatMap((frames) => (Array.isArray(frames) ? frames : []))
+        .map((frame) => toMs(frame?.start_at)).filter(Number.isFinite)
+    );
     this.timeline = {
       ...timeline,
       feeds: mergedFeeds,
       rangeStart,
       currentMs,
-      rangeEnd: currentMs + FORECAST_HORIZON_MS,
+      rangeEnd,
       historyHours: Number(timeline.history_hours) || Math.max(1, Math.round((currentMs - rangeStart) / 3_600_000)),
     };
     this._render();
@@ -154,7 +163,7 @@ export const OpsTimeline = {
         <span class="ops-timeline-now" title="Now" aria-hidden="true"></span>
         <input data-ops-timeline-input type="range" step="${CURSOR_STEP_MS}" aria-label="Ops snapshot time">
       </div>
-      <div class="ops-timeline-labels"><span>${this.timeline.historyHours >= 48 && this.timeline.historyHours % 24 === 0 ? `${this.timeline.historyHours / 24}d` : `${this.timeline.historyHours}h`} history</span><span class="ops-timeline-now-label">Now</span><span>5d forecast</span></div>
+      <div class="ops-timeline-labels"><span>${this.timeline.historyHours >= 48 && this.timeline.historyHours % 24 === 0 ? `${this.timeline.historyHours / 24}d` : `${this.timeline.historyHours}h`} history</span><span class="ops-timeline-now-label">Now</span><span>${this.timeline.rangeEnd > currentMs ? `${Math.max(1, Math.round((this.timeline.rangeEnd - currentMs) / 60_000))}m forecast` : 'No forecast'}</span></div>
     `;
     this.input = this.element.querySelector('[data-ops-timeline-input]');
     this.timeLabel = this.element.querySelector('[data-ops-time]');
