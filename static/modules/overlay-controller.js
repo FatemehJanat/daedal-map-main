@@ -1544,6 +1544,10 @@ export const OverlayController = {
         const dateText = gridDate ? ` Latest live collector grid date: ${gridDate}.` : '';
         return `Ocean temperature feed active. Showing the prepared ocean SST grid overlay for map display.${dateText} Source: ${product}. Ask chat to compare basins, switch to anomalies, or explain recent SST context.`;
       }
+      case 'land-temperature-grid':
+        return 'Air temperature grid active. Showing the prepared land-temperature raster frames for map display. Use the time controls to inspect available dates or ask chat to compare regions.';
+      case 'cams-air-quality-grid':
+        return 'CAMS PM2.5 grid active. Showing available modeled PM2.5 raster frames for map display, not point observations. Use the time controls to inspect dates or ask chat to compare regions.';
       default: {
         const label = formatSurfaceLabel(primaryOverlayId || normalizedFeedId || 'feed');
         const genericCountText = formatCountText(snapshotCount, 'item');
