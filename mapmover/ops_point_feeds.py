@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-import math
 from typing import Optional
 
 from mapmover.ops_ticker import (
@@ -170,27 +169,13 @@ def _in_bbox(lon: float, lat: float, bbox: Optional[tuple[float, float, float, f
     return west <= lon <= east if west <= east else lon >= west or lon <= east
 
 
-def _cluster_cell_degrees(zoom: Optional[float]) -> Optional[float]:
-    """Return the requested server-side merge size for a map zoom level."""
-    if zoom is None:
-        return 4.0
-    if zoom < 2.5:
-        return 8.0
-    if zoom < 4.5:
-        return 3.0
-    if zoom < 6.5:
-        return 1.0
-    if zoom < 8.0:
-        return 0.35
-    return None
-
-
 def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
-    """Viewport-filter and grid-merge the large WIP station index.
+    """Viewport-filter the WIP station index without changing point meaning.
 
-    Clusters never combine AirNow AQI reporting areas with OpenAQ monitor
-    readings. At zoom 8+ individual source stations are returned, allowing a
-    station click to request its on-demand details without preloading them.
+    The source points are already deduplicated by their native identity. Keep
+    them individually clickable during WIP display QA; a future clustering
+    design must expose an aggregate-specific popup rather than borrowing one
+    member's AQI or readings.
     """
     visible = []
     for feature in base.get("features") or []:
@@ -201,36 +186,4 @@ def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
             continue
         if _in_bbox(lon, lat, bbox):
             visible.append(feature)
-    cell_size = _cluster_cell_degrees(zoom)
-    if cell_size is None:
-        return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}
-
-    groups: dict[tuple[str, int, int], list[dict]] = {}
-    for feature in visible:
-        lon, lat = feature["geometry"]["coordinates"]
-        source = str((feature.get("properties") or {}).get("source_label") or "Unknown")
-        cell = (source, math.floor((float(lon) + 180.0) / cell_size), math.floor((float(lat) + 90.0) / cell_size))
-        groups.setdefault(cell, []).append(feature)
-
-    merged = []
-    for (source, _x, _y), members in groups.items():
-        if len(members) == 1:
-            merged.append(members[0])
-            continue
-        coords = [item["geometry"]["coordinates"] for item in members]
-        props = dict(members[0].get("properties") or {})
-        props.update({
-            "station_name": f"{len(members):,} {source} stations",
-            "station_kind": "Map cluster — zoom in for individual stations",
-            "station_count": len(members),
-            "is_cluster": True,
-            "location_id": None,
-            "measurements": [],
-            "observed_at": max((str((item.get("properties") or {}).get("observed_at") or "") for item in members), default=None),
-        })
-        merged.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [sum(float(c[0]) for c in coords) / len(coords), sum(float(c[1]) for c in coords) / len(coords)]},
-            "properties": props,
-        })
-    return {"type": "FeatureCollection", "features": merged, "count": len(merged), "total_count": base.get("count", 0), "merged": True}
+    return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}

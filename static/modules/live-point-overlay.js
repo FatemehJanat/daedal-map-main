@@ -246,7 +246,7 @@ export function createLivePointOverlay(config) {
           ${titleVal ? `<div style="font-weight:bold">${esc(config.popup.titlePrefix || '')}${esc(titleVal)}</div>` : ''}
           ${headerRows ? `<div style="margin-top:3px;color:#cbd5e1">${headerRows}</div>` : ''}
           ${tabHtml}
-          ${config.popup?.notice ? `<div style="margin-top:6px;color:#9aa4bf;font-size:11px">${esc(config.popup.notice)}</div>` : ''}
+          ${(config.popup?.noticeBySource?.[p.source_label] || config.popup?.notice) ? `<div style="margin-top:6px;color:#9aa4bf;font-size:11px">${esc(config.popup?.noticeBySource?.[p.source_label] || config.popup.notice)}</div>` : ''}
           ${(config.popup?.detailEndpoint && p.location_id && !p.is_cluster) ? `<button type="button" data-live-detail style="margin-top:7px;border:1px solid #475569;border-radius:3px;background:#1e293b;color:#e5f0ff;padding:3px 6px;cursor:pointer;font:inherit;font-size:11px">Load full station details</button><div data-live-detail-result style="margin-top:5px"></div>` : ''}
           ${(config.popup?.sourceUrl || (config.popup?.sourceUrlProp && p[config.popup.sourceUrlProp])) ? `<div style="margin-top:4px;font-size:11px"><a href="${esc(p[config.popup?.sourceUrlProp] || config.popup.sourceUrl)}" target="_blank" rel="noopener">Source</a></div>` : ''}
         </div>`;
@@ -412,7 +412,10 @@ const AIR_QUALITY_STATIONS_CONFIG = {
         { label: 'Observed', prop: 'observed_at', format: 'datetime' },
       ] },
     ],
-    notice: 'OpenAQ shows source-native readings for six core pollutants, not global AQI. Zoom in for individual stations.',
+    noticeBySource: {
+      AirNow: 'Preliminary AirNow conditions; subject to change. Not regulatory or trend data.',
+      OpenAQ: 'OpenAQ shows source-native readings for six core pollutants, not global AQI.',
+    },
     detailEndpoint: '/api/ops/openaq/stations',
     sourceUrlProp: 'source_url',
   },
