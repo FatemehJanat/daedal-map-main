@@ -895,15 +895,15 @@ export function applyOverlayCatalogResponse(response = {}) {
         .map((source) => String(source?.source_id || '').trim())
         .filter(Boolean)
     );
+    const wipMode = getCurrentOverlayLaneMode();
+    const wipShown = laneShownAdjustments.get(wipMode) || new Set();
     if (wipSourceIds.size) {
-      const mode = getCurrentOverlayLaneMode();
-      const shown = laneShownAdjustments.get(mode) || new Set();
       for (const overlay of getAllOverlaysFromCategories(ALL_CATEGORIES)) {
         if ((overlay.sourceIds || []).some((sourceId) => wipSourceIds.has(sourceId))) {
-          shown.add(overlay.id);
+          wipShown.add(overlay.id);
         }
       }
-      laneShownAdjustments.set(mode, shown);
+      laneShownAdjustments.set(wipMode, wipShown);
     }
     if (wipSourceIds.has('cams_air_quality')) {
       const climate = ALL_CATEGORIES.find((category) => category.id === 'climate' && category.isCategory);
@@ -918,6 +918,11 @@ export function applyOverlayCatalogResponse(response = {}) {
           rasterVariable: 'pm25_ug_m3', rasterMaskMode: 'none', alwaysVisible: true
         });
       }
+      // The injected CAMS test overlay is not part of the normal catalog
+      // tree yet, so it was not present during the source-to-overlay loop
+      // above. Add it explicitly before Ops applies its feed allow-list.
+      wipShown.add('cams-air-quality-grid');
+      laneShownAdjustments.set(wipMode, wipShown);
     }
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
     if (usContext?.overlays) {
