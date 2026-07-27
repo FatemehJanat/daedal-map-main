@@ -20,7 +20,7 @@ class OpsPointFeedTests(unittest.TestCase):
         self.assertEqual(101, result["features"][0]["properties"]["aqi"])
         self.assertEqual("South Coast AQMD", result["features"][0]["properties"]["agency"])
 
-    def test_air_quality_viewport_keeps_individual_source_points(self):
+    def test_air_quality_uses_coarse_clusters_only_at_world_zoom(self):
         def feature(source, lon, lat):
             return {"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"source_label": source, "station_name": source, "observed_at": "2026-07-27T00:00:00+00:00"}}
         base = {"type": "FeatureCollection", "count": 3, "features": [
@@ -30,6 +30,12 @@ class OpsPointFeedTests(unittest.TestCase):
         self.assertEqual(3, result["count"])
         self.assertFalse(result["merged"])
         self.assertEqual({"OpenAQ", "AirNow"}, {item["properties"]["source_label"] for item in result["features"]})
+        merged = _visible_air_quality_stations(base, bbox=(-120, 33, -117, 35), zoom=1)
+        self.assertEqual(2, merged["count"])
+        self.assertTrue(merged["merged"])
+        openaq_cluster = next(item for item in merged["features"] if item["properties"]["source_label"] == "OpenAQ")
+        self.assertEqual(2, openaq_cluster["properties"]["station_count"])
+        self.assertIsNone(openaq_cluster["properties"]["value"])
 
     def test_openaq_point_uses_its_location_source_link(self):
         snapshot = {"payload_summary": {"samples": [[

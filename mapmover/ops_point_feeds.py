@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 from typing import Optional
 
 from mapmover.ops_ticker import (
@@ -172,13 +173,7 @@ def _in_bbox(lon: float, lat: float, bbox: Optional[tuple[float, float, float, f
 
 
 def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
-    """Viewport-filter the WIP station index without changing point meaning.
-
-    The source points are already deduplicated by their native identity. Keep
-    them individually clickable during WIP display QA; a future clustering
-    design must expose an aggregate-specific popup rather than borrowing one
-    member's AQI or readings.
-    """
+    """Viewport-filter, with only coarse world-view source-separated merging."""
     visible = []
     for feature in base.get("features") or []:
         try:
@@ -188,4 +183,36 @@ def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
             continue
         if _in_bbox(lon, lat, bbox):
             visible.append(feature)
-    return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}
+    # Preserve individual points as soon as the user moves beyond the broad
+    # world view. A cluster is an aggregate, never a representative station.
+    if zoom is not None and zoom >= 2:
+        return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}
+
+    cell_size = 5.0
+    groups: dict[tuple[str, int, int], list[dict]] = {}
+    for feature in visible:
+        lon, lat = feature["geometry"]["coordinates"]
+        source = str((feature.get("properties") or {}).get("source_label") or "Unknown")
+        key = (source, math.floor((float(lon) + 180) / cell_size), math.floor((float(lat) + 90) / cell_size))
+        groups.setdefault(key, []).append(feature)
+
+    result = []
+    for (source, _x, _y), members in groups.items():
+        if len(members) == 1:
+            result.append(members[0])
+            continue
+        coords = [item["geometry"]["coordinates"] for item in members]
+        props = dict(members[0].get("properties") or {})
+        props.update({
+            "station_name": f"{len(members):,} {source} stations",
+            "station_kind": "Map cluster — zoom in for individual stations",
+            "station_count": len(members), "is_cluster": True, "location_id": None,
+            "measurements": [], "value": None, "unit": None, "category": None, "parameter": None,
+            "observed_at": max((str((item.get("properties") or {}).get("observed_at") or "") for item in members), default=None),
+        })
+        result.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [sum(float(c[0]) for c in coords) / len(coords), sum(float(c[1]) for c in coords) / len(coords)]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": result, "count": len(result), "total_count": base.get("count", 0), "merged": True}

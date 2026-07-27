@@ -153,7 +153,9 @@ export function createLivePointOverlay(config) {
           'circle-radius': config.circleRadius || ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5],
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 0.8,
-          'circle-opacity': 0.92,
+          'circle-opacity': config.hideCircleForSource
+            ? ['case', ['==', ['get', 'source_label'], config.hideCircleForSource], 0, 0.92]
+            : 0.92,
         },
       });
       map.addLayer({
@@ -174,6 +176,7 @@ export function createLivePointOverlay(config) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
           },
+          ...(config.icon.filter ? { filter: config.icon.filter } : {}),
         });
       }
       this._bindPopup(map);
@@ -377,6 +380,13 @@ const BUOY_ICON_SVG = `
   <rect x="8.5" y="16" width="11" height="2.6" fill="#ffffff" opacity="0.9"/>
 </svg>`.trim();
 
+const AIR_MONITOR_PIN_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 34">
+  <path d="M14 2.5 C7.7 2.5 4 7.2 4 12.8 C4 20.2 14 31.3 14 31.3 C14 31.3 24 20.2 24 12.8 C24 7.2 20.3 2.5 14 2.5Z" fill="#6a5acd" stroke="#ffffff" stroke-width="1.8"/>
+  <circle cx="14" cy="12.7" r="4.2" fill="#e9e4ff"/>
+  <path d="M10.6 12.7 H17.4 M14 9.3 V16.1" stroke="#6a5acd" stroke-width="1.4" stroke-linecap="round"/>
+</svg>`.trim();
+
 const BUOYS_CONFIG = {
   id: 'buoys',
   feedId: 'noaa_ndbc',
@@ -418,6 +428,8 @@ const AIR_QUALITY_STATIONS_CONFIG = {
   viewportQuery: true,
   wipOnly: true,
   colorBy: { directProp: 'marker_color', nullColor: '#9aa4bf' },
+  hideCircleForSource: 'OpenAQ',
+  icon: { svg: AIR_MONITOR_PIN_SVG, pixelSize: [36, 44], minzoom: 0, size: ['interpolate', ['linear'], ['zoom'], 0, 0.45, 5, 0.7, 9, 0.9], filter: ['==', ['get', 'source_label'], 'OpenAQ'] },
   popup: {
     titleProp: 'station_name',
     headerFields: [{ label: 'Last updated', prop: 'observed_at', format: 'datetime' }],
