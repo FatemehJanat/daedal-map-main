@@ -13,6 +13,7 @@ import { TrackAnimator, MultiTrackAnimator, setDependencies as setTrackAnimatorD
 import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps } from './event-animator.js';
 import { getSourceDefaultOverride, resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
 import { TIME_SYSTEM } from './time-slider.js';
+import { OpsTimeline } from './ops-timeline.js';
 import {
   buildRangeRequestSignature,
   buildStampsClaim,
@@ -3021,12 +3022,31 @@ export const OverlayController = {
     // (no catalog data, no TimeSlider). Route and stop here.
     if (overlayId === 'aurora') {
       await AuroraOverlay.setEnabled(isActive);
+      if (isActive) {
+        OpsTimeline.setExternalProvider(
+          'aurora',
+          AuroraOverlay.getOpsTimelineFrames?.() || [],
+          (timestamp) => AuroraOverlay.setOpsTimelineTime?.(timestamp)
+        );
+        void ChatManager?.refreshLocalOpsTimeline?.({
+          feedIds: [],
+          label: 'Aurora timeline'
+        });
+      } else {
+        OpsTimeline.setExternalProvider('aurora', [], null);
+      }
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
     if (overlayId === 'nws_alerts') {
       await NwsAlertsOverlay.setEnabled(isActive);
+      if (isActive) {
+        void ChatManager?.refreshLocalOpsTimeline?.({
+          feedIds: ['usa_nws_alerts'],
+          label: 'NWS alert timeline'
+        });
+      }
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
@@ -3066,6 +3086,17 @@ export const OverlayController = {
     const livePointOverlay = getLivePointOverlay(overlayId);
     if (livePointOverlay) {
       await livePointOverlay.setEnabled(isActive);
+      if (this._isOpsMode() && isActive) {
+        const activeFeedIds = Array.from(new Set(
+          (OverlaySelector?.getActiveOverlays?.() || [])
+            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+            .filter(Boolean)
+        ));
+        void ChatManager?.refreshLocalOpsTimeline?.({
+          feedIds: activeFeedIds,
+          label: `${formatSurfaceLabel(overlayId)} Ops timeline`
+        });
+      }
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
@@ -3074,6 +3105,20 @@ export const OverlayController = {
     if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
       if (isActive && this.opsSnapshotPayloads.has(overlayId)) {
         this.renderOpsSnapshotOverlay(overlayId);
+        // The shared Ops cursor is intentionally opt-in per overlay. Do not
+        // hydrate every feed merely because it is selected in an account watch.
+        const feedId = this._opsFeedIdForOverlay(overlayId);
+        if (feedId) {
+          const activeFeedIds = Array.from(new Set(
+            (OverlaySelector?.getActiveOverlays?.() || [])
+              .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+              .filter(Boolean)
+          ));
+          void ChatManager?.refreshLocalOpsTimeline?.({
+            feedIds: activeFeedIds,
+            label: `${formatSurfaceLabel(overlayId)} Ops timeline`
+          });
+        }
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
@@ -3272,6 +3317,27 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID (temperature, humidity, snow-depth)
    * @param {Object} config - Overlay configuration from OverlaySelector
    */
+  _syncOpsRasterTimelineProvider(overlayId, timestamps, renderAt) {
+    if (!this._isOpsMode()) return;
+    const stamps = Array.from(new Set((timestamps || []).filter(Number.isFinite))).sort((a, b) => a - b);
+    const frames = stamps.map((start, index) => ({
+      start_at: new Date(start).toISOString(),
+      end_at: index + 1 < stamps.length ? new Date(stamps[index + 1]).toISOString() : null,
+    }));
+    const providerId = `raster:${overlayId}`;
+    OpsTimeline.setExternalProvider(providerId, frames, renderAt);
+    // The local Ops timeline has no collector feed for display-ready rasters;
+    // refresh it so this external provider can supply the cursor bounds.
+    void ChatManager?.refreshLocalOpsTimeline?.({
+      feedIds: [],
+      label: `${formatSurfaceLabel(overlayId)} raster timeline`,
+    });
+  },
+
+  _clearOpsRasterTimelineProvider(overlayId) {
+    OpsTimeline.setExternalProvider(`raster:${overlayId}`, [], null);
+  },
+
   async loadWeatherGridOverlay(overlayId, config) {
     // Determine year based on current time slider position
     let year = getCurrentUtcYear();
@@ -3315,6 +3381,11 @@ export const OverlayController = {
           TimeSlider.setTime(yearData.timestamps[yearData.timestamps.length - 1]);
         }
       }
+      this._syncOpsRasterTimelineProvider(
+        overlayId,
+        cachedData.years[year]?.timestamps || [],
+        (timestamp) => WeatherGridModel.renderAtTimestamp(overlayId, timestamp),
+      );
 
       console.log(`OverlayController: Weather grid ${overlayId} loaded for year ${year}`);
     } else {
@@ -3327,6 +3398,7 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   clearWeatherGridOverlay(overlayId) {
+    this._clearOpsRasterTimelineProvider(overlayId);
     WeatherGridModel.hide(overlayId);
     console.log(`OverlayController: Cleared weather grid ${overlayId}`);
   },
@@ -3381,6 +3453,12 @@ export const OverlayController = {
     }
 
     const timestamps = OceanRasterModel.getTimestamps(overlayId);
+
+    this._syncOpsRasterTimelineProvider(
+      overlayId,
+      timestamps,
+      (timestamp) => OceanRasterModel.renderAtTimestamp(overlayId, timestamp),
+    );
 
     // TASK L6 item 1: record the raster's frame timeline as a stamps-kind
     // ledger claim so recalculateTimeRange/timestampsUnion can read it from
@@ -3442,6 +3520,7 @@ export const OverlayController = {
    * @param {string} overlayId - Overlay ID
    */
   clearOceanRasterOverlay(overlayId) {
+    this._clearOpsRasterTimelineProvider(overlayId);
     OceanRasterPanel.hide();
     OceanRasterModel.cleanup(overlayId);
     overlayLedger.clearSource(overlayId);

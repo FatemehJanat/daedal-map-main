@@ -663,3 +663,9 @@ def build_cached_nws_alerts_payload() -> dict:
         ttl_seconds=_NWS_ALERTS_CACHE_TTL_SECONDS,
         builder=_builder,
     )
+
+
+def build_nws_alerts_payload_for_snapshot(snapshot: dict) -> dict:
+    """Build one retained NWS frame without using the current-snapshot cache."""
+    summary = snapshot.get("payload_summary") if isinstance(snapshot, dict) else {}
+    return _assemble_nws_alerts_geojson(summary if isinstance(summary, dict) else {})

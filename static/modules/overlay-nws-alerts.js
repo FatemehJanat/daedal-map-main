@@ -186,6 +186,8 @@ export const NwsAlertsOverlay = {
   historical: false,
   pollTimer: null,
   lastData: null,
+  currentData: null,
+  opsTimelineLocked: false,
   _clickBound: false,
   _popupHandler: null,
   _mouseenterHandler: null,
@@ -222,6 +224,7 @@ export const NwsAlertsOverlay = {
 
   async setEnabled(on) {
     this.historical = false;
+    this.opsTimelineLocked = false;
     this.enabled = Boolean(on);
     if (this.enabled) {
       await this._refresh();
@@ -384,10 +387,35 @@ export const NwsAlertsOverlay = {
       const data = await fetchMsgpack('/api/ops/nws-alerts');
       const raw = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
       const fc = decorateAlertFeatures(raw);
-      this.lastData = fc;
-      this._render(fc);
+      this.currentData = fc;
+      if (!this.opsTimelineLocked) {
+        this.lastData = fc;
+        this._render(fc);
+      }
     } catch (err) {
       console.warn('NwsAlertsOverlay: refresh failed', err);
+    }
+  },
+
+  async setOpsTimelineFrame(rawFrame) {
+    if (!this.enabled || !rawFrame) return false;
+    // Polling continues to update currentData, but must not repaint a
+    // historical alert state chosen through the shared Ops cursor.
+    this.opsTimelineLocked = true;
+    const raw = rawFrame?.type === 'FeatureCollection'
+      ? rawFrame
+      : { type: 'FeatureCollection', features: [] };
+    const frame = decorateAlertFeatures(raw);
+    this.lastData = frame;
+    await this._render(frame);
+    return true;
+  },
+
+  clearOpsTimelineFrame() {
+    this.opsTimelineLocked = false;
+    if (this.currentData) {
+      this.lastData = this.currentData;
+      void this._render(this.currentData);
     }
   },
 

@@ -43,6 +43,8 @@ export function createLivePointOverlay(config) {
     enabled: false,
     pollTimer: null,
     lastData: null,
+    currentData: null,
+    opsTimelineLocked: false,
     MapAdapter: null,
     _clickBound: false,
     _popupHandler: null,
@@ -88,6 +90,7 @@ export function createLivePointOverlay(config) {
         this._startPolling();
       } else {
         this._stopPolling();
+        this.opsTimelineLocked = false;
         this._removeLayers();
       }
     },
@@ -126,10 +129,31 @@ export function createLivePointOverlay(config) {
         }
         const data = await fetchMsgpack(endpoint);
         const fc = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
-        this.lastData = fc;
-        this._render(fc);
+        this.currentData = fc;
+        if (!this.opsTimelineLocked) {
+          this.lastData = fc;
+          this._render(fc);
+        }
       } catch (err) {
         console.warn(`LivePointOverlay[${config.id}]: refresh failed`, err);
+      }
+    },
+
+    setOpsTimelineFrame(fc) {
+      if (!this.enabled || !fc || fc.type !== 'FeatureCollection') return false;
+      // Polling may continue while an operator is inspecting the past, but it
+      // must not overwrite the selected retained state with the live frame.
+      this.opsTimelineLocked = true;
+      this.lastData = fc;
+      void this._render(fc);
+      return true;
+    },
+
+    clearOpsTimelineFrame() {
+      this.opsTimelineLocked = false;
+      if (this.currentData) {
+        this.lastData = this.currentData;
+        void this._render(this.currentData);
       }
     },
 

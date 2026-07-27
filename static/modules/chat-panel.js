@@ -63,6 +63,7 @@ import {
   setOpsEffectiveFeeds as setOverlaySelectorOpsEffectiveFeeds
 } from './overlay-selector.js';
 import { getOpsPublicDefaultOverlayIds } from './ops/default-overlays.js';
+import { OpsTimeline } from './ops-timeline.js';
 import { ModelRegistry } from './models/model-registry.js';
 import {
   isMixedResearchRasterRequest as isMixedResearchRasterRequestImpl,
@@ -2251,6 +2252,23 @@ export const ChatManager = {
     this.saveState();
     OverlaySelector?.refreshVisibility?.();
     return payload || null;
+  },
+
+  async refreshLocalOpsTimeline({ feedIds = null, label = 'Ops watch' } = {}) {
+    if (this.mode !== 'ops') return null;
+    try {
+      return await OpsTimeline.load({
+        sessionId: this.getSessionIdForMode('ops'),
+        watchId: this.opsWatchId || this.getSessionIdForMode('ops'),
+        watchContext: { label },
+        timelineFeeds: Array.isArray(feedIds) ? feedIds : []
+      });
+    } catch (error) {
+      // The cursor is optional: a feed with fewer than two retained frames
+      // simply leaves it hidden without affecting the ordinary Ops load.
+      console.warn('Ops timeline was unavailable:', error);
+      return null;
+    }
   },
 
   renderOpsDisplayPayloads(payload = null, options = {}) {

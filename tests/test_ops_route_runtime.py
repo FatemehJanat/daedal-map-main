@@ -2,6 +2,7 @@ import unittest
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
 from mapmover.ops_route_runtime import _public_default_ops_feeds
+from mapmover import ops_orchestrator_runtime
 from mapmover.routes import ops as ops_routes
 
 
@@ -151,6 +152,49 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertEqual(1, len(reconstructed))
         self.assertEqual("Updated warning", reconstructed[0]["headline"])
         self.assertEqual({"type": "Point", "coordinates": [-90, 35]}, reconstructed[0]["geometry"])
+
+    def test_retained_point_frame_uses_snapshot_at_cursor_time(self):
+        original_history = ops_routes.load_current_state_history
+        original_snapshot = ops_routes.load_current_state_snapshot
+        first = {
+            "published_at": "2026-07-27T00:00:00+00:00",
+            "payload_hash": "first",
+            "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 11.0}]},
+        }
+        second = {
+            "published_at": "2026-07-27T00:05:00+00:00",
+            "payload_hash": "second",
+            "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 12.5}]},
+        }
+        try:
+            ops_routes.load_current_state_history = lambda _feed: [first, second]
+            ops_routes.load_current_state_snapshot = lambda _feed: second
+            frame = ops_routes._local_point_timeline_frame_at("buoys", "2026-07-27T00:03:00Z")
+        finally:
+            ops_routes.load_current_state_history = original_history
+            ops_routes.load_current_state_snapshot = original_snapshot
+
+        self.assertEqual("first", frame["payload_hash"])
+        self.assertEqual(11.0, frame["geojson"]["features"][0]["properties"]["sst_c"])
+
+    def test_timeline_expands_to_declared_display_window(self):
+        original_history = ops_orchestrator_runtime.load_current_state_history
+        original_snapshot = ops_orchestrator_runtime.load_current_state_snapshot
+        snapshot = {
+            "published_at": "2026-07-27T00:00:00+00:00",
+            "ops_history_retention_hours": 720,
+            "ops_history_display_hours": 720,
+            "payload_summary": {"event_count": 0},
+        }
+        try:
+            ops_orchestrator_runtime.load_current_state_history = lambda _feed: []
+            ops_orchestrator_runtime.load_current_state_snapshot = lambda _feed: snapshot
+            timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=["earthquakes"])
+        finally:
+            ops_orchestrator_runtime.load_current_state_history = original_history
+            ops_orchestrator_runtime.load_current_state_snapshot = original_snapshot
+
+        self.assertEqual(720, timeline["history_hours"])
 
 
 if __name__ == "__main__":

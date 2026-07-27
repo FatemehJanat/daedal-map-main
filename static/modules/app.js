@@ -36,6 +36,7 @@ import { getTemporalMetricPayload, hasTemporalMetricPayload, mergeTemporalMetric
 import { buildMetricClaim, metricTimeClaimFromRange, overlayLedger, resolveSourceVersion } from './overlay-cache.js';
 import { resolveOverlayIdForOrderResult } from './overlay-default-loads.js';
 import { MetricDisplayRegistry } from './metric-display-registry.js';
+import { OpsTimeline } from './ops-timeline.js';
 
 const CHAT_MAP_LANES = ['explore', 'research', 'ops'];
 const DISPLAY_GEOMETRY_TYPES = new Set(['zcta', 'tribal', 'watershed', 'park']);
@@ -847,6 +848,12 @@ export const App = {
 
     // Initialize components
     ChatManager.init();
+    OpsTimeline.init({
+      onFrame: (displayPayloads) => {
+        if (ChatManager?.mode !== 'ops') return;
+        OverlayController?.setOpsSnapshotPayloads?.(displayPayloads);
+      }
+    });
     OrderManager.init();
     ResizeManager.init();
     SidebarResizer.init();

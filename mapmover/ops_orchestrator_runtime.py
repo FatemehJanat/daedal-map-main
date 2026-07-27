@@ -31,6 +31,11 @@ except ImportError:
     boto3 = None
 
 try:
+    from botocore.config import Config as BotocoreConfig
+except ImportError:
+    BotocoreConfig = None
+
+try:
     import requests
 except ImportError:
     requests = None
@@ -426,7 +431,20 @@ def _build_object_store_client():
         or str(os.environ.get("AWS_REGION", "") or "").strip()
         or "auto"
     )
-    return boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+    # Live-state reads happen on the interactive request path.  Bound failed
+    # cloud attempts so a missing network route cannot turn one unavailable
+    # feed into a long serial page load.
+    client_kwargs = {
+        "endpoint_url": endpoint_url,
+        "region_name": region,
+    }
+    if BotocoreConfig is not None:
+        client_kwargs["config"] = BotocoreConfig(
+            connect_timeout=3,
+            read_timeout=5,
+            retries={"max_attempts": 1, "mode": "standard"},
+        )
+    return boto3.client("s3", **client_kwargs)
 
 
 def _read_json_object(relative_key: str) -> dict | None:
@@ -443,14 +461,23 @@ def _read_json_object(relative_key: str) -> dict | None:
 
 
 def _read_local_live_state_snapshot(collector: str) -> dict | None:
-    """Use the collector artifact only for a local runtime when cloud state misses.
+    """Read an unpublished local collector artifact only in explicit offline mode.
 
-    Hosted Ops must read the published object-store state.  This fallback lets a
-    local developer verify a freshly collected snapshot without first publishing
-    it, while preserving that cloud-first contract whenever runtime state exists.
+    Ops is a cloud-backed operational surface in every runtime, including a
+    developer's localhost session.  A local data mirror can be stale or partial,
+    so it must never silently decide what an operator sees.  The fallback exists
+    solely for deliberate offline collector development:
+    ``OPS_ALLOW_LOCAL_LIVE_STATE_FALLBACK=1``.
     """
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
-    if runtime_mode != "local" or not re.fullmatch(r"[A-Za-z0-9_-]+", collector):
+    allow_local_fallback = str(
+        os.environ.get("OPS_ALLOW_LOCAL_LIVE_STATE_FALLBACK", "")
+    ).strip().lower() in {"1", "true", "yes"}
+    if (
+        runtime_mode != "local"
+        or not allow_local_fallback
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", collector)
+    ):
         return None
     paths = (
         DATA_ROOT / "live_state" / "collectors" / collector / "snapshot.json",
@@ -1724,6 +1751,99 @@ def _build_ops_payload_for_feed(feed: str) -> dict | None:
     if payload:
         payload["ops_default_view"] = default_load
     return payload
+
+
+def _ops_timeline_entry_time(entry: dict) -> datetime | None:
+    """Return the authoritative capture time for one retained Ops frame."""
+    if not isinstance(entry, dict):
+        return None
+    for key in ("published_at", "fetched_at", "last_checked_at"):
+        parsed = _parse_iso_datetime(entry.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _ops_timeline_cadence_seconds(snapshot: dict | None) -> int | None:
+    """Derive the collector cadence from its existing snapshot envelope."""
+    if not isinstance(snapshot, dict):
+        return None
+    fetched_at = _parse_iso_datetime(snapshot.get("fetched_at"))
+    expected_next_at = _parse_iso_datetime(snapshot.get("expected_next_at"))
+    if fetched_at is None or expected_next_at is None:
+        return None
+    seconds = int((expected_next_at - fetched_at).total_seconds())
+    return seconds if seconds > 0 else None
+
+
+def _ops_timeline_entries(feed: str, snapshot: dict | None, history_entries: list[dict]) -> list[dict]:
+    """Return unique changed snapshots, ordered for a short Ops scrubber."""
+    by_identity: dict[tuple[str, str], dict] = {}
+    for entry in [*(history_entries or []), snapshot]:
+        if not isinstance(entry, dict):
+            continue
+        observed_at = _ops_timeline_entry_time(entry)
+        if observed_at is None:
+            continue
+        identity = (observed_at.isoformat(), str(entry.get("payload_hash") or ""))
+        by_identity[identity] = entry
+    return sorted(by_identity.values(), key=lambda entry: _ops_timeline_entry_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
+
+
+def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int = DEFAULT_OPS_HISTORY_RETENTION_HOURS) -> dict:
+    """Build one retained-history payload for the shared Ops scrubber.
+
+    This deliberately returns the already-retained frames together.  Once the
+    local browser receives this payload, dragging the cursor is a client-side
+    render change, not a sequence of network requests.
+    """
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    snapshots = {
+        feed: load_current_state_snapshot(feed)
+        for feed in effective_feeds
+    }
+    # The cursor must cover the longest declared display window among its
+    # active feeds. NWS deliberately keeps a longer full-snapshot window; do
+    # not silently crop it back to the generic 72-hour default.
+    requested_hours = max(
+        max(1, int(history_hours)),
+        *(_ops_history_display_hours_for_snapshot(snapshot) for snapshot in snapshots.values()),
+    )
+    range_start = now - timedelta(hours=requested_hours)
+    feeds: dict[str, list[dict]] = {}
+    for feed in effective_feeds:
+        snapshot = snapshots.get(feed)
+        entries = _ops_timeline_entries(feed, snapshot, load_current_state_history(feed))
+        cadence_seconds = _ops_timeline_cadence_seconds(snapshot)
+        frames: list[dict] = []
+        for index, entry in enumerate(entries):
+            start = _ops_timeline_entry_time(entry)
+            if start is None:
+                continue
+            next_start = _ops_timeline_entry_time(entries[index + 1]) if index + 1 < len(entries) else None
+            fallback_end = start + timedelta(seconds=cadence_seconds) if cadence_seconds else None
+            end = next_start or fallback_end
+            if end is not None and end < range_start:
+                continue
+            display_payload = _build_snapshot_display_payload(feed, entry)
+            if display_payload is None:
+                continue
+            display_payload["ops_default_view"] = "snapshot"
+            frames.append({
+                "start_at": start.isoformat(),
+                "end_at": end.isoformat() if end is not None else None,
+                "payload_hash": entry.get("payload_hash"),
+                "display_payload": display_payload,
+            })
+        if frames:
+            feeds[feed] = frames
+    return {
+        "range_start": range_start.isoformat(),
+        "range_end": now.isoformat(),
+        "history_hours": requested_hours,
+        "cursor_step_seconds": 300,
+        "feeds": feeds,
+    }
 
 
 def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:

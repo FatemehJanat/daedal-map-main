@@ -60,7 +60,9 @@ export const AuroraOverlay = {
       await this._refresh();
       await this._refreshHistory();
       this._startPolling();
-      this._startAnimation();
+      // Ops owns temporal inspection through its shared cursor.  The older
+      // self-running Aurora loop remains only as an Explore presentation.
+      if (!this._isOpsMode()) this._startAnimation();
     } else {
       this._stopPolling();
       this._stopShimmer();
@@ -74,7 +76,7 @@ export const AuroraOverlay = {
     this.pollTimer = setInterval(async () => {
       await this._refresh();
       await this._refreshHistory();
-      this._startAnimation();
+      if (!this._isOpsMode()) this._startAnimation();
     }, POLL_INTERVAL_MS);
   },
 
@@ -83,6 +85,10 @@ export const AuroraOverlay = {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  },
+
+  _isOpsMode() {
+    return document.body?.classList?.contains('chat-mode-ops');
   },
 
   // This is deliberately a presentation effect on ONE real OVATION issuance,
@@ -236,7 +242,11 @@ export const AuroraOverlay = {
     try {
       const payload = await fetchMsgpack('/api/ops/aurora/frames');
       const frames = Array.isArray(payload?.frames) ? payload.frames : [];
-      this.historyFrames = frames.map((frame) => this._decodeHistoryFrame(frame)).filter(Boolean);
+      this.historyFrames = frames.map((frame) => {
+        const cells = this._decodeHistoryFrame(frame);
+        const at = Date.parse(String(frame?.captured_at || frame?.issued_at || frame?.valid_at || ''));
+        return cells && Number.isFinite(at) ? { at, cells } : null;
+      }).filter(Boolean);
       this.historyFrameIndex = Math.max(0, this.historyFrames.length - 1);
     } catch (err) {
       console.warn('AuroraOverlay: history refresh failed', err);
@@ -266,7 +276,7 @@ export const AuroraOverlay = {
     this.historyFrameIndex = 0;
     this.historyTimer = setInterval(() => {
       if (!this.enabled || this.historyFrames.length < 2) return;
-      this._render(this._selectDisplayCells(this.historyFrames[this.historyFrameIndex]));
+      this._render(this._selectDisplayCells(this.historyFrames[this.historyFrameIndex].cells));
       this.historyFrameIndex = (this.historyFrameIndex + 1) % this.historyFrames.length;
     }, HISTORY_FRAME_MS);
   },
@@ -284,6 +294,30 @@ export const AuroraOverlay = {
     this._stopShimmer();
     this._stopHistoryPlayback();
     this._render(this.lastDisplayCells);
+    return true;
+  },
+
+  getOpsTimelineFrames() {
+    return this.historyFrames.map((frame, index) => ({
+      start_at: new Date(frame.at).toISOString(),
+      end_at: this.historyFrames[index + 1]
+        ? new Date(this.historyFrames[index + 1].at).toISOString()
+        : null,
+    }));
+  },
+
+  setOpsTimelineTime(timestamp) {
+    const target = Number(timestamp);
+    if (!this.enabled || !Number.isFinite(target) || !this.historyFrames.length) return false;
+    let selected = null;
+    for (const frame of this.historyFrames) {
+      if (frame.at <= target) selected = frame;
+      else break;
+    }
+    if (!selected) return false;
+    this._stopShimmer();
+    this._stopHistoryPlayback();
+    this._render(this._selectDisplayCells(selected.cells));
     return true;
   },
 };

@@ -100,6 +100,20 @@ def _assemble_points_geojson(spec: PointFeedSpec, summary: dict) -> dict:
     return {"type": "FeatureCollection", "features": features, "count": len(features)}
 
 
+def build_point_overlay_for_snapshot(overlay_id: str, snapshot: dict | None) -> dict:
+    """Render one retained collector snapshot as a point-overlay frame.
+
+    The same shape is used for the live view and the Ops cursor.  Keeping this
+    conversion here prevents historical point frames from dropping fields or
+    silently using today's readings while the cursor is in the past.
+    """
+    spec = POINT_FEEDS.get(str(overlay_id or "").strip())
+    summary = snapshot.get("payload_summary") if isinstance(snapshot, dict) else {}
+    return _assemble_points_geojson(spec, summary if isinstance(summary, dict) else {}) if spec else {
+        "type": "FeatureCollection", "features": [], "count": 0,
+    }
+
+
 def build_cached_point_overlay(
     overlay_id: str,
     *,
@@ -117,7 +131,7 @@ def build_cached_point_overlay(
     snapshot = snap if isinstance(snap, dict) else {}
 
     def _builder() -> dict:
-        return _assemble_points_geojson(spec, snapshot.get("payload_summary") or {})
+        return build_point_overlay_for_snapshot(overlay_id, snapshot)
 
     return _get_cached_view(
         f"ops_points_{overlay_id}",
