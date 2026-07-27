@@ -183,7 +183,7 @@ def _in_bbox(lon: float, lat: float, bbox: Optional[tuple[float, float, float, f
 
 
 def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
-    """Viewport-filter, with only coarse world-view source-separated merging."""
+    """Viewport-filter with gentle, source-separated low/mid-zoom merging."""
     visible = []
     for feature in base.get("features") or []:
         try:
@@ -193,12 +193,14 @@ def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
             continue
         if _in_bbox(lon, lat, bbox):
             visible.append(feature)
-    # Preserve individual points as soon as the user moves beyond the broad
-    # world view. A cluster is an aggregate, never a representative station.
-    if zoom is not None and zoom >= 2:
+    # Preserve individual locations once a user is looking at a city/region.
+    # Below that, use progressively smaller degree cells. This keeps the
+    # global monitor layer legible without pretending a cluster is one station.
+    if zoom is not None and zoom >= 6:
         return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}
 
-    cell_size = 5.0
+    zoom_value = float(zoom) if zoom is not None else 0.0
+    cell_size = 5.0 if zoom_value < 2 else 2.0 if zoom_value < 3.5 else 0.75
     groups: dict[tuple[str, int, int], list[dict]] = {}
     for feature in visible:
         lon, lat = feature["geometry"]["coordinates"]

@@ -32,6 +32,7 @@ function colorExpression(colorBy) {
 export function createLivePointOverlay(config) {
   const SRC_ID = `lpo-${config.id}-src`;
   const CIRCLE_ID = `lpo-${config.id}-circle`;
+  const CLUSTER_COUNT_ID = `lpo-${config.id}-cluster-count`;
   const HIT_LAYER_ID = `lpo-${config.id}-hit`;
   const ICON_LAYER_ID = `lpo-${config.id}-icon`;
   const ICON_IMAGE_ID = `lpo-${config.id}-img`;
@@ -146,18 +147,40 @@ export function createLivePointOverlay(config) {
         return;
       }
       map.addSource(SRC_ID, { type: 'geojson', data: fc });
-      map.addLayer({
+      const circleLayer = {
         id: CIRCLE_ID, type: 'circle', source: SRC_ID,
         paint: {
           'circle-color': colorExpression(config.colorBy),
-          'circle-radius': config.circleRadius || ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5],
+          'circle-radius': config.clusterBubbles
+            ? ['case', ['==', ['get', 'is_cluster'], true],
+              ['step', ['coalesce', ['to-number', ['get', 'station_count']], 2], 12, 10, 15, 50, 19, 100, 23],
+              config.circleRadius || ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5]]
+            : (config.circleRadius || ['interpolate', ['linear'], ['zoom'], 1, 3.6, 4, 6, 8, 10.5]),
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 0.8,
-          'circle-opacity': config.hideCircleForSource
-            ? ['case', ['==', ['get', 'source_label'], config.hideCircleForSource], 0, 0.92]
-            : 0.92,
+          'circle-opacity': 0.92,
         },
-      });
+      };
+      // A filtered layer is more reliable than painting a transparent circle:
+      // it prevents an underlying dot from showing through a station pin.
+      const hiddenCircleSources = config.hideCircleForSources
+        || (config.hideCircleForSource ? [config.hideCircleForSource] : []);
+      if (hiddenCircleSources.length) {
+        circleLayer.filter = [
+          'any',
+          ['==', ['get', 'is_cluster'], true],
+          ['all', ...hiddenCircleSources.map((source) => ['!=', ['get', 'source_label'], source])],
+        ];
+      }
+      map.addLayer(circleLayer);
+      if (config.clusterBubbles) {
+        map.addLayer({
+          id: CLUSTER_COUNT_ID, type: 'symbol', source: SRC_ID,
+          filter: ['==', ['get', 'is_cluster'], true],
+          layout: { 'text-field': ['to-string', ['get', 'station_count']], 'text-font': ['Open Sans Bold'], 'text-size': 12 },
+          paint: { 'text-color': '#ffffff' },
+        });
+      }
       map.addLayer({
         id: HIT_LAYER_ID, type: 'circle', source: SRC_ID,
         paint: {
@@ -171,32 +194,47 @@ export function createLivePointOverlay(config) {
           id: ICON_LAYER_ID, type: 'symbol', source: SRC_ID,
           minzoom: config.icon.minzoom ?? 3,
           layout: {
-            'icon-image': ICON_IMAGE_ID,
+            'icon-image': config.icon.variantProperty
+              ? [
+                'match', ['get', config.icon.variantProperty],
+                ...Object.entries(config.icon.variantValues || {}).flatMap(([value, key]) => [value, `${ICON_IMAGE_ID}-${key}`]),
+                ICON_IMAGE_ID,
+              ]
+              : ICON_IMAGE_ID,
             'icon-size': config.icon.size ?? ['interpolate', ['linear'], ['zoom'], 3, 0.5, 8, 0.85],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
           },
-          ...(config.icon.filter ? { filter: config.icon.filter } : {}),
+          filter: config.icon.filter
+            ? ['all', config.icon.filter, ['!=', ['get', 'is_cluster'], true]]
+            : ['!=', ['get', 'is_cluster'], true],
         });
       }
       this._bindPopup(map);
     },
 
     async _ensureIcon(map) {
-      if (!map || !config.icon?.svg || map.hasImage(ICON_IMAGE_ID)) return;
+      if (!map || !config.icon?.svg) return;
+      const variants = config.icon.variants || {};
+      const requiredImageIds = [ICON_IMAGE_ID, ...Object.keys(variants).map((key) => `${ICON_IMAGE_ID}-${key}`)];
+      if (requiredImageIds.every((id) => map.hasImage(id))) return;
       if (this._iconLoadPromise) { await this._iconLoadPromise; return; }
       const [w, h] = config.icon.pixelSize || [28, 34];
-      this._iconLoadPromise = new Promise((resolve, reject) => {
+      const addIcon = (imageId, svg) => new Promise((resolve, reject) => {
         const img = new Image(w, h);
         img.onload = () => {
           try {
-            if (!map.hasImage(ICON_IMAGE_ID)) map.addImage(ICON_IMAGE_ID, img, { pixelRatio: 2 });
+            if (!map.hasImage(imageId)) map.addImage(imageId, img, { pixelRatio: 2 });
             resolve();
           } catch (e) { reject(e); }
         };
         img.onerror = reject;
-        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(config.icon.svg)}`;
-      }).finally(() => { this._iconLoadPromise = null; });
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      });
+      this._iconLoadPromise = Promise.all([
+        addIcon(ICON_IMAGE_ID, config.icon.svg),
+        ...Object.entries(variants).map(([key, svg]) => addIcon(`${ICON_IMAGE_ID}-${key}`, svg)),
+      ]).finally(() => { this._iconLoadPromise = null; });
       await this._iconLoadPromise;
     },
 
@@ -326,7 +364,7 @@ export function createLivePointOverlay(config) {
       };
       this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
       this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
-      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, ICON_LAYER_ID]) {
+      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, CLUSTER_COUNT_ID, ICON_LAYER_ID]) {
         if (!map.getLayer(layerId)) continue;
         map.on('click', layerId, this._popupHandler);
         map.on('mouseenter', layerId, this._mouseenterHandler);
@@ -337,7 +375,7 @@ export function createLivePointOverlay(config) {
 
     _unbindPopup(map) {
       if (!this._clickBound || !map) return;
-      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, ICON_LAYER_ID]) {
+      for (const layerId of [HIT_LAYER_ID, CIRCLE_ID, CLUSTER_COUNT_ID, ICON_LAYER_ID]) {
         if (this._popupHandler) map.off('click', layerId, this._popupHandler);
         if (this._mouseenterHandler) map.off('mouseenter', layerId, this._mouseenterHandler);
         if (this._mouseleaveHandler) map.off('mouseleave', layerId, this._mouseleaveHandler);
@@ -353,7 +391,7 @@ export function createLivePointOverlay(config) {
       if (!map) return;
       try {
         this._unbindPopup(map);
-        for (const id of [ICON_LAYER_ID, HIT_LAYER_ID, CIRCLE_ID]) {
+        for (const id of [ICON_LAYER_ID, CLUSTER_COUNT_ID, HIT_LAYER_ID, CIRCLE_ID]) {
           if (map.getLayer(id)) map.removeLayer(id);
         }
         if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
@@ -380,12 +418,22 @@ const BUOY_ICON_SVG = `
   <rect x="8.5" y="16" width="11" height="2.6" fill="#ffffff" opacity="0.9"/>
 </svg>`.trim();
 
-const AIR_MONITOR_PIN_SVG = `
+const airMonitorPinSvg = (fill, center = '#ffffff') => `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 34">
-  <path d="M14 2.5 C7.7 2.5 4 7.2 4 12.8 C4 20.2 14 31.3 14 31.3 C14 31.3 24 20.2 24 12.8 C24 7.2 20.3 2.5 14 2.5Z" fill="#6a5acd" stroke="#ffffff" stroke-width="1.8"/>
-  <circle cx="14" cy="12.7" r="4.2" fill="#e9e4ff"/>
-  <path d="M10.6 12.7 H17.4 M14 9.3 V16.1" stroke="#6a5acd" stroke-width="1.4" stroke-linecap="round"/>
+  <path d="M14 2.5 C7.7 2.5 4 7.2 4 12.8 C4 20.2 14 31.3 14 31.3 C14 31.3 24 20.2 24 12.8 C24 7.2 20.3 2.5 14 2.5Z" fill="${fill}" stroke="#ffffff" stroke-width="1.8"/>
+  <circle cx="14" cy="12.7" r="4.2" fill="${center}"/>
+  <path d="M10.6 12.7 H17.4 M14 9.3 V16.1" stroke="${fill}" stroke-width="1.4" stroke-linecap="round"/>
 </svg>`.trim();
+
+const AIR_MONITOR_PIN_SVG = airMonitorPinSvg('#6a5acd', '#e9e4ff');
+const AIRNOW_PIN_VARIANTS = {
+  good: airMonitorPinSvg('#00e400'),
+  moderate: airMonitorPinSvg('#ffff00'),
+  unhealthy_sensitive: airMonitorPinSvg('#ff7e00'),
+  unhealthy: airMonitorPinSvg('#ff0000'),
+  very_unhealthy: airMonitorPinSvg('#8f3f97'),
+  hazardous: airMonitorPinSvg('#7e0023'),
+};
 
 const BUOYS_CONFIG = {
   id: 'buoys',
@@ -428,8 +476,19 @@ const AIR_QUALITY_STATIONS_CONFIG = {
   viewportQuery: true,
   wipOnly: true,
   colorBy: { directProp: 'marker_color', nullColor: '#9aa4bf' },
-  hideCircleForSource: 'OpenAQ',
-  icon: { svg: AIR_MONITOR_PIN_SVG, pixelSize: [36, 44], minzoom: 0, size: ['interpolate', ['linear'], ['zoom'], 0, 0.45, 5, 0.7, 9, 0.9], filter: ['==', ['get', 'source_label'], 'OpenAQ'] },
+  hideCircleForSources: ['OpenAQ', 'AirNow'],
+  clusterBubbles: true,
+  icon: {
+    svg: AIR_MONITOR_PIN_SVG,
+    variants: AIRNOW_PIN_VARIANTS,
+    variantProperty: 'marker_color',
+    variantValues: {
+      '#00e400': 'good', '#ffff00': 'moderate', '#ff7e00': 'unhealthy_sensitive',
+      '#ff0000': 'unhealthy', '#8f3f97': 'very_unhealthy', '#7e0023': 'hazardous',
+    },
+    pixelSize: [36, 44], minzoom: 0,
+    size: ['interpolate', ['linear'], ['zoom'], 0, 0.45, 5, 0.7, 9, 0.9],
+  },
   popup: {
     titleProp: 'station_name',
     headerFields: [{ label: 'Last updated', prop: 'observed_at', format: 'datetime' }],

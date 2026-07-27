@@ -20,17 +20,17 @@ class OpsPointFeedTests(unittest.TestCase):
         self.assertEqual(101, result["features"][0]["properties"]["aqi"])
         self.assertEqual("South Coast AQMD", result["features"][0]["properties"]["agency"])
 
-    def test_air_quality_uses_coarse_clusters_only_at_world_zoom(self):
+    def test_air_quality_uses_gentle_source_separated_mid_zoom_merging(self):
         def feature(source, lon, lat):
             return {"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"source_label": source, "station_name": source, "observed_at": "2026-07-27T00:00:00+00:00"}}
         base = {"type": "FeatureCollection", "count": 3, "features": [
             feature("OpenAQ", -118.2, 34.0), feature("OpenAQ", -118.1, 34.1), feature("AirNow", -118.2, 34.0),
         ]}
-        result = _visible_air_quality_stations(base, bbox=(-120, 33, -117, 35), zoom=3)
-        self.assertEqual(3, result["count"])
-        self.assertFalse(result["merged"])
-        self.assertEqual({"OpenAQ", "AirNow"}, {item["properties"]["source_label"] for item in result["features"]})
-        merged = _visible_air_quality_stations(base, bbox=(-120, 33, -117, 35), zoom=1)
+        individual = _visible_air_quality_stations(base, bbox=(-120, 33, -117, 35), zoom=6)
+        self.assertEqual(3, individual["count"])
+        self.assertFalse(individual["merged"])
+        self.assertEqual({"OpenAQ", "AirNow"}, {item["properties"]["source_label"] for item in individual["features"]})
+        merged = _visible_air_quality_stations(base, bbox=(-120, 33, -117, 35), zoom=3)
         self.assertEqual(2, merged["count"])
         self.assertTrue(merged["merged"])
         openaq_cluster = next(item for item in merged["features"] if item["properties"]["source_label"] == "OpenAQ")
@@ -39,9 +39,10 @@ class OpsPointFeedTests(unittest.TestCase):
 
     def test_openaq_point_uses_its_location_source_link(self):
         snapshot = {"payload_summary": {"samples": [[
-            123, "Example", None, None, None, None, None, None, 34.0, -118.0, [], "2026-07-27T00:00:00+00:00",
+            123, "Example", None, None, None, None, None, None, None, None, None,
+            34.0, -118.0, [], "2026-07-27T00:00:00+00:00",
         ]]}}
-        with patch("mapmover.ops_point_feeds.get_cached_live_snapshot", side_effect=[{}, snapshot]):
+        with patch("mapmover.ops_point_feeds.get_cached_live_snapshot", side_effect=[{}, snapshot, {}]):
             with patch("mapmover.ops_point_feeds._get_cached_view", side_effect=lambda _key, **kwargs: kwargs["builder"]()):
                 result = _build_air_quality_stations()
         self.assertEqual("https://explore.openaq.org/locations/123", result["features"][0]["properties"]["source_url"])
