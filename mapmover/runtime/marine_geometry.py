@@ -1,8 +1,9 @@
 """Marine geometry resolution for the EEZ / water-body overlay families.
 
 The admin geometry loader (geometry_loader.py) resolves country/admin loc_ids to
-the GeoBoundaries banks. Marine loc_ids live in a separate overlay namespace and
-need their own resolver:
+the GeoBoundaries banks. Water-body and EEZ ids are ordinary ``loc_id`` values
+from sibling geometry families; this module only routes those ids to their
+geometry banks:
 
   - EEZ-<ISO3> / EEZ-MRGID-<n>  -> geometry/marine/eez.parquet
   - X* water-body aggregate codes (XOP..) -> geometry/marine/water_bodies.parquet

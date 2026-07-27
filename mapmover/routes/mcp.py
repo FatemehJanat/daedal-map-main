@@ -732,10 +732,10 @@ def _read_resource(uri: str, pack_id: str | None = None) -> dict[str, Any] | Non
                 '{"metrics": ["magnitude", "timestamp", "place", "depth_km"], "filters": {"time": {"start": "2023-01-01", "end": "2023-12-31"}, "region_ids": ["TUR"]}, "sort": [{"field": "magnitude", "direction": "desc"}], "limit": 1}\n\n'
                 "## Paid: count tsunamis above 5m wave height since 1950 (x402 Base USDC)\n\n"
                 "Tool: get_tsunami_events\n"
-                '{"metrics": ["event_count"], "filters": {"time": {"start": 2000, "end": 2024}, "region_ids": ["JPN", "IDN", "XSM"], "compare": [{"field": "max_water_height_m", "op": ">=", "value": 5}]}}\n\n'
+                '{"metrics": ["event_count"], "filters": {"time": {"start": 2000, "end": 2024}, "region_ids": ["JPN", "IDN", "IHO1953-240001002"], "compare": [{"field": "max_water_height_m", "op": ">=", "value": 5}]}}\n\n'
                 "## Filter reference\n\n"
                 "time: {start, end} required for event packs. Add granularity for FX (daily/weekly/monthly).\n"
-                "region_ids: list of canonical codes - country level (JPN, USA, TUR) or a geometry-backed named sea/ocean (XSM for Mediterranean Sea). XOO is deprecated.\n"
+                "region_ids: list of canonical codes - country level (JPN, USA, TUR) or a reviewed named-water loc_id (IHO1953-240001002 for Mediterranean Sea). XOO is deprecated.\n"
                 "compare: [{field, op, value}] for threshold filtering. Ops: >=, <=, >, <, ==.\n\n"
                 "Call prompts/list for parameterized versions of these examples.\n"
                 f"Full docs: {site_url}/docs/agent-examples\n"

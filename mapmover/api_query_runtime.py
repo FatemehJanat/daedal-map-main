@@ -588,8 +588,8 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         )
     # Source metadata owns the canonical filter location. The runtime defaults
     # only seed legacy sources that have not declared their own contract.
-    # This is essential for event tables whose stable event ``loc_id`` differs
-    # from their geometry-backed filter location (for example, marine events).
+    # Event identity lives in ``event_id``. ``loc_id`` is always the
+    # geometry-backed filter location, including reviewed named-water events.
     location_field = str(
         metadata.get("location_field") or source_defaults["location_field"]
     ).strip()

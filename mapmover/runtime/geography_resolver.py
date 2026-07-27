@@ -103,22 +103,33 @@ def resolve_geography(
         }
 
     # Named shared geometries win over land-region aliases. In particular,
-    # "Mediterranean" must become XSM rather than a coastal-country group.
+    # "Mediterranean" must resolve to its IHO geometry, never a coastal-country
+    # group; whole-ocean names may expand to multiple IHO polygons.
     geometry_entry = resolve_geometry_name(text)
     if geometry_entry:
-        loc_id = str(geometry_entry["loc_id"])
+        loc_ids = [str(value) for value in geometry_entry.get("loc_ids") or []]
+        if not loc_ids:
+            loc_id = str(geometry_entry.get("loc_id") or "").strip()
+            loc_ids = [loc_id] if loc_id else []
+        if not loc_ids:
+            return {
+                "outcome": "error",
+                "query": text,
+                "country_hint": country_hint,
+                "error": {"code": "unresolved_named_geometry", "message": f"'{text}' has no approved geometry assignment."},
+            }
         return {
             "outcome": "ok",
-            "resolution_kind": "named_geometry",
+            "resolution_kind": "named_geometry_group" if len(loc_ids) > 1 else "named_geometry",
             "query": text,
             "country_hint": country_hint,
-            "loc_ids": [loc_id],
+            "loc_ids": loc_ids,
             "locations": [{
                 "loc_id": loc_id,
                 "family": geometry_entry.get("family"),
-                "label": geometry_entry.get("label"),
-            }],
-            "deepest_loc_id": loc_id,
+                "label": geometry_entry.get("label") if len(loc_ids) == 1 else None,
+            } for loc_id in loc_ids],
+            "deepest_loc_id": loc_ids[0] if len(loc_ids) == 1 else None,
             "provenance": {
                 "geometry_path": geometry_entry.get("geometry_path"),
                 "provenance": geometry_entry.get("provenance"),

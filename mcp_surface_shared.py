@@ -315,7 +315,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "get_tsunami_events",
             "title": "Get Tsunami Events",
-            "description": "Paid x402 canonical tool. Queries tsunamis_events for historical tsunami records and water-height/runup metrics. Best for event counts, max water height thresholds, and top-event lookups. Region filters may use ISO3 country ids or geometry-backed named-water-body ids such as XSM for the Mediterranean Sea; XOO is deprecated. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge.",
+            "description": "Paid x402 canonical tool. Queries tsunamis_events for historical tsunami records and water-height/runup metrics. Best for event counts, max water height thresholds, and top-event lookups. Region filters may use ISO3 country ids or reviewed named-water loc_ids such as IHO1953-240001002 for the Mediterranean Sea; XOO is deprecated. Call without payment first - the server returns HTTP 402 with the exact USDC price before any charge.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

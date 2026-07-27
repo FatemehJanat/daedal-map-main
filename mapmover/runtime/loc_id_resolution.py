@@ -21,6 +21,7 @@ from .country_geography import get_country_location_aliases
 from .geography_reference import (
     canonicalize_loc_id,
     classify_loc_id_family,
+    is_named_water_loc_id,
     translate_geometry_id_to_local_id,
 )
 from .marine_geometry import load_marine_geometry
@@ -103,7 +104,11 @@ def _resolve_point_to_marine_stack(
     if candidates.empty:
         candidates = marine_df
 
-    family_order = {"water_body": 0, "marine_eez": 1}
+    # A reviewed named IHO water polygon is the location answer. Legacy X*
+    # water zones are SST product aggregates, not point-location geography;
+    # retain them nowhere in the returned location stack. EEZs are genuine
+    # overlapping jurisdictions, but not the physical water-body answer.
+    family_order = {"named_water": 0, "marine_eez": 1, "water_body": 2}
     matches: list[dict[str, Any]] = []
     for _, row in candidates.iterrows():
         loc_id = str(row.get("loc_id") or "").strip()
@@ -121,28 +126,40 @@ def _resolve_point_to_marine_stack(
         except Exception:
             continue
         family = classify_loc_id_family(loc_id)
+        named_water = is_named_water_loc_id(loc_id)
         matches.append({
             "loc_id": loc_id,
             "name": row.get("name"),
             "family": family,
-            "family_rank": family_order.get(family, 99),
+            "family_rank": family_order["named_water"] if named_water else family_order.get(family, 99),
+            "geometry_area": float(shape(geometry).area),
+            "named_water": named_water,
         })
 
     if not matches:
         return None
 
-    matches.sort(key=lambda item: (item["family_rank"], str(item.get("loc_id") or "")))
+    matches.sort(key=lambda item: (item["family_rank"], item["geometry_area"], str(item.get("loc_id") or "")))
     deepest = matches[0]
-    overlap_families = [
-        {
+    overlap_families = []
+    for entry in matches:
+        if entry["loc_id"] == deepest["loc_id"]:
+            continue
+        if entry.get("named_water") and deepest.get("named_water"):
+            relationship = "broader_water_body"
+        elif entry.get("family") == "marine_eez":
+            relationship = "marine_jurisdiction"
+        else:
+            # X* zones are valid SST aggregation geometry, but not a second
+            # answer to "what location contains this point?"
+            continue
+        overlap_families.append({
             "loc_id": entry["loc_id"],
             "name": entry.get("name"),
             "family": entry.get("family"),
             "admin_level": None,
-        }
-        for entry in matches
-        if entry["loc_id"] != deepest["loc_id"]
-    ]
+            "relationship": relationship,
+        })
     stack = [
         {
             "loc_id": deepest["loc_id"],

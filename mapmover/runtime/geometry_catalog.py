@@ -79,9 +79,42 @@ def _named_index() -> dict[str, dict[str, Any]]:
     return index
 
 
+@lru_cache(maxsize=1)
+def _named_group_index() -> dict[str, dict[str, Any]]:
+    """Index explicit human-name groups before individual geometry aliases.
+
+    A whole-ocean name can represent multiple IHO polygons (Pacific and
+    Arctic). It is not safe to select whichever individual polygon happens to
+    be first, nor to substitute a legacy X* SST product zone.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for entry in load_geometry_catalog().get("named_geometry_groups") or []:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        loc_ids = [str(value).strip().upper() for value in entry.get("loc_ids") or [] if str(value).strip()]
+        if not label:
+            continue
+        normalized = dict(entry)
+        normalized["label"] = label
+        normalized["loc_ids"] = loc_ids
+        for alias in [label, *(entry.get("aliases") or [])]:
+            key = _normalize(str(alias))
+            if key:
+                index.setdefault(key, normalized)
+    return index
+
+
 def resolve_geometry_name(value: str | None) -> dict[str, Any] | None:
     """Resolve a named shared geometry without falling back to land aliases."""
-    entry = _named_index().get(_normalize(value))
+    key = _normalize(value)
+    group = _named_group_index().get(key)
+    if group:
+        # Return an explicitly unresolved group as well. Callers can then give
+        # a truthful "no approved geometry" result instead of treating a known
+        # ocean name as an unknown place or falling back to an X* SST zone.
+        return dict(group)
+    entry = _named_index().get(key)
     if not entry or not bool(entry.get("resolvable", True)):
         return None
     return dict(entry)

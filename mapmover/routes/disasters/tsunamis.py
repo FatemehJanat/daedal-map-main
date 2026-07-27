@@ -53,11 +53,13 @@ def get_tsunami_property_builders():
         "deaths": lambda r: safe_int(r, "deaths"),
         "damage_millions": lambda r: safe_float(r, "damage_millions"),
         "loc_id": lambda r: r.get("loc_id", ""),
-        # Source preparation derives these from unchanged event coordinates
-        # against the reviewed named-water and physical-surface banks. They
-        # are distinct from the stable event `loc_id` and must reach every
-        # surface that consumes the canonical Explore event table.
-        "marine_loc_id": lambda r: safe_str(r, "marine_loc_id", None),
+        # ``loc_id`` above is the one geometry-spine key. These generic
+        # provenance fields explain its point-in-polygon derivation without
+        # introducing a second marine-specific location namespace.
+        "geometry_assignment_kind": lambda r: safe_str(r, "geometry_assignment_kind", None),
+        "geometry_family": lambda r: safe_str(r, "geometry_family", None),
+        "geometry_bank": lambda r: safe_str(r, "geometry_bank", None),
+        "geometry_candidate_count": lambda r: safe_int(r, "geometry_candidate_count"),
         "physical_surface": lambda r: safe_str(r, "physical_surface", None),
         "latitude": lambda r: safe_float(r, "latitude"),
         "longitude": lambda r: safe_float(r, "longitude"),
@@ -147,7 +149,7 @@ async def get_tsunamis_geojson(
             "tsunamis",
             loc_prefix=loc_prefix,
             affected_loc_id=affected_loc_id,
-            event_id_col="loc_id",
+            event_id_col="event_id",
         )
 
         features = build_geojson_features(df, get_tsunami_property_builders())

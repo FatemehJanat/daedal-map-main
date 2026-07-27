@@ -12,6 +12,7 @@ from mapmover.runtime.loc_id_resolution import (
     resolve_place_to_point,
     resolve_point_to_loc_id_stack,
 )
+from mapmover.runtime.geometry_catalog import resolve_geometry_name
 
 
 class LocIdResolutionRuntimeTests(unittest.TestCase):
@@ -24,10 +25,10 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
 
     def test_event_loc_id_does_not_masquerade_as_admin_loc_id(self):
         resolved = resolve_admin_text_to_loc_id("USA-FLOOD-DFO-9")
-        self.assertEqual(resolved["match_type"], "direct_event_loc_id")
+        self.assertEqual(resolved["match_type"], "non_geometry_identifier")
         self.assertEqual(resolved["loc_id_family"], "event_or_entity")
         self.assertEqual(resolved["matches"], {})
-        self.assertEqual(resolved["error"], "event/entity loc_id requires exact-event routing")
+        self.assertEqual(resolved["error"], "non-geometry identifier requires exact event or entity routing")
 
     def test_direct_admin_name_uses_name_standardizer(self):
         with patch(
@@ -234,9 +235,9 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
     def test_point_stack_normalizes_wrapped_map_longitude_before_marine_lookup(self):
         marine_payload = {
             "point": {"lon": -159.174187, "lat": 30.849742},
-            "matched": {"loc_id": "XOP", "name": "Pacific Ocean", "family": "water_body"},
-            "stack": [{"loc_id": "XOP", "name": "Pacific Ocean", "family": "water_body"}],
-            "deepest_resolved_loc_id": "XOP",
+            "matched": {"loc_id": "IHO1953-260000001", "name": "Pacific Ocean, western part", "family": "water_body"},
+            "stack": [{"loc_id": "IHO1953-260000001", "name": "Pacific Ocean, western part", "family": "water_body"}],
+            "deepest_resolved_loc_id": "IHO1953-260000001",
             "deepest_resolved_family": "water_body",
         }
         with patch(
@@ -250,7 +251,7 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
 
         legacy.assert_called_once_with(-159.17418699999996, 30.849742, include_geometry=False)
         marine.assert_called_once_with(-159.17418699999996, 30.849742, include_geometry=False)
-        self.assertEqual(resolved["deepest_resolved_loc_id"], "XOP")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "IHO1953-260000001")
         self.assertEqual(resolved["requested_point"], {"lon": 200.825813, "lat": 30.849742})
         self.assertEqual(resolved["point"], {"lon": -159.17418699999996, "lat": 30.849742})
 
@@ -264,18 +265,18 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
                 "point": {"lon": -158.561463, "lat": 7.453822},
                 "country": None,
                 "matched": {
-                    "loc_id": "XOP",
-                    "name": "Pacific Ocean",
+                    "loc_id": "IHO1953-260000001",
+                    "name": "Pacific Ocean, western part",
                     "admin_level": None,
                     "country_name": None,
                     "iso3": None,
                     "family": "water_body",
                 },
                 "stack": [
-                    {"loc_id": "XOP", "name": "Pacific Ocean", "admin_level": None, "family": "water_body"},
+                    {"loc_id": "IHO1953-260000001", "name": "Pacific Ocean, western part", "admin_level": None, "family": "water_body"},
                 ],
                 "matches": {},
-                "deepest_resolved_loc_id": "XOP",
+                "deepest_resolved_loc_id": "IHO1953-260000001",
                 "deepest_resolved_admin_level": None,
                 "deepest_resolved_family": "water_body",
                 "overlap_families": [
@@ -291,11 +292,19 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         ):
             resolved = resolve_point_to_loc_id_stack(-158.561463, 7.453822)
 
-        self.assertEqual(resolved["deepest_resolved_loc_id"], "XOP")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "IHO1953-260000001")
         self.assertEqual(resolved["matched"]["family"], "water_body")
         self.assertEqual(len(resolved["overlap_families"]), 1)
         self.assertEqual(resolved["overlap_families"][0]["loc_id"], "EEZ-KIR-8441")
         self.assertEqual(resolved["overlap_families"][0]["family"], "marine_eez")
+
+    def test_whole_ocean_name_expands_to_reviewed_iho_geometry(self):
+        pacific = resolve_geometry_name("Pacific Ocean")
+        self.assertEqual(
+            pacific["loc_ids"],
+            ["IHO1953-260000001", "IHO1953-260000002"],
+        )
+        self.assertEqual(pacific["family"], "water_body")
 
     def test_place_to_point_short_circuits_on_direct_admin_text(self):
         resolved = resolve_place_to_point("Canada")
