@@ -946,7 +946,7 @@ export function applyOverlayCatalogResponse(response = {}) {
           // Explore retains its historical stack. Ops reads the compact rolling
           // bundle of real daily lead-zero analysis frames only.
           rasterBasinsByLane: { explore: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], research: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], ops: ['CAMS_PM25_ANALYSIS_LATEST'] },
-          rasterCadence: 'daily', rasterCadenceByLane: { explore: 'daily', research: 'daily', ops: 'daily' },
+          rasterCadence: 'daily', rasterCadenceByLane: { explore: 'daily', research: 'daily', ops: 'twice_daily' },
           rasterVariable: 'pm25_ug_m3', rasterMaskMode: 'none', alwaysVisible: true
         });
       }
