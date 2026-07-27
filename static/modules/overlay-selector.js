@@ -921,8 +921,10 @@ export function applyOverlayCatalogResponse(response = {}) {
           description: 'Global modeled PM2.5: monthly reanalysis history plus recent forecast frames',
           default: false, locked: false, model: 'ocean-raster', icon: 'A', hasYearFilter: false,
           live: false, rasterSource: 'cams_air_quality', rasterBasins: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'],
-          rasterBasinsByLane: { explore: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], research: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], ops: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'] },
-          rasterCadence: 'daily', rasterCadenceByLane: { explore: 'daily', research: 'daily', ops: 'daily' },
+          // Explore retains its historical stack. Ops intentionally loads only
+          // the latest, explicitly-modelled lead-zero analysis frame.
+          rasterBasinsByLane: { explore: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], research: ['CAMS_EAC4_MONTHLY_WIP', 'CAMS_PM25_WIP'], ops: ['CAMS_PM25_ANALYSIS_LATEST'] },
+          rasterCadence: 'daily', rasterCadenceByLane: { explore: 'daily', research: 'daily', ops: 'twice_daily' },
           rasterVariable: 'pm25_ug_m3', rasterMaskMode: 'none', alwaysVisible: true
         });
       }

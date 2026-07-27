@@ -133,6 +133,7 @@ def _load_scene_catalog(source_id: str) -> dict | None:
             "value_unit": "ug m-3",
             "relative_dir": "global/climate/cams_air_quality/rasters",
             "scenes": [
+                {"period": "CAMS_PM25_ANALYSIS_LATEST", "file": "CAMS_PM25_ANALYSIS_LATEST.msgpack"},
                 {"period": "CAMS_PM25_WIP", "file": "CAMS_PM25_WIP.msgpack"},
                 {"period": "CAMS_EAC4_MONTHLY_WIP", "file": "CAMS_EAC4_MONTHLY_WIP.msgpack"},
             ],
