@@ -142,7 +142,8 @@ def _build_air_quality_stations() -> dict:
     """One selector family, with source-native point semantics preserved."""
     airnow = get_cached_live_snapshot("airnow") or {}
     openaq = get_cached_live_snapshot("openaq") or {}
-    identity = json.dumps([_snapshot_identity(airnow), _snapshot_identity(openaq)])
+    openaq_licences = get_cached_live_snapshot("openaq_license_index") or {}
+    identity = json.dumps([_snapshot_identity(airnow), _snapshot_identity(openaq), _snapshot_identity(openaq_licences)])
 
     def _builder() -> dict:
         features = []
@@ -153,6 +154,15 @@ def _build_air_quality_stations() -> dict:
         for feature in _assemble_points_geojson(POINT_FEEDS["openaq"], openaq.get("payload_summary") or {}).get("features") or []:
             props = feature["properties"]
             location_id = props.get("location_id")
+            provenance = ((openaq_licences.get("payload_summary") or {}).get("locations") or {}).get(str(location_id))
+            if isinstance(provenance, dict):
+                # The VPS provenance pager is authoritative for provider terms.
+                # It overlays compact current observations without making the
+                # Railway two-hour collector perform thousands of detail calls.
+                props.update({key: provenance.get(key) for key in (
+                    "station_name", "locality", "country", "provider", "owner", "license",
+                    "license_policy", "license_status", "attribution", "is_mobile",
+                ) if provenance.get(key) is not None})
             source_url = f"https://explore.openaq.org/locations/{location_id}" if location_id else "https://openaq.org/"
             props.update({"source_label": "OpenAQ", "station_kind": "Monitor (six-pollutant WIP index)", "marker_color": "#6a5acd", "source_url": source_url})
             features.append(feature)
