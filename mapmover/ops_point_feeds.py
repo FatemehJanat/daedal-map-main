@@ -17,6 +17,9 @@ See county-map-private/docs/CLIMATE_DISPLAY.md (Live Point Feeds).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import math
+from typing import Optional
 
 from mapmover.ops_ticker import (
     get_cached_live_snapshot,
@@ -63,6 +66,12 @@ POINT_FEEDS: dict[str, PointFeedSpec] = {
         ),
         wip_only=True,
     ),
+    "openaq": PointFeedSpec(
+        collector="openaq", items_key="samples",
+        property_keys=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "is_mobile", "measurements", "observed_at"),
+        row_schema=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "is_mobile", "lat", "lon", "measurements", "observed_at"),
+        wip_only=True,
+    ),
 }
 
 
@@ -91,9 +100,17 @@ def _assemble_points_geojson(spec: PointFeedSpec, summary: dict) -> dict:
     return {"type": "FeatureCollection", "features": features, "count": len(features)}
 
 
-def build_cached_point_overlay(overlay_id: str) -> dict:
+def build_cached_point_overlay(
+    overlay_id: str,
+    *,
+    bbox: Optional[tuple[float, float, float, float]] = None,
+    zoom: Optional[float] = None,
+) -> dict:
     """Response-cached GeoJSON point overlay for a registered live point feed."""
-    spec = POINT_FEEDS.get(str(overlay_id or "").strip())
+    overlay_id = str(overlay_id or "").strip()
+    if overlay_id == "air_quality_stations":
+        return _visible_air_quality_stations(_build_air_quality_stations(), bbox=bbox, zoom=zoom)
+    spec = POINT_FEEDS.get(overlay_id)
     if spec is None:
         return {"type": "FeatureCollection", "features": [], "count": 0}
     snap = get_cached_live_snapshot(spec.collector)
@@ -108,3 +125,112 @@ def build_cached_point_overlay(overlay_id: str) -> dict:
         ttl_seconds=_POINT_FEED_CACHE_TTL_SECONDS,
         builder=_builder,
     )
+
+
+def _aqi_color(value) -> str:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return "#9aa4bf"
+    for threshold, color in ((301, "#7e0023"), (201, "#8f3f97"), (151, "#ff0000"), (101, "#ff7e00"), (51, "#ffff00")):
+        if value >= threshold:
+            return color
+    return "#00e400"
+
+
+def _build_air_quality_stations() -> dict:
+    """One selector family, with source-native point semantics preserved."""
+    airnow = get_cached_live_snapshot("airnow") or {}
+    openaq = get_cached_live_snapshot("openaq") or {}
+    identity = json.dumps([_snapshot_identity(airnow), _snapshot_identity(openaq)])
+
+    def _builder() -> dict:
+        features = []
+        for feature in _assemble_points_geojson(POINT_FEEDS["airnow"], airnow.get("payload_summary") or {}).get("features") or []:
+            props = feature["properties"]
+            props.update({"source_label": "AirNow", "station_name": props.get("reporting_area"), "station_kind": "Agency reporting area", "value": props.get("aqi"), "unit": "AQI", "provider": props.get("agency"), "marker_color": _aqi_color(props.get("aqi")), "source_url": "https://www.airnow.gov/"})
+            features.append(feature)
+        for feature in _assemble_points_geojson(POINT_FEEDS["openaq"], openaq.get("payload_summary") or {}).get("features") or []:
+            props = feature["properties"]
+            props.update({"source_label": "OpenAQ", "station_kind": "Monitor (six-pollutant WIP index)", "marker_color": "#6a5acd", "source_url": "https://openaq.org/"})
+            features.append(feature)
+        return {"type": "FeatureCollection", "features": features, "count": len(features), "total_count": len(features)}
+
+    return _get_cached_view("ops_points_air_quality_stations", cache_identity=identity,
+                            ttl_seconds=_POINT_FEED_CACHE_TTL_SECONDS, builder=_builder)
+
+
+def _in_bbox(lon: float, lat: float, bbox: Optional[tuple[float, float, float, float]]) -> bool:
+    if bbox is None:
+        return True
+    west, south, east, north = bbox
+    if not south <= lat <= north:
+        return False
+    # A bounds box crossing the antimeridian has west > east.
+    return west <= lon <= east if west <= east else lon >= west or lon <= east
+
+
+def _cluster_cell_degrees(zoom: Optional[float]) -> Optional[float]:
+    """Return the requested server-side merge size for a map zoom level."""
+    if zoom is None:
+        return 4.0
+    if zoom < 2.5:
+        return 8.0
+    if zoom < 4.5:
+        return 3.0
+    if zoom < 6.5:
+        return 1.0
+    if zoom < 8.0:
+        return 0.35
+    return None
+
+
+def _visible_air_quality_stations(base: dict, *, bbox, zoom) -> dict:
+    """Viewport-filter and grid-merge the large WIP station index.
+
+    Clusters never combine AirNow AQI reporting areas with OpenAQ monitor
+    readings. At zoom 8+ individual source stations are returned, allowing a
+    station click to request its on-demand details without preloading them.
+    """
+    visible = []
+    for feature in base.get("features") or []:
+        try:
+            lon, lat = feature["geometry"]["coordinates"]
+            lon, lat = float(lon), float(lat)
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if _in_bbox(lon, lat, bbox):
+            visible.append(feature)
+    cell_size = _cluster_cell_degrees(zoom)
+    if cell_size is None:
+        return {"type": "FeatureCollection", "features": visible, "count": len(visible), "total_count": base.get("count", 0), "merged": False}
+
+    groups: dict[tuple[str, int, int], list[dict]] = {}
+    for feature in visible:
+        lon, lat = feature["geometry"]["coordinates"]
+        source = str((feature.get("properties") or {}).get("source_label") or "Unknown")
+        cell = (source, math.floor((float(lon) + 180.0) / cell_size), math.floor((float(lat) + 90.0) / cell_size))
+        groups.setdefault(cell, []).append(feature)
+
+    merged = []
+    for (source, _x, _y), members in groups.items():
+        if len(members) == 1:
+            merged.append(members[0])
+            continue
+        coords = [item["geometry"]["coordinates"] for item in members]
+        props = dict(members[0].get("properties") or {})
+        props.update({
+            "station_name": f"{len(members):,} {source} stations",
+            "station_kind": "Map cluster — zoom in for individual stations",
+            "station_count": len(members),
+            "is_cluster": True,
+            "location_id": None,
+            "measurements": [],
+            "observed_at": max((str((item.get("properties") or {}).get("observed_at") or "") for item in members), default=None),
+        })
+        merged.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [sum(float(c[0]) for c in coords) / len(coords), sum(float(c[1]) for c in coords) / len(coords)]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": merged, "count": len(merged), "total_count": base.get("count", 0), "merged": True}

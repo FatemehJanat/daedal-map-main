@@ -21,6 +21,7 @@ from mapmover.ops_ticker import (
     build_cached_ticker_payload,
 )
 from mapmover.ops_point_feeds import POINT_FEEDS, build_cached_point_overlay, is_point_feed
+from mapmover.openaq_station_details import get_station_detail
 from mapmover.auth_context import get_authenticated_user
 from mapmover.catalog_surface import request_uses_wip_catalog
 from mapmover.orchestrator_registry import get_orchestrator
@@ -106,25 +107,53 @@ async def ops_nws_alerts_endpoint(req: Request):
         return msgpack_error(str(exc), 500)
 
 
+def _optional_bbox(raw: str | None) -> tuple[float, float, float, float] | None:
+    if not raw:
+        return None
+    try:
+        west, south, east, north = (float(value) for value in raw.split(","))
+    except (TypeError, ValueError):
+        return None
+    if not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= 90 and -90 <= north <= 90 and south <= north):
+        return None
+    return west, south, east, north
+
+
 @router.get("/api/ops/points/{overlay_id}")
-async def ops_points_endpoint(overlay_id: str, req: Request):
+async def ops_points_endpoint(overlay_id: str, req: Request, bbox: str | None = None, zoom: float | None = None):
     """Generic live point-feed overlay (GeoJSON points). Public, read-only.
 
     One endpoint for every registered "location with updating data" feed (ocean
     buoys, weather stations, sensors): each point carries its latest reading for
     the click popup. See mapmover/ops_point_feeds.py POINT_FEEDS.
     """
-    if not is_point_feed(overlay_id):
+    if not is_point_feed(overlay_id) and overlay_id != "air_quality_stations":
         return msgpack_error(f"Unknown point feed: {overlay_id}", 404)
-    spec = POINT_FEEDS[str(overlay_id or "").strip()]
-    if spec.wip_only and not request_uses_wip_catalog(req, get_authenticated_user(req)):
+    spec = POINT_FEEDS.get(str(overlay_id or "").strip())
+    if (overlay_id == "air_quality_stations" or (spec and spec.wip_only)) and not request_uses_wip_catalog(req, get_authenticated_user(req)):
         # Do not advertise an unreviewed Ops feed through a public endpoint.
         return msgpack_error(f"Unknown point feed: {overlay_id}", 404)
     try:
-        return msgpack_response(build_cached_point_overlay(overlay_id))
+        return msgpack_response(build_cached_point_overlay(overlay_id, bbox=_optional_bbox(bbox), zoom=zoom))
     except Exception as exc:
         logger.exception("Ops point feed error: %s", overlay_id)
         return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/openaq/stations/{location_id}")
+async def openaq_station_detail_endpoint(location_id: int, req: Request):
+    """Fetch one OpenAQ station's complete current metadata/readings on demand."""
+    if not request_uses_wip_catalog(req, get_authenticated_user(req)):
+        return msgpack_error("Unknown OpenAQ station", 404)
+    try:
+        return msgpack_response(get_station_detail(location_id))
+    except LookupError as exc:
+        return msgpack_error(str(exc), 404)
+    except ValueError as exc:
+        return msgpack_error(str(exc), 400)
+    except Exception as exc:
+        logger.exception("OpenAQ station detail error: %s", location_id)
+        return msgpack_error(str(exc), 502)
 
 
 @router.post("/api/ops/report")

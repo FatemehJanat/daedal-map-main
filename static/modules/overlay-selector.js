@@ -935,16 +935,16 @@ export function applyOverlayCatalogResponse(response = {}) {
     // AirNow is an Ops-only WIP feed, not an Explore/catalog source. Keep its
     // test overlay local and visible in Ops regardless of saved account feeds.
     if (wipMode === 'ops') {
-      const usa = ALL_CATEGORIES.find((category) => category.id === 'us_context' && category.isCategory);
-      if (usa?.overlays && !usa.overlays.some((overlay) => overlay.id === 'airnow')) {
-        usa.overlays.push({
-          id: 'airnow', label: 'AirNow AQI (WIP)',
-          description: 'Preliminary US, Canada, and Mexico reporting-area AQI; not county or monitor data',
-          default: false, locked: false, model: 'airnow', icon: 'A', hasYearFilter: false,
-          live: true, sourceIds: ['airnow'], packIds: []
+      const global = ALL_CATEGORIES.find((category) => category.id === 'global' && category.isCategory);
+      if (global?.overlays && !global.overlays.some((overlay) => overlay.id === 'air_quality_stations')) {
+        global.overlays.push({
+          id: 'air_quality_stations', label: 'Air Quality Stations (WIP)',
+          description: 'AirNow AQI reporting areas plus the private OpenAQ six-pollutant station index; source-native values',
+          default: false, locked: false, model: 'air_quality_stations', icon: 'A', hasYearFilter: false,
+          live: true, sourceIds: ['airnow', 'openaq'], packIds: []
         });
       }
-      wipShown.add('airnow');
+      wipShown.add('air_quality_stations');
       laneShownAdjustments.set(wipMode, wipShown);
     }
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');

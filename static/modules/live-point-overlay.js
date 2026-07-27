@@ -18,6 +18,7 @@ const POLL_INTERVAL_MS = 5 * 60_000;
 
 // Build a MapLibre data-driven color expression from {prop, stops, nullColor}.
 function colorExpression(colorBy) {
+  if (colorBy?.directProp) return ['coalesce', ['get', colorBy.directProp], colorBy.nullColor || '#9aa4bf'];
   if (!colorBy || !Array.isArray(colorBy.stops) || !colorBy.stops.length) {
     return colorBy?.nullColor || '#7fb2ff';
   }
@@ -46,6 +47,8 @@ export function createLivePointOverlay(config) {
     _mouseenterHandler: null,
     _mouseleaveHandler: null,
     _iconLoadPromise: null,
+    _viewportRefreshTimer: null,
+    _moveendHandler: null,
 
     init(deps = {}) {
       if (this.initialized) return;
@@ -57,6 +60,14 @@ export function createLivePointOverlay(config) {
           this._clickBound = false;
           this._render(this.lastData);
         });
+        if (config.viewportQuery) {
+          this._moveendHandler = () => {
+            if (!this.enabled) return;
+            clearTimeout(this._viewportRefreshTimer);
+            this._viewportRefreshTimer = setTimeout(() => this._refresh(), 150);
+          };
+          map.on('moveend', this._moveendHandler);
+        }
       }
       // Re-assert after a globe/mercator projection toggle (may not fire style.load).
       window.addEventListener('map-overlays-reassert', () => {
@@ -94,12 +105,20 @@ export function createLivePointOverlay(config) {
         clearInterval(this.pollTimer);
         this.pollTimer = null;
       }
+      clearTimeout(this._viewportRefreshTimer);
+      this._viewportRefreshTimer = null;
     },
 
     async _refresh() {
       if (!this.enabled) return;
       try {
-        const data = await fetchMsgpack(config.endpoint);
+        let endpoint = config.endpoint;
+        const map = this.MapAdapter?.map;
+        if (config.viewportQuery && map) {
+          const bounds = map.getBounds();
+          endpoint = `${config.endpoint}?bbox=${[bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',')}&zoom=${encodeURIComponent(map.getZoom().toFixed(2))}`;
+        }
+        const data = await fetchMsgpack(endpoint);
         const fc = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
         this.lastData = fc;
         this._render(fc);
@@ -175,6 +194,20 @@ export function createLivePointOverlay(config) {
 
     _fmt(value, field) {
       if (value == null || value === '') return null;
+      if (field?.format === 'datetime') {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+          return new Intl.DateTimeFormat(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+          }).format(parsed);
+        }
+      }
+      if (field?.format === 'measurements' && Array.isArray(value)) {
+        return value.map((item) => `${item.parameter || 'unknown'}: ${item.value ?? '?'} ${item.unit || ''}`.trim()).join(' · ');
+      }
+      if (Array.isArray(value)) return value.map((item) => typeof item === 'string' ? item : (item?.name || item?.id || '')).filter(Boolean).join(', ');
+      if (typeof value === 'object') return value.name || value.id || null;
       if (typeof value === 'number' && Number.isFinite(field?.digits)) {
         return value.toFixed(field.digits);
       }
@@ -189,23 +222,70 @@ export function createLivePointOverlay(config) {
         if (!f) return;
         const p = f.properties || {};
         const titleVal = config.popup?.titleProp ? p[config.popup.titleProp] : '';
-        const rows = (config.popup?.fields || []).map((field) => {
+        const renderRows = (fields) => (fields || []).map((field) => {
           const shown = this._fmt(p[field.prop], field);
           if (shown == null) return '';
           const unit = field.unit ? ` ${esc(field.unit)}` : '';
           return `<div><span style="color:#888">${esc(field.label)}:</span> ${esc(shown)}${unit}</div>`;
         }).join('');
-        const html = `<div style="font-family:monospace;font-size:12px;max-width:220px">
+        const tabs = Array.isArray(config.popup?.tabs) && config.popup.tabs.length
+          ? config.popup.tabs : [{ id: 'details', label: 'Details', fields: config.popup?.fields || [] }];
+        const rootId = `lpo-popup-${config.id}`;
+        const headerRows = renderRows(config.popup?.headerFields || []);
+        const tabHtml = tabs.length > 1 ? `
+          <div style="display:flex;gap:4px;margin:7px 0 6px;border-bottom:1px solid #334155">
+            ${tabs.map((tab, index) => `<button type="button" data-live-tab="${esc(tab.id)}" style="border:0;border-bottom:2px solid ${index === 0 ? '#60a5fa' : 'transparent'};background:transparent;color:${index === 0 ? '#e5f0ff' : '#9aa4bf'};padding:3px 5px;cursor:pointer;font:inherit;font-size:11px">${esc(tab.label)}</button>`).join('')}
+          </div>
+          ${tabs.map((tab, index) => `<div data-live-panel="${esc(tab.id)}" style="display:${index === 0 ? 'block' : 'none'}">${renderRows(tab.fields)}</div>`).join('')}`
+          : renderRows(tabs[0].fields);
+        const html = `<div class="live-point-popup" data-live-popup="${esc(rootId)}" style="font-family:monospace;font-size:12px;max-width:260px">
           ${titleVal ? `<div style="font-weight:bold">${esc(config.popup.titlePrefix || '')}${esc(titleVal)}</div>` : ''}
-          ${rows}
+          ${headerRows ? `<div style="margin-top:3px;color:#cbd5e1">${headerRows}</div>` : ''}
+          ${tabHtml}
           ${config.popup?.notice ? `<div style="margin-top:6px;color:#9aa4bf;font-size:11px">${esc(config.popup.notice)}</div>` : ''}
-          ${config.popup?.sourceUrl ? `<div style="margin-top:4px;font-size:11px"><a href="${esc(config.popup.sourceUrl)}" target="_blank" rel="noopener">Source</a></div>` : ''}
+          ${(config.popup?.detailEndpoint && p.location_id && !p.is_cluster) ? `<button type="button" data-live-detail style="margin-top:7px;border:1px solid #475569;border-radius:3px;background:#1e293b;color:#e5f0ff;padding:3px 6px;cursor:pointer;font:inherit;font-size:11px">Load full station details</button><div data-live-detail-result style="margin-top:5px"></div>` : ''}
+          ${(config.popup?.sourceUrl || (config.popup?.sourceUrlProp && p[config.popup.sourceUrlProp])) ? `<div style="margin-top:4px;font-size:11px"><a href="${esc(p[config.popup?.sourceUrlProp] || config.popup.sourceUrl)}" target="_blank" rel="noopener">Source</a></div>` : ''}
         </div>`;
         // Live points participate in the one shared popup contract. This keeps
         // a buoy click above the point/raster inspector rather than opening a
         // second independent MapLibre popup.
         this.MapAdapter?.registerFeaturePopupClick?.();
         this.MapAdapter?.showPopup?.([e.lngLat.lng, e.lngLat.lat], html);
+        if (tabs.length > 1) {
+          setTimeout(() => {
+            const root = document.querySelector(`[data-live-popup="${rootId}"]`);
+            if (!root) return;
+            root.querySelectorAll('[data-live-tab]').forEach((button) => button.addEventListener('click', () => {
+              const selected = button.dataset.liveTab;
+              root.querySelectorAll('[data-live-panel]').forEach((panel) => {
+                panel.style.display = panel.dataset.livePanel === selected ? 'block' : 'none';
+              });
+              root.querySelectorAll('[data-live-tab]').forEach((tab) => {
+                const active = tab.dataset.liveTab === selected;
+                tab.style.borderBottomColor = active ? '#60a5fa' : 'transparent';
+                tab.style.color = active ? '#e5f0ff' : '#9aa4bf';
+              });
+            }));
+            const detailButton = root.querySelector('[data-live-detail]');
+            detailButton?.addEventListener('click', async () => {
+              detailButton.disabled = true;
+              detailButton.textContent = 'Loading station details…';
+              try {
+                const detail = await fetchMsgpack(`${config.popup.detailEndpoint}/${encodeURIComponent(p.location_id)}`);
+                const result = root.querySelector('[data-live-detail-result]');
+                if (result && detail && typeof detail === 'object') {
+                  const readingText = this._fmt(detail.measurements, { format: 'measurements' }) || 'No current readings returned';
+                  const stationText = [detail.provider, detail.owner, this._fmt(detail.license)].filter(Boolean).map(esc).join(' · ');
+                  result.innerHTML = `<div style="color:#cbd5e1;font-size:11px"><strong>Full source readings</strong><br>${esc(readingText)}${stationText ? `<br><span style="color:#9aa4bf">${stationText}</span>` : ''}</div>`;
+                  detailButton.textContent = 'Station details loaded';
+                }
+              } catch (err) {
+                detailButton.textContent = 'Details unavailable';
+                console.warn(`LivePointOverlay[${config.id}]: station details failed`, err);
+              }
+            });
+          }, 0);
+        }
         if (this.MapAdapter) {
           this.MapAdapter.popupLocked = true;
           this.MapAdapter.setSelectedPopupContext?.({
@@ -307,11 +387,38 @@ const AIRNOW_CONFIG = {
   },
 };
 
+const AIR_QUALITY_STATIONS_CONFIG = {
+  id: 'air_quality_stations', feedId: 'air_quality_stations', endpoint: '/api/ops/points/air_quality_stations',
+  viewportQuery: true,
+  colorBy: { directProp: 'marker_color', nullColor: '#9aa4bf' },
+  popup: {
+    titleProp: 'station_name',
+    headerFields: [{ label: 'Last updated', prop: 'observed_at', format: 'datetime' }],
+    tabs: [
+      { id: 'station', label: 'Station info', fields: [
+        { label: 'Source', prop: 'source_label' }, { label: 'Type', prop: 'station_kind' },
+        { label: 'Locality', prop: 'locality' }, { label: 'Country', prop: 'country' },
+        { label: 'Provider / agency', prop: 'provider' }, { label: 'Owner', prop: 'owner' },
+        { label: 'Licence', prop: 'license' },
+      ] },
+      { id: 'data', label: 'Data', fields: [
+        { label: 'Latest readings', prop: 'measurements', format: 'measurements' },
+        { label: 'AQI', prop: 'value', digits: 0 }, { label: 'AQI category', prop: 'category' },
+        { label: 'Observed', prop: 'observed_at', format: 'datetime' },
+      ] },
+    ],
+    notice: 'OpenAQ shows source-native readings for six core pollutants, not global AQI. Zoom in for individual stations.',
+    detailEndpoint: '/api/ops/openaq/stations',
+    sourceUrlProp: 'source_url',
+  },
+};
+
 // Registry of live point overlays. Add a config here (+ a backend POINT_FEEDS
 // entry) to surface a new station/sensor feed.
 export const LIVE_POINT_OVERLAYS = {
   buoys: createLivePointOverlay(BUOYS_CONFIG),
   airnow: createLivePointOverlay(AIRNOW_CONFIG),
+  air_quality_stations: createLivePointOverlay(AIR_QUALITY_STATIONS_CONFIG),
 };
 
 export function getLivePointOverlay(overlayId) {
