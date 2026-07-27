@@ -1296,6 +1296,11 @@ export const ChatManager = {
     window.addEventListener('local-catalog-surface-changed', (event) => {
       const lane = event?.detail?.lane;
       if (lane && lane !== normalizeChatMode(this.mode)) return;
+      // A local wrapper session may be authorized through the server-side
+      // wrapper state before a browser profile object is available. Recompute
+      // eligibility from the lane's explicit local preference before applying
+      // the surface change, so chat does not silently fall back to published.
+      this.updateCatalogSurfaceAccess();
       this.setCatalogSurface(event?.detail?.catalogSurface);
     });
     App?.activateLaneMapView?.(this.mode, { force: true });
@@ -3073,7 +3078,14 @@ export const ChatManager = {
 
   accountCanUseWipCatalog() {
     const profile = getCurrentProfile();
-    return Boolean(profile && (profile.is_admin || profile.plan_id === 'master'));
+    if (profile && (profile.is_admin || profile.plan_id === 'master')) return true;
+    // Local WIP authorization is verified by the server from the loopback
+    // wrapper-auth state. The client only mirrors its explicit lane toggle so
+    // the chat payload can request the same catalog already shown in Explore.
+    if (typeof window === 'undefined' || !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)) {
+      return false;
+    }
+    return window.localStorage.getItem(`useWipCatalog:${normalizeChatMode(this.mode)}`) === '1';
   },
 
   getEffectiveCatalogSurface() {
