@@ -514,8 +514,10 @@ function updateDom() {
     btn.textContent = 'Account';
     btn.disabled = false;
     btn.classList.add('logged-in');
+    const currentLane = document.body.classList.contains('chat-mode-ops') ? 'Ops'
+      : document.body.classList.contains('chat-mode-research') ? 'Research' : 'Explore';
     const localCatalogControl = isLocalLikeHost(window.location.hostname)
-      ? `<br><label style="display:block;margin-top:4px"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog</label>`
+      ? `<div style="margin-top:7px;padding-top:6px;border-top:1px solid #334155"><label style="display:block"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog <span style="color:#9aa4bf">(refreshes ${currentLane})</span></label><div style="margin:3px 0 0 20px;color:#9aa4bf;font-size:11px;line-height:1.35">Local test surface shared by Explore and Ops. Changing it reloads this lane’s overlay tray and chat catalog; it does not publish data or change public users.</div></div>`
       : '';
     const accountLabel = isLocalLikeHost(window.location.hostname)
       ? 'Open account settings (hosted sign-in may be required)'

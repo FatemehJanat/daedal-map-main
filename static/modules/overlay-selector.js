@@ -932,21 +932,22 @@ export function applyOverlayCatalogResponse(response = {}) {
       wipShown.add('cams-air-quality-grid');
       laneShownAdjustments.set(wipMode, wipShown);
     }
-    // AirNow is an Ops-only WIP feed, not an Explore/catalog source. Keep its
-    // test overlay local and visible in Ops regardless of saved account feeds.
-    if (wipMode === 'ops') {
-      const global = ALL_CATEGORIES.find((category) => category.id === 'global' && category.isCategory);
-      if (global?.overlays && !global.overlays.some((overlay) => overlay.id === 'air_quality_stations')) {
-        global.overlays.push({
-          id: 'air_quality_stations', label: 'Air Quality Stations (WIP)',
-          description: 'AirNow AQI reporting areas plus the private OpenAQ six-pollutant station index; source-native values',
-          default: false, locked: false, model: 'air_quality_stations', icon: 'A', hasYearFilter: false,
-          live: true, sourceIds: ['airnow', 'openaq'], packIds: []
-        });
-      }
-      wipShown.add('air_quality_stations');
-      laneShownAdjustments.set(wipMode, wipShown);
+    // AirNow/OpenAQ are Ops-only WIP feeds, not Explore/catalog sources. The
+    // catalog may load before the body receives its final lane class on a
+    // fresh visit, so register this adjustment explicitly for Ops rather than
+    // depending on the transient lane active during response handling.
+    const global = ALL_CATEGORIES.find((category) => category.id === 'global' && category.isCategory);
+    if (global?.overlays && !global.overlays.some((overlay) => overlay.id === 'air_quality_stations')) {
+      global.overlays.push({
+        id: 'air_quality_stations', label: 'Air Quality Stations (WIP)',
+        description: 'AirNow AQI reporting areas plus the private OpenAQ six-pollutant station index; source-native values',
+        default: false, locked: false, model: 'air_quality_stations', icon: 'A', hasYearFilter: false,
+        live: true, sourceIds: ['airnow', 'openaq'], packIds: []
+      });
     }
+    const opsWipShown = laneShownAdjustments.get('ops') || new Set();
+    opsWipShown.add('air_quality_stations');
+    laneShownAdjustments.set('ops', opsWipShown);
     const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
     if (usContext?.overlays) {
       // WIP overlays are intentionally not part of the normal Explore
