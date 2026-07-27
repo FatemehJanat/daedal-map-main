@@ -207,6 +207,31 @@ function formatCountText(count, singular, plural = '') {
   return `${safeCount.toLocaleString()} ${noun}`;
 }
 
+function formatOpsRasterFrameAvailability(overlayId, cadence = 'daily') {
+  const timestamps = OceanRasterModel.getTimestamps(overlayId)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const count = timestamps.length;
+  if (!count) {
+    return 'The published raster bundle did not report its available snapshot dates.';
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC'
+  });
+  const first = formatter.format(new Date(timestamps[0]));
+  const last = formatter.format(new Date(timestamps[count - 1]));
+  const dateRange = count === 1 ? first : `${first}–${last}`;
+  const frameNoun = count === 1 ? 'snapshot' : 'snapshots';
+  const cadenceText = String(cadence || '').trim();
+  const cadencePrefix = cadenceText ? `${cadenceText} ` : '';
+  return `${count.toLocaleString()} ${cadencePrefix}raster ${frameNoun} available (${dateRange} UTC).`;
+}
+
 const STATUS_MESSAGE_DEDUPE_TTL_MS = 1500;
 const recentStatusMessages = new Map();
 const OPS_RETAINED_HISTORY_MS = 72 * 60 * 60 * 1000;
@@ -1540,15 +1565,22 @@ export const OverlayController = {
         return 'Aurora conditions are active. Showing aurora activity from the past 24 hours. Ask chat where aurora is most likely visible right now.';
       }
       case 'ocean-sst-grid': {
-        const gridDate = String(compactSummary?.grid_date || '').trim();
         const product = String(compactSummary?.product || 'NOAA OISST').trim();
-        const dateText = gridDate ? ` Latest live collector grid date: ${gridDate}.` : '';
-        return `Ocean temperature feed active. Showing the prepared ocean SST grid overlay for map display.${dateText} Source: ${product}. Ask chat to compare basins, switch to anomalies, or explain recent SST context.`;
+        const availability = formatOpsRasterFrameAvailability(primaryOverlayId, 'daily');
+        return `Ocean temperature feed active. ${availability} Source: ${product}. Day-to-day SST changes can be subtle at world scale; use the time slider to scrub dates, sample one location, compare basins, or switch to anomalies.`;
       }
-      case 'land-temperature-grid':
-        return 'Air temperature grid active. Showing the prepared land-temperature raster frames for map display. Use the time controls to inspect available dates or ask chat to compare regions.';
-      case 'cams-air-quality-grid':
-        return 'CAMS PM2.5 grid active. Showing available modeled PM2.5 raster frames for map display, not point observations. Use the time controls to inspect dates or ask chat to compare regions.';
+      case 'land-temperature-grid': {
+        const availability = formatOpsRasterFrameAvailability(primaryOverlayId, 'daily');
+        const frameCount = OceanRasterModel.getTimestamps(primaryOverlayId).length;
+        const sliderText = frameCount < 2
+          ? 'The time slider will appear once at least two real snapshots are published.'
+          : 'Use the time slider to inspect the available dates.';
+        return `Air temperature grid active. ${availability} ${sliderText} Ask chat to compare regions.`;
+      }
+      case 'cams-air-quality-grid': {
+        const availability = formatOpsRasterFrameAvailability(primaryOverlayId, 'daily');
+        return `CAMS PM2.5 grid active. ${availability} These are modeled raster fields, not point observations. Use the time slider to inspect dates or ask chat to compare regions.`;
+      }
       default: {
         const label = formatSurfaceLabel(primaryOverlayId || normalizedFeedId || 'feed');
         const genericCountText = formatCountText(snapshotCount, 'item');
