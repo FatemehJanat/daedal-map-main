@@ -11,7 +11,12 @@ from fastapi.responses import Response
 
 from mapmover import session_manager
 from mapmover.paths import ACCOUNT_URL
-from mapmover.ops_orchestrator_runtime import build_ops_report
+from mapmover.ops_orchestrator_runtime import build_ops_report, load_current_state_snapshot
+from mapmover.runtime.explainer_response import (
+    build_explainer_response,
+    build_view_orientation_response,
+    looks_like_orientation_question,
+)
 from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import anonymous_budget_rejection_payload
 from mapmover.routes.chat_shared import human_chat_rate_limit_response
@@ -60,6 +65,79 @@ def snapshot_ops_report(*, cache, watch: dict, effective_feeds: list[str]) -> di
     if cache is not None and isinstance(getattr(cache, "map_state", None), dict):
         cache.map_state["ops_report"] = report
     return report
+
+
+def build_ops_orientation_payload(
+    *,
+    query: str,
+    effective_feeds: list[str],
+    selected_popup: dict | None = None,
+) -> dict | None:
+    """Ops-specific adapter over the shared source/view explainer contract.
+
+    Ops intentionally reads only current live-state summaries: it never
+    reaches into Explore's catalog artifacts or makes an historical claim.
+    Collectors opt in by placing `source_info` and `lane_guidance` in their
+    snapshot summary.
+    """
+    if not looks_like_orientation_question(query):
+        return None
+    candidates: list[tuple[str, dict, dict]] = []
+    query_lower = str(query or "").lower()
+    for feed in effective_feeds:
+        snapshot = load_current_state_snapshot(feed) or {}
+        summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+        source_info = summary.get("source_info") if isinstance(summary, dict) else {}
+        if not isinstance(source_info, dict):
+            continue
+        aliases = [str(value).strip().lower() for value in source_info.get("aliases") or [] if str(value).strip()]
+        if any(alias in query_lower for alias in aliases):
+            candidates.append((feed, snapshot, summary))
+
+    view_context = {
+        "loaded_data": [{"source_id": feed} for feed in effective_feeds],
+        "time_state": {"isLiveLocked": True},
+        "selected_popup": selected_popup or {},
+    }
+    if len(candidates) == 1:
+        feed, snapshot, summary = candidates[0]
+        metadata = {"source_id": feed, "source_name": feed.replace("_", " ").title()}
+        reference = {
+            "source_info": summary.get("source_info"),
+            "lane_guidance": summary.get("lane_guidance"),
+        }
+        explainer = build_explainer_response(
+            metadata, query, reference, lane="ops", view_context=view_context,
+        )
+    elif len(effective_feeds) == 1:
+        feed = effective_feeds[0]
+        snapshot = load_current_state_snapshot(feed) or {}
+        summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
+        if not isinstance(summary.get("source_info"), dict):
+            return None
+        metadata = {"source_id": feed, "source_name": feed.replace("_", " ").title()}
+        explainer = build_explainer_response(
+            metadata,
+            query,
+            {"source_info": summary.get("source_info"), "lane_guidance": summary.get("lane_guidance")},
+            lane="ops",
+            view_context=view_context,
+        )
+    else:
+        # With several feeds, provide map context but do not select an
+        # arbitrary source. A named alias above remains deterministic.
+        explainer = build_view_orientation_response(view_context, lane="ops")
+    if not isinstance(explainer, dict):
+        return None
+    return {
+        "type": "chat",
+        "message": explainer.get("text"),
+        "geojson": {"type": "FeatureCollection", "features": []},
+        "source_id": explainer.get("source_id"),
+        "pack_id": explainer.get("pack_id"),
+        "explainer_sections": explainer.get("sections") or {},
+        "needsMoreInfo": False,
+    }
 
 
 def ops_request_id(session_id: str, query: str) -> str:

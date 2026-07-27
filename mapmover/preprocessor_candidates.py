@@ -138,6 +138,19 @@ def detect_source_candidates(
         source_name = source.get("source_name", "")
         metadata = load_source_metadata(source_id) or {}
         aliases = get_hint_alias_terms(metadata, "query_aliases", "broad_topic_aliases")
+        # Source-info aliases are curated alongside the public explanation of
+        # a source.  Keeping them in the catalog projection lets simple
+        # questions such as "What is CAMS?" resolve without an LLM guessing
+        # what the acronym means.
+        reference_guidance = source.get("reference_guidance") or {}
+        source_info = reference_guidance.get("source_info") if isinstance(reference_guidance, dict) else {}
+        if isinstance(source_info, dict):
+            aliases.extend(
+                str(alias).strip().lower()
+                for alias in (source_info.get("aliases") or [])
+                if str(alias).strip()
+            )
+        aliases = list(dict.fromkeys(aliases))
         if not aliases:
             continue
         pack_id = str(source.get("pack_id") or metadata.get("pack_id") or "").strip()

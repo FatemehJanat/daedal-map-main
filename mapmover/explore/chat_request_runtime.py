@@ -78,6 +78,10 @@ def prepare_explore_request(
     build_drilldown_response_func,
     fetch_geometries_by_loc_ids_func,
     apply_selected_popup_override_func,
+    auth_user=None,
+    load_source_metadata_func=None,
+    load_source_reference_func=None,
+    build_chat_response_func=None,
 ) -> dict:
     request_context = extract_chat_request_context_func(body)
     query = request_context["query"]
@@ -123,6 +127,10 @@ def prepare_explore_request(
         build_show_borders_response_func=build_show_borders_response_func,
         build_drilldown_response_func=build_drilldown_response_func,
         fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids_func,
+        auth_user=auth_user,
+        load_source_metadata_func=load_source_metadata_func,
+        load_source_reference_func=load_source_reference_func,
+        build_chat_response_func=build_chat_response_func,
     )
     return {
         "request_context": request_context,

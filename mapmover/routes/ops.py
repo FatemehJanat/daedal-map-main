@@ -10,6 +10,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.ops_route_runtime import (
     prepare_ops_chat_route_context,
     prepare_ops_view_route_context,
+    build_ops_orientation_payload,
     setup_required_ops_message,
     snapshot_ops_report,
 )
@@ -219,6 +220,13 @@ async def ops_chat_endpoint(req: Request):
                 "effective_feeds": [],
             }
             return msgpack_response(payload)
+        orientation = build_ops_orientation_payload(
+            query=query,
+            effective_feeds=route_context.effective_feeds,
+            selected_popup=body.get("selectedPopup"),
+        )
+        if orientation is not None:
+            return msgpack_response(orientation)
         turn_limit_payload, turn_limit_status, turn_limit_headers = anonymous_turn_limit_rejection_payload(
             session_id=route_context.session_id,
             caller_ctx=route_context.caller_ctx,
@@ -339,6 +347,14 @@ async def ops_chat_stream_endpoint(req: Request):
                     "watch_context": route_context.watch,
                     "effective_feeds": [],
                 }))
+                return
+            orientation = build_ops_orientation_payload(
+                query=query,
+                effective_feeds=route_context.effective_feeds,
+                selected_popup=body.get("selectedPopup"),
+            )
+            if orientation is not None:
+                yield encode_sse(stage_payload("complete", result=orientation))
                 return
             turn_limit_payload, _turn_limit_status, _turn_limit_headers = anonymous_turn_limit_rejection_payload(
                 session_id=route_context.session_id,

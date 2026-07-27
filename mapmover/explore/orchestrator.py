@@ -155,6 +155,7 @@ class ExploreOrchestrator(BaseOrchestrator):
             auth_user=auth_user,
             load_source_metadata_func=load_source_metadata_func,
             load_source_reference_func=load_source_reference_func,
+            lane="explore",
         )
 
     def apply_runtime_result_cap(

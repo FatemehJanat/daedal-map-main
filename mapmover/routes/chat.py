@@ -110,6 +110,10 @@ async def chat_endpoint(req: Request):
             build_drilldown_response_func=build_drilldown_response,
             fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
             apply_selected_popup_override_func=apply_selected_popup_override,
+            auth_user=route_context.auth_user,
+            load_source_metadata_func=load_source_metadata,
+            load_source_reference_func=load_source_reference,
+            build_chat_response_func=build_chat_response,
         )
         request_context = prepared_request["request_context"]
         query = prepared_request["query"]
@@ -352,6 +356,10 @@ async def chat_stream_endpoint(req: Request):
                 build_drilldown_response_func=build_drilldown_response,
                 fetch_geometries_by_loc_ids_func=fetch_geometries_by_loc_ids,
                 apply_selected_popup_override_func=apply_selected_popup_override,
+                auth_user=route_context.auth_user,
+                load_source_metadata_func=load_source_metadata,
+                load_source_reference_func=load_source_reference,
+                build_chat_response_func=build_chat_response,
             )
             request_context = prepared_request["request_context"]
             query = prepared_request["query"]

@@ -292,16 +292,9 @@ const BUOYS_CONFIG = {
   },
 };
 
-const AIRNOW_ICON_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 34">
-  <path d="M14 2 C8 2 4 6.7 4 12.5 C4 20.5 14 31 14 31 C14 31 24 20.5 24 12.5 C24 6.7 20 2 14 2 Z" fill="#8c1d40" stroke="#ffffff" stroke-width="1.5"/>
-  <circle cx="14" cy="12" r="4.2" fill="#ffffff" opacity="0.9"/>
-</svg>`.trim();
-
 const AIRNOW_CONFIG = {
   id: 'airnow', feedId: 'airnow', endpoint: '/api/ops/points/airnow',
   colorBy: { prop: 'aqi', stops: [[0, '#00e400'], [51, '#ffff00'], [101, '#ff7e00'], [151, '#ff0000'], [201, '#8f3f97'], [301, '#7e0023']], nullColor: '#9aa4bf' },
-  icon: { svg: AIRNOW_ICON_SVG, pixelSize: [36, 44], minzoom: 3, size: ['interpolate', ['linear'], ['zoom'], 3, 0.55, 8, 0.9] },
   popup: {
     titleProp: 'reporting_area',
     fields: [

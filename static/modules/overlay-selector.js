@@ -897,9 +897,17 @@ export function applyOverlayCatalogResponse(response = {}) {
     );
     const wipMode = getCurrentOverlayLaneMode();
     const wipShown = laneShownAdjustments.get(wipMode) || new Set();
+    // These sources are useful WIP catalog fixtures but have no current-state
+    // Ops contract. They must not be promoted into an Ops tray merely because
+    // the local WIP catalog exposes their Explore data.
+    const OPS_EXPLORE_ONLY_WIP_SOURCES = new Set(['epa_aqs']);
     if (wipSourceIds.size) {
       for (const overlay of getAllOverlaysFromCategories(ALL_CATEGORIES)) {
-        if ((overlay.sourceIds || []).some((sourceId) => wipSourceIds.has(sourceId))) {
+        const sourceIds = overlay.sourceIds || [];
+        const isOpsExploreOnly = wipMode === 'ops'
+          && sourceIds.length > 0
+          && sourceIds.every((sourceId) => OPS_EXPLORE_ONLY_WIP_SOURCES.has(sourceId));
+        if (!isOpsExploreOnly && sourceIds.some((sourceId) => wipSourceIds.has(sourceId))) {
           wipShown.add(overlay.id);
         }
       }
@@ -927,11 +935,11 @@ export function applyOverlayCatalogResponse(response = {}) {
     // AirNow is an Ops-only WIP feed, not an Explore/catalog source. Keep its
     // test overlay local and visible in Ops regardless of saved account feeds.
     if (wipMode === 'ops') {
-      const climate = ALL_CATEGORIES.find((category) => category.id === 'climate' && category.isCategory);
-      if (climate?.overlays && !climate.overlays.some((overlay) => overlay.id === 'airnow')) {
-        climate.overlays.push({
+      const usa = ALL_CATEGORIES.find((category) => category.id === 'us_context' && category.isCategory);
+      if (usa?.overlays && !usa.overlays.some((overlay) => overlay.id === 'airnow')) {
+        usa.overlays.push({
           id: 'airnow', label: 'AirNow AQI (WIP)',
-          description: 'Preliminary agency reporting-area AQI; not county or monitor data',
+          description: 'Preliminary US, Canada, and Mexico reporting-area AQI; not county or monitor data',
           default: false, locked: false, model: 'airnow', icon: 'A', hasYearFilter: false,
           live: true, sourceIds: ['airnow'], packIds: []
         });

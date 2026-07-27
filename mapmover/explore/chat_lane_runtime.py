@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 
 from mapmover.routes.disasters.related import search_named_event_candidates
+from mapmover.runtime.explainer_response import (
+    build_explainer_response,
+    build_view_orientation_response,
+    looks_like_orientation_question,
+)
 
 
 _EXACT_EVENT_MISS_RE = re.compile(r"\bcould not find exact event\b", re.IGNORECASE)
@@ -74,6 +79,64 @@ def build_tutorial_mode_payload(hints: dict, tutorial_mode: dict | None) -> dict
     }
 
 
+def _orientation_source_id(hints: dict, request_context: dict, query: str) -> str | None:
+    """Choose a source named in the question, or the unambiguous active data."""
+    detected = hints.get("detected_source") if isinstance(hints, dict) else None
+    if isinstance(detected, dict) and str(detected.get("source_id") or "").strip():
+        return str(detected["source_id"]).strip()
+    if not looks_like_orientation_question(query):
+        return None
+    source_ids = []
+    for item in request_context.get("loaded_data") or []:
+        source_id = str((item or {}).get("source_id") or "").strip()
+        if source_id and source_id not in source_ids:
+            source_ids.append(source_id)
+    # Contextual questions with multiple layers receive an honest shared
+    # context response below, rather than silently choosing one source.
+    return source_ids[0] if len(source_ids) == 1 else None
+
+
+def maybe_build_orientation_payload(
+    *,
+    hints: dict,
+    request_context: dict,
+    query: str,
+    auth_user: dict | None,
+    load_source_metadata_func,
+    load_source_reference_func,
+    build_chat_response_func,
+) -> dict | None:
+    """Return curated source orientation before invoking the order-taking LLM."""
+    source_id = _orientation_source_id(hints, request_context, query)
+    if not looks_like_orientation_question(query):
+        return None
+    if not source_id:
+        explainer = build_view_orientation_response(request_context, lane="explore")
+        if not isinstance(explainer, dict):
+            return None
+        return build_chat_response_func(
+            explainer["text"], auth_user=auth_user, explainer_sections=explainer.get("sections"),
+        )
+    metadata = load_source_metadata_func(source_id) or {}
+    if not isinstance(metadata, dict):
+        return None
+    metadata.setdefault("source_id", source_id)
+    reference = load_source_reference_func(source_id) or {}
+    explainer = build_explainer_response(
+        metadata, query, reference, lane="explore", view_context=request_context,
+    )
+    if not isinstance(explainer, dict):
+        return None
+    return build_chat_response_func(
+        explainer.get("text") or "I do not have a fuller source description yet.",
+        auth_user=auth_user,
+        source_id=explainer.get("source_id"),
+        pack_id=explainer.get("pack_id"),
+        explainer_sections=explainer.get("sections"),
+        stub_order=explainer.get("stub_order"),
+    )
+
+
 def maybe_build_shortcut_payload(
     *,
     hints: dict,
@@ -83,7 +146,24 @@ def maybe_build_shortcut_payload(
     build_show_borders_response_func,
     build_drilldown_response_func,
     fetch_geometries_by_loc_ids_func,
+    auth_user=None,
+    load_source_metadata_func=None,
+    load_source_reference_func=None,
+    build_chat_response_func=None,
 ):
+    if all((load_source_metadata_func, load_source_reference_func, build_chat_response_func)):
+        orientation = maybe_build_orientation_payload(
+            hints=hints,
+            request_context=request_context,
+            query=query,
+            auth_user=auth_user,
+            load_source_metadata_func=load_source_metadata_func,
+            load_source_reference_func=load_source_reference_func,
+            build_chat_response_func=build_chat_response_func,
+        )
+        if orientation is not None:
+            return orientation
+
     if hints.get("tutorial_mode"):
         return build_tutorial_mode_payload(hints, request_context.get("tutorial_mode"))
 

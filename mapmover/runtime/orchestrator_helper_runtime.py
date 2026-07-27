@@ -95,6 +95,7 @@ def maybe_build_explainer_chat_response(
     auth_user: dict | None = None,
     load_source_metadata_func=None,
     load_source_reference_func=None,
+    lane: str | None = None,
 ) -> dict | None:
     if load_source_metadata_func is None:
         return None
@@ -111,7 +112,13 @@ def maybe_build_explainer_chat_response(
         if source_id:
             source_reference = load_source_reference_func(source_id)
 
-    explainer = build_explainer_response_func(source_metadata, query, source_reference)
+    if lane:
+        explainer = build_explainer_response_func(source_metadata, query, source_reference, lane=lane)
+    else:
+        # Preserve the small helper seam used by existing lane-specific tests
+        # and third-party orchestrators that still accept the original
+        # three-argument callback.
+        explainer = build_explainer_response_func(source_metadata, query, source_reference)
     if not isinstance(explainer, dict):
         return None
 
