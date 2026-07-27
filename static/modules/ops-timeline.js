@@ -217,7 +217,11 @@ export const OpsTimeline = {
   },
 
   async _loadNwsFrame(frame, selectedMs) {
-    const key = String(frame?.payload_hash || frame?.start_at || '');
+    // A retained-frame timestamp is the cursor identity. Some collectors
+    // legitimately reuse a payload hash for a compact/no-op envelope; using
+    // only that hash would make a second active provider appear to freeze NWS
+    // on the first cached alert frame.
+    const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
     const token = ++this.nwsRequestToken;
     let loaded = this.nwsFrameCache.get(key);
@@ -240,7 +244,7 @@ export const OpsTimeline = {
 
   async _loadPointFrame(frame, selectedMs) {
     const overlayId = String(frame?.overlay_id || '');
-    const key = `${overlayId}:${String(frame?.payload_hash || frame?.start_at || '')}`;
+    const key = `${overlayId}:${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!overlayId || !key) return;
     const token = ++this.pointRequestToken;
     let loaded = this.pointFrameCache.get(key);
