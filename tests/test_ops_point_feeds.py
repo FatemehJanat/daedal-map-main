@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from mapmover.ops_point_feeds import POINT_FEEDS, _assemble_points_geojson, _visible_air_quality_stations
+from mapmover.ops_point_feeds import POINT_FEEDS, _assemble_points_geojson, _build_air_quality_stations, _visible_air_quality_stations
 
 
 class OpsPointFeedTests(unittest.TestCase):
@@ -29,6 +30,15 @@ class OpsPointFeedTests(unittest.TestCase):
         self.assertEqual(3, result["count"])
         self.assertFalse(result["merged"])
         self.assertEqual({"OpenAQ", "AirNow"}, {item["properties"]["source_label"] for item in result["features"]})
+
+    def test_openaq_point_uses_its_location_source_link(self):
+        snapshot = {"payload_summary": {"samples": [[
+            123, "Example", None, None, None, None, None, None, 34.0, -118.0, [], "2026-07-27T00:00:00+00:00",
+        ]]}}
+        with patch("mapmover.ops_point_feeds.get_cached_live_snapshot", side_effect=[{}, snapshot]):
+            with patch("mapmover.ops_point_feeds._get_cached_view", side_effect=lambda _key, **kwargs: kwargs["builder"]()):
+                result = _build_air_quality_stations()
+        self.assertEqual("https://explore.openaq.org/locations/123", result["features"][0]["properties"]["source_url"])
 
 
 if __name__ == "__main__":

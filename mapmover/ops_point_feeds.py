@@ -151,7 +151,9 @@ def _build_air_quality_stations() -> dict:
             features.append(feature)
         for feature in _assemble_points_geojson(POINT_FEEDS["openaq"], openaq.get("payload_summary") or {}).get("features") or []:
             props = feature["properties"]
-            props.update({"source_label": "OpenAQ", "station_kind": "Monitor (six-pollutant WIP index)", "marker_color": "#6a5acd", "source_url": "https://openaq.org/"})
+            location_id = props.get("location_id")
+            source_url = f"https://explore.openaq.org/locations/{location_id}" if location_id else "https://openaq.org/"
+            props.update({"source_label": "OpenAQ", "station_kind": "Monitor (six-pollutant WIP index)", "marker_color": "#6a5acd", "source_url": source_url})
             features.append(feature)
         return {"type": "FeatureCollection", "features": features, "count": len(features), "total_count": len(features)}
 

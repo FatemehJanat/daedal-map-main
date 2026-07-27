@@ -15,6 +15,7 @@
 import { fetchMsgpack } from './utils/fetch.js';
 
 const POLL_INTERVAL_MS = 5 * 60_000;
+const POLLUTANT_LABELS = { pm25: 'PM2.5', pm10: 'PM10', o3: 'O₃', no2: 'NO₂', so2: 'SO₂', co: 'CO' };
 
 // Build a MapLibre data-driven color expression from {prop, stops, nullColor}.
 function colorExpression(colorBy) {
@@ -218,6 +219,13 @@ export function createLivePointOverlay(config) {
       return String(value);
     },
 
+    _measurementItems(value) {
+      if (typeof value === 'string') {
+        try { value = JSON.parse(value); } catch (_) { return []; }
+      }
+      return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+    },
+
     _bindPopup(map) {
       if (this._clickBound) return;
       const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -227,6 +235,15 @@ export function createLivePointOverlay(config) {
         const p = f.properties || {};
         const titleVal = config.popup?.titleProp ? p[config.popup.titleProp] : '';
         const renderRows = (fields) => (fields || []).map((field) => {
+          if (field.format === 'measurementRows') {
+            const measurements = this._measurementItems(p[field.prop]);
+            return measurements.map((item) => {
+              const parameter = POLLUTANT_LABELS[String(item.parameter || '').toLowerCase()] || String(item.parameter || 'Unknown');
+              const value = item.value ?? '?';
+              const unit = item.unit ? ` ${item.unit}` : '';
+              return `<div><span style="color:#888">${esc(parameter)}:</span> ${esc(value)}${esc(unit)}</div>`;
+            }).join('');
+          }
           const shown = this._fmt(p[field.prop], field);
           if (shown == null) return '';
           const unit = field.unit ? ` ${esc(field.unit)}` : '';
@@ -236,18 +253,20 @@ export function createLivePointOverlay(config) {
           ? config.popup.tabs : [{ id: 'details', label: 'Details', fields: config.popup?.fields || [] }];
         const rootId = `lpo-popup-${config.id}`;
         const headerRows = renderRows(config.popup?.headerFields || []);
+        const detailButtonHtml = (config.popup?.detailEndpoint && p.location_id && !p.is_cluster)
+          ? `<button type="button" data-live-detail style="margin-top:7px;border:1px solid #475569;border-radius:3px;background:#1e293b;color:#e5f0ff;padding:3px 6px;cursor:pointer;font:inherit;font-size:11px">Load full station details</button><div data-live-detail-result style="margin-top:5px"></div>`
+          : '';
         const tabHtml = tabs.length > 1 ? `
           <div style="display:flex;gap:4px;margin:7px 0 6px;border-bottom:1px solid #334155">
             ${tabs.map((tab, index) => `<button type="button" data-live-tab="${esc(tab.id)}" style="border:0;border-bottom:2px solid ${index === 0 ? '#60a5fa' : 'transparent'};background:transparent;color:${index === 0 ? '#e5f0ff' : '#9aa4bf'};padding:3px 5px;cursor:pointer;font:inherit;font-size:11px">${esc(tab.label)}</button>`).join('')}
           </div>
-          ${tabs.map((tab, index) => `<div data-live-panel="${esc(tab.id)}" style="display:${index === 0 ? 'block' : 'none'}">${renderRows(tab.fields)}</div>`).join('')}`
+          ${tabs.map((tab, index) => `<div data-live-panel="${esc(tab.id)}" style="display:${index === 0 ? 'block' : 'none'}">${renderRows(tab.fields)}${tab.id === 'data' ? detailButtonHtml : ''}</div>`).join('')}`
           : renderRows(tabs[0].fields);
         const html = `<div class="live-point-popup" data-live-popup="${esc(rootId)}" style="font-family:monospace;font-size:12px;max-width:260px">
           ${titleVal ? `<div style="font-weight:bold">${esc(config.popup.titlePrefix || '')}${esc(titleVal)}</div>` : ''}
           ${headerRows ? `<div style="margin-top:3px;color:#cbd5e1">${headerRows}</div>` : ''}
           ${tabHtml}
           ${(config.popup?.noticeBySource?.[p.source_label] || config.popup?.notice) ? `<div style="margin-top:6px;color:#9aa4bf;font-size:11px">${esc(config.popup?.noticeBySource?.[p.source_label] || config.popup.notice)}</div>` : ''}
-          ${(config.popup?.detailEndpoint && p.location_id && !p.is_cluster) ? `<button type="button" data-live-detail style="margin-top:7px;border:1px solid #475569;border-radius:3px;background:#1e293b;color:#e5f0ff;padding:3px 6px;cursor:pointer;font:inherit;font-size:11px">Load full station details</button><div data-live-detail-result style="margin-top:5px"></div>` : ''}
           ${(config.popup?.sourceUrl || (config.popup?.sourceUrlProp && p[config.popup.sourceUrlProp])) ? `<div style="margin-top:4px;font-size:11px"><a href="${esc(p[config.popup?.sourceUrlProp] || config.popup.sourceUrl)}" target="_blank" rel="noopener">Source</a></div>` : ''}
         </div>`;
         // Live points participate in the one shared popup contract. This keeps
@@ -278,9 +297,12 @@ export function createLivePointOverlay(config) {
                 const detail = await fetchMsgpack(`${config.popup.detailEndpoint}/${encodeURIComponent(p.location_id)}?catalog_surface=wip&catalog_lane=ops`);
                 const result = root.querySelector('[data-live-detail-result]');
                 if (result && detail && typeof detail === 'object') {
-                  const readingText = this._fmt(detail.measurements, { format: 'measurements' }) || 'No current readings returned';
-                  const stationText = [detail.provider, detail.owner, this._fmt(detail.license)].filter(Boolean).map(esc).join(' · ');
-                  result.innerHTML = `<div style="color:#cbd5e1;font-size:11px"><strong>Full source readings</strong><br>${esc(readingText)}${stationText ? `<br><span style="color:#9aa4bf">${stationText}</span>` : ''}</div>`;
+                  const readingHtml = this._measurementItems(detail.measurements).map((item) => {
+                    const parameter = POLLUTANT_LABELS[String(item.parameter || '').toLowerCase()] || String(item.parameter || 'Unknown');
+                    return `${esc(parameter)}: ${esc(item.value ?? '?')}${item.unit ? ` ${esc(item.unit)}` : ''}`;
+                  }).join('<br>') || 'No current readings returned';
+                  const stationText = [this._fmt(detail.provider), this._fmt(detail.owner), this._fmt(detail.license)].filter(Boolean).map(esc).join(' · ');
+                  result.innerHTML = `<div style="color:#cbd5e1;font-size:11px"><strong>Full source readings</strong><br>${readingHtml}${stationText ? `<br><span style="color:#9aa4bf">${stationText}</span>` : ''}</div>`;
                   detailButton.textContent = 'Station details loaded';
                 }
               } catch (err) {
@@ -407,9 +429,8 @@ const AIR_QUALITY_STATIONS_CONFIG = {
         { label: 'Licence', prop: 'license' },
       ] },
       { id: 'data', label: 'Data', fields: [
-        { label: 'Latest readings', prop: 'measurements', format: 'measurements' },
+        { prop: 'measurements', format: 'measurementRows' },
         { label: 'AQI', prop: 'value', digits: 0 }, { label: 'AQI category', prop: 'category' },
-        { label: 'Observed', prop: 'observed_at', format: 'datetime' },
       ] },
     ],
     noticeBySource: {
