@@ -438,7 +438,8 @@ const AIR_QUALITY_STATIONS_CONFIG = {
         { label: 'Source', prop: 'source_label' }, { label: 'Type', prop: 'station_kind' },
         { label: 'Locality', prop: 'locality' }, { label: 'Country', prop: 'country' },
         { label: 'Provider / agency', prop: 'provider' }, { label: 'Owner', prop: 'owner' },
-        { label: 'Licence', prop: 'license' },
+        { label: 'Licence', prop: 'license' }, { label: 'Licence status', prop: 'license_status' },
+        { label: 'Attribution', prop: 'attribution' },
       ] },
       { id: 'data', label: 'Data', fields: [
         { prop: 'measurements', format: 'measurementRows' },

@@ -68,8 +68,8 @@ POINT_FEEDS: dict[str, PointFeedSpec] = {
     ),
     "openaq": PointFeedSpec(
         collector="openaq", items_key="samples",
-        property_keys=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "is_mobile", "measurements", "observed_at"),
-        row_schema=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "is_mobile", "lat", "lon", "measurements", "observed_at"),
+        property_keys=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "license_policy", "license_status", "attribution", "is_mobile", "measurements", "observed_at"),
+        row_schema=("location_id", "station_name", "locality", "country", "provider", "owner", "license", "license_policy", "license_status", "attribution", "is_mobile", "lat", "lon", "measurements", "observed_at"),
         wip_only=True,
     ),
 }

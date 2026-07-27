@@ -37,6 +37,16 @@ def _first_result(payload: dict) -> dict:
     return results[0] if isinstance(results, list) and results and isinstance(results[0], dict) else {}
 
 
+def _licence_text(licenses) -> str | None:
+    """Keep the shared point-popup contract scalar; never render [object Object]."""
+    if not isinstance(licenses, list):
+        return None
+    names = [str(item.get("name") or item.get("id") or "").strip()
+             for item in licenses if isinstance(item, dict)]
+    names = [name for name in names if name]
+    return "; ".join(dict.fromkeys(names)) or None
+
+
 def get_station_detail(location_id: int) -> dict:
     """Return metadata plus all latest source-native readings for one location."""
     if location_id <= 0:
@@ -80,7 +90,7 @@ def get_station_detail(location_id: int) -> dict:
         "country": location.get("country"),
         "provider": location.get("provider"),
         "owner": location.get("owner"),
-        "license": location.get("licenses"),
+        "license": _licence_text(location.get("licenses")),
         "is_mobile": location.get("isMobile"),
         "is_monitor": location.get("isMonitor"),
         "lat": coordinates.get("latitude"),
