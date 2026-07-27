@@ -936,7 +936,9 @@ export function applyOverlayCatalogResponse(response = {}) {
     // catalog may load before the body receives its final lane class on a
     // fresh visit, so register this adjustment explicitly for Ops rather than
     // depending on the transient lane active during response handling.
-    const global = ALL_CATEGORIES.find((category) => category.id === 'global' && category.isCategory);
+    const global = ALL_CATEGORIES.find((category) => (
+      category.id === 'global' || category.id === 'global_indicators'
+    ) && category.isCategory);
     if (global?.overlays && !global.overlays.some((overlay) => overlay.id === 'air_quality_stations')) {
       global.overlays.push({
         id: 'air_quality_stations', label: 'Air Quality Stations (WIP)',
