@@ -3,6 +3,8 @@ import unittest
 
 from mapmover.ops_orchestrator_runtime import (
     WILDFIRE_LIVE_FEED,
+    WILDFIRE_MAP_MAX_PERIMETER_POSITIONS,
+    _build_wildfire_display_payload,
     _build_point_event_display_payload,
     _try_wildfire_snapshot_filter_result,
 )
@@ -61,6 +63,39 @@ class OpsWildfireGeometryRuntimeTests(unittest.TestCase):
         self.assertEqual("MultiPolygon", features[0]["geometry"]["type"])
         self.assertEqual(2, len(features[0]["geometry"]["coordinates"]))
         self.assertEqual("CAN-M3-test", features[0]["properties"]["event_id"])
+
+    def test_default_wildfire_payload_is_bounded_but_keeps_map_scale_shapes(self):
+        ring = [[float(index), float(index % 5)] for index in range(1000)]
+        ring.append(ring[0])
+        snapshot = {
+            "payload_hash": "test",
+            "payload_summary": {
+                "events": [
+                    {
+                        "event_id": "small",
+                        "latitude": 40.0,
+                        "longitude": -120.0,
+                        "area_km2": 1.0,
+                    },
+                    {
+                        "event_id": "large",
+                        "latitude": 41.0,
+                        "longitude": -121.0,
+                        "area_km2": 6.0,
+                        "perimeter": json.dumps({"type": "Polygon", "coordinates": [ring]}),
+                    },
+                ],
+            },
+        }
+
+        payload = _build_wildfire_display_payload(snapshot)
+
+        self.assertEqual(1, payload["count"])
+        self.assertEqual(5.0, payload["ops_min_area_km2"])
+        self.assertFalse(payload["ops_show_all"])
+        geometry = payload["geojson"]["features"][0]["geometry"]
+        self.assertEqual("Polygon", geometry["type"])
+        self.assertLessEqual(len(geometry["coordinates"][0]), WILDFIRE_MAP_MAX_PERIMETER_POSITIONS)
 
 
 if __name__ == "__main__":

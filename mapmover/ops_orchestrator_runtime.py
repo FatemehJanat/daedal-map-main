@@ -57,6 +57,13 @@ WILDFIRE_COLLECTOR_ISO3 = {
 }
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
+WILDFIRE_DEFAULT_MIN_AREA_KM2 = 5.0
+# The live source perimeters are authoritative, but several incidents contain
+# hundreds of thousands of vertices.  Sending those raw shapes to every Ops
+# page load made a normal wildfire report exceed 40 MB.  Keep an honestly
+# shaped, map-scale outline while reserving source-native detail for the
+# collector/archive and event drill-down paths.
+WILDFIRE_MAP_MAX_PERIMETER_POSITIONS = 240
 HURRICANE_SOURCE_PRIORITY = {"NHC": 50, "JTWC": 40, "JMA": 35, "GDACS": 10}
 # The advisory authority varies by basin.  GDACS deliberately remains context
 # only: it may identify an event, but it never wins an observed/forecast track
@@ -994,7 +1001,63 @@ def _snapshot_to_geojson(snapshot: dict) -> dict | None:
     return {"type": "FeatureCollection", "features": features}
 
 
-def _wildfire_perimeter_geometry(row: dict) -> dict | None:
+def _simplify_wildfire_perimeter_geometry(geometry: dict, *, max_positions: int) -> dict:
+    """Decimate perimeter rings deterministically for an interactive map.
+
+    This is deliberately not an area calculation or an attempt to improve the
+    source geometry.  It simply preserves a closed, representative outline at
+    the zoom level where an Ops overview is useful.
+    """
+    if max_positions < 8:
+        return geometry
+    geometry_type = str(geometry.get("type") or "")
+    coordinates = geometry.get("coordinates")
+    polygons = coordinates if geometry_type == "MultiPolygon" else [coordinates]
+    if not isinstance(polygons, list):
+        return geometry
+    rings: list[list] = []
+    for polygon in polygons:
+        if not isinstance(polygon, list):
+            continue
+        for ring in polygon:
+            if isinstance(ring, list) and len(ring) >= 4:
+                rings.append(ring)
+    total_positions = sum(len(ring) for ring in rings)
+    if total_positions <= max_positions or not rings:
+        return geometry
+
+    def compact_ring(ring: list, budget: int) -> list:
+        closed = len(ring) >= 2 and ring[0] == ring[-1]
+        points = ring[:-1] if closed else ring[:]
+        if len(points) <= max(3, budget - 1):
+            result = points[:]
+        else:
+            keep = max(3, budget - 1)
+            result = [points[min(len(points) - 1, int(index * len(points) / keep))] for index in range(keep)]
+        if result and (closed or len(result) >= 3):
+            result.append(result[0])
+        return result
+
+    simplified_polygons = []
+    for polygon in polygons:
+        if not isinstance(polygon, list):
+            simplified_polygons.append(polygon)
+            continue
+        simplified_rings = []
+        for ring in polygon:
+            if not isinstance(ring, list) or len(ring) < 4:
+                simplified_rings.append(ring)
+                continue
+            budget = max(4, round(max_positions * len(ring) / total_positions))
+            simplified_rings.append(compact_ring(ring, budget))
+        simplified_polygons.append(simplified_rings)
+    return {
+        **geometry,
+        "coordinates": simplified_polygons if geometry_type == "MultiPolygon" else simplified_polygons[0],
+    }
+
+
+def _wildfire_perimeter_geometry(row: dict, *, max_positions: int | None = None) -> dict | None:
     """Return a valid perimeter geometry when a live collector supplied one."""
     perimeter = row.get("perimeter")
     if isinstance(perimeter, str):
@@ -1009,6 +1072,8 @@ def _wildfire_perimeter_geometry(row: dict) -> dict | None:
         return None
     if not geometry.get("coordinates"):
         return None
+    if max_positions is not None:
+        return _simplify_wildfire_perimeter_geometry(geometry, max_positions=max_positions)
     return geometry
 
 
@@ -1018,6 +1083,8 @@ def _build_point_event_display_payload(
     collector: str,
     event_type: str,
     label: str,
+    minimum_area_km2: float | None = None,
+    perimeter_minimum_area_km2: float | None = None,
 ) -> dict | None:
     if not isinstance(snapshot, dict):
         return None
@@ -1040,7 +1107,22 @@ def _build_point_event_display_payload(
                 props.setdefault("area_km2", float(acres) * 0.00404686)
             except (TypeError, ValueError):
                 pass
-        geometry = _wildfire_perimeter_geometry(row) if collector == WILDFIRE_LIVE_FEED else None
+        wildfire_area_km2 = None
+        if collector == WILDFIRE_LIVE_FEED:
+            try:
+                wildfire_area_km2 = float(props.get("area_km2"))
+            except (TypeError, ValueError):
+                wildfire_area_km2 = None
+            if minimum_area_km2 is not None and (wildfire_area_km2 is None or wildfire_area_km2 < minimum_area_km2):
+                continue
+        include_perimeter = (
+            collector == WILDFIRE_LIVE_FEED
+            and (perimeter_minimum_area_km2 is None or (wildfire_area_km2 is not None and wildfire_area_km2 >= perimeter_minimum_area_km2))
+        )
+        geometry = (
+            _wildfire_perimeter_geometry(row, max_positions=WILDFIRE_MAP_MAX_PERIMETER_POSITIONS)
+            if include_perimeter else None
+        )
         if geometry is None:
             try:
                 lon = float(row.get("longitude"))
@@ -1076,6 +1158,38 @@ def _build_point_event_display_payload(
             "features": features,
         },
     }
+
+
+def _build_wildfire_display_payload(
+    snapshot: dict | None,
+    *,
+    minimum_area_km2: float = WILDFIRE_DEFAULT_MIN_AREA_KM2,
+    perimeter_minimum_area_km2: float | None = None,
+) -> dict | None:
+    """Build a bounded overview payload without discarding the full snapshot.
+
+    Default Ops loading is a readability view.  Explicit chat filters may ask
+    for every current incident; in that case small fires remain renderable as
+    source-coordinate markers while only map-scale fires carry a simplified
+    perimeter.
+    """
+    payload = _build_point_event_display_payload(
+        snapshot,
+        collector=WILDFIRE_LIVE_FEED,
+        event_type="wildfire",
+        label="Ops Wildfire Snapshot",
+        minimum_area_km2=minimum_area_km2,
+        perimeter_minimum_area_km2=(
+            minimum_area_km2 if perimeter_minimum_area_km2 is None else perimeter_minimum_area_km2
+        ),
+    )
+    if payload:
+        payload["ops_min_area_km2"] = minimum_area_km2
+        payload["ops_show_all"] = minimum_area_km2 <= 0
+        payload["ops_perimeter_min_area_km2"] = (
+            minimum_area_km2 if perimeter_minimum_area_km2 is None else perimeter_minimum_area_km2
+        )
+    return payload
 
 
 def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
@@ -1734,12 +1848,7 @@ def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | 
             label="Ops Volcano Snapshot",
         )
     if feed == WILDFIRE_LIVE_FEED:
-        return _build_point_event_display_payload(
-            snapshot,
-            collector=WILDFIRE_LIVE_FEED,
-            event_type="wildfire",
-            label="Ops Wildfire Snapshot",
-        )
+        return _build_wildfire_display_payload(snapshot)
     if _is_hurricane_live_feed(feed):
         return _build_live_hurricane_display_payload(snapshot)
     if feed == "currency":
@@ -3988,8 +4097,19 @@ def _try_wildfire_snapshot_filter_result(
     # A country-only command requests the complete current roster for that
     # country rather than silently reapplying the 5 km² readability default.
     operator, threshold_km2, threshold_label = requested or (">=", 0.0, "all sizes")
-    payloads = _report_display_payload_by_feed(report)
-    source_payload = payloads.get(WILDFIRE_LIVE_FEED)
+    # The normal report intentionally ships only the map-readable wildfire
+    # overview.  A direct filter is entitled to inspect the full current
+    # snapshot, but still keeps low-area fires as markers rather than sending
+    # their often enormous native perimeters across the interactive path.
+    source_payload = _build_wildfire_display_payload(
+        load_current_state_snapshot(WILDFIRE_LIVE_FEED),
+        minimum_area_km2=0.0,
+        perimeter_minimum_area_km2=max(WILDFIRE_DEFAULT_MIN_AREA_KM2, threshold_km2),
+    )
+    # Keep the pure report path useful in offline QA fixtures and when a
+    # transient current-state read fails after the report was already built.
+    if source_payload is None:
+        source_payload = _report_display_payload_by_feed(report).get(WILDFIRE_LIVE_FEED)
     geojson = source_payload.get("geojson") if isinstance(source_payload, dict) else None
     features = geojson.get("features") if isinstance(geojson, dict) else None
     if not isinstance(features, list):

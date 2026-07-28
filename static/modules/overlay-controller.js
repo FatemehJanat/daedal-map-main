@@ -1362,15 +1362,16 @@ export const OverlayController = {
           Number(feature?.properties?.area_km2) >= minAreaKm2
           && (!requestedCountry || String(feature?.properties?.iso3 || '').trim().toUpperCase() === requestedCountry)
         ));
-        const useFilter = filtered.length > 0 && filtered.length < sourceFeatures.length;
+        const serverAppliedFilter = minAreaKm2 > 0 && sourcePayload?.ops_show_all !== true;
+        const useFilter = serverAppliedFilter || (filtered.length > 0 && filtered.length < sourceFeatures.length);
         const visibleFeatures = useFilter ? filtered : sourceFeatures;
         const thresholdText = `${minAreaKm2.toFixed(2)} km² and above`;
         return {
-          payload: useFilter ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} wildfire events at ${thresholdText} from the live snapshot.`) : sourcePayload,
+          payload: (filtered !== sourceFeatures) ? clonePayload(filtered, `Showing ${filtered.length.toLocaleString()} wildfire events at ${thresholdText} from the live snapshot.`) : sourcePayload,
           snapshotCount: Number.isFinite(compactSummary?.active_count) ? compactSummary.active_count : fullCountFromPayload,
           visibleCount: visibleFeatures.length,
           filterDescription: useFilter ? thresholdText : null,
-          chatHint: 'Ask chat to show all fires, or say “only show 5 km² and bigger.”',
+          chatHint: 'Ask chat to show all fires, set a km² or acre threshold, focus USA or Canada, or show the biggest fires.',
         };
       }
       case 'volcanoes': {
