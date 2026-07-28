@@ -39,9 +39,8 @@ async def get_physical_mask(resolution: str, req: Request):
     if filename is None:
         return msgpack_error("Unsupported physical mask resolution", 404)
     relative_path = _physical_mask_relative_path(filename)
-    if is_cloud_mode():
-        payload = _cloud_object_bytes(relative_path)
-    else:
+    payload = _cloud_object_bytes(relative_path) if _prefer_published_raster_reads() else None
+    if not payload:
         path = GEOMETRY_DIR / "masks" / "physical_coastline_v1" / filename
         payload = path.read_bytes() if path.is_file() else None
     if not payload:
@@ -90,6 +89,22 @@ def _cloud_object_bytes(relative_path: str) -> bytes | None:
     except Exception as exc:
         logger.warning(f"Raster cloud read failed for {key}: {exc}")
         return None
+
+
+def _prefer_published_raster_reads() -> bool:
+    """Read published raster artifacts when this runtime has R2 configured.
+
+    A local server is frequently used for WIP Ops QA. It must exercise the
+    published bundle, not a possibly stale developer data mirror. Local files
+    remain an offline fallback if storage is unavailable.
+    """
+    if is_cloud_mode():
+        return True
+    cloud_cfg = get_runtime_config().get("cloud", {})
+    return bool(
+        os.environ.get("S3_BUCKET", "").strip()
+        or str(cloud_cfg.get("bucket", "")).strip()
+    )
 
 
 def _normalize_raster_relative_dir(path_value: str) -> str:
@@ -211,8 +226,10 @@ def _clip_bundle_relative_path(raster_relative_dir: str | None, period: str) -> 
 def _load_clip_bundle_bytes(source_id: str, catalog: dict | None, period: str) -> bytes | None:
     raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
     relative_path = _clip_bundle_relative_path(raster_relative_dir, period)
-    if is_cloud_mode():
-        return _cloud_object_bytes(relative_path) if relative_path else None
+    if _prefer_published_raster_reads() and relative_path:
+        published = _cloud_object_bytes(relative_path)
+        if published:
+            return published
     if raster_dir is None:
         return None
     bundle_path = raster_dir / "clip_bundles" / f"{period}.msgpack"
@@ -224,7 +241,7 @@ def _load_clip_bundle_bytes(source_id: str, catalog: dict | None, period: str) -
 def _clip_bundle_etag_cheap(source_id: str, catalog: dict | None, period: str) -> str | None:
     """A cheap ETag (no body read) for the local bundle file via stat. In cloud
     mode we fall back to a content hash after the read."""
-    if is_cloud_mode():
+    if _prefer_published_raster_reads():
         return None
     raster_dir, _ = _raster_dirs_for_source(source_id, catalog)
     if raster_dir is None:

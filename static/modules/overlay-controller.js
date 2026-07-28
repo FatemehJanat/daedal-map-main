@@ -1578,7 +1578,7 @@ export const OverlayController = {
         return `Air temperature grid active. ${availability} ${sliderText} Ask chat to compare regions.`;
       }
       case 'cams-air-quality-grid': {
-        const availability = formatOpsRasterFrameAvailability(primaryOverlayId, 'daily');
+        const availability = formatOpsRasterFrameAvailability(primaryOverlayId, '12-hourly');
         return `CAMS PM2.5 grid active. ${availability} These are modeled raster fields, not point observations. Use the time slider to inspect dates or ask chat to compare regions.`;
       }
       default: {
