@@ -79,10 +79,11 @@ session cache fill after the map has become usable.
 - A compact, measured window may use `background_full` batch hydration.
   NWS is the reference: frames hold alert state and geometry references while
   full bulletin text remains an on-click resource.
-- A cumulative event history must not background-fetch the same prior track in
-  every frame merely because it fits a superficial count cap. Use a
-  `delta_stream`/additive-fix representation, or keep a measured
-  `near_cursor` cache until it is converted.
+- A cumulative event history should use a `delta_stream`/additive-fix
+  representation when its repeated tracks exceed the declared cache budget.
+  A measured, fixed retention window may instead use silent batched
+  `background_full` hydration (the current 72-hour hurricane window is about
+  22 MB); it must never degrade into one network request per slider position.
 - A selected frame replaces a provider only after its payload is ready. The
   previous coherent frame remains visible during decode/fetch.
 - Every active provider receives the same cursor time but owns its own source

@@ -291,6 +291,61 @@ def _local_hurricane_timeline_frame_at(raw_at: object) -> dict | None:
     }
 
 
+def _local_hurricane_timeline_frames_at(raw_values: object) -> list[dict]:
+    """Build a bounded batch of additive hurricane replay frames.
+
+    The browser paints the current hurricane snapshot first, then uses this
+    endpoint to warm its entire 72-hour replay cache in a handful of requests.
+    Keeping the composition server-side preserves collector precedence and
+    avoids exposing raw provider points to the display runtime.
+    """
+    if not isinstance(raw_values, list):
+        return []
+    targets: list[datetime] = []
+    for value in raw_values:
+        try:
+            target = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        targets.append(target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc))
+    if not targets:
+        return []
+
+    collector = "hurricanes_live"
+    current = load_current_state_snapshot(collector)
+    entries = _ops_timeline_entries(collector, current, load_current_state_history(collector))
+    if not entries:
+        return []
+
+    # Resolve requested cursor positions in chronological order with one pass
+    # through the retained index. Responses need not preserve request order:
+    # the browser keys every frame by start_at + payload_hash.
+    frames: list[dict] = []
+    selected_index = -1
+    entry_index = 0
+    for target in sorted(set(targets)):
+        while entry_index < len(entries):
+            at = _snapshot_time(entries[entry_index])
+            if at is None or at <= target:
+                selected_index = entry_index
+                entry_index += 1
+                continue
+            break
+        if selected_index < 0:
+            continue
+        selected = entries[selected_index]
+        composed = _with_hurricane_history_tracks(selected, entries[:selected_index + 1])
+        payload = _build_live_hurricane_display_payload(composed, as_of=target)
+        if payload is None:
+            continue
+        frames.append({
+            "payload_hash": selected.get("payload_hash"),
+            "start_at": (_snapshot_time(selected) or target).isoformat(),
+            "display_payload": payload,
+        })
+    return frames
+
+
 def _point_overlay_id_for_collector(collector: str) -> str | None:
     normalized = str(collector or "").strip()
     for overlay_id, spec in POINT_FEEDS.items():
@@ -677,6 +732,23 @@ async def local_ops_timeline_hurricane_frame_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_hurricane_frame", "frame": frame})
     except Exception as exc:
         logger.exception("Ops hurricane timeline frame error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/hurricane-frames")
+async def local_ops_timeline_hurricane_frames_endpoint(req: Request):
+    """Return up to 24 retained hurricane frames for silent cache hydration."""
+    try:
+        body = await decode_request_body(req)
+        values = body.get("at")
+        if not isinstance(values, list) or len(values) > 24:
+            return msgpack_error("at must be a list of at most 24 retained frame timestamps", 413)
+        return msgpack_response({
+            "type": "local_ops_hurricane_frames",
+            "frames": _local_hurricane_timeline_frames_at(values),
+        })
+    except Exception as exc:
+        logger.exception("Ops hurricane timeline batch error")
         return msgpack_error(str(exc), 500)
 
 

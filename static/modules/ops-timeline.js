@@ -16,8 +16,12 @@ const CURSOR_STEP_MS = 5 * 60 * 1000;
 // archive. Long retained histories remain available for event drill-down, but
 // the normal cross-overlay scrubber always means "the last three days".
 const SHARED_OPS_HISTORY_MS = 72 * 60 * 60 * 1000;
-const BACKGROUND_PREFETCH_BUDGET_BYTES = 10 * 1024 * 1024;
 const NWS_BACKGROUND_BATCH_SIZE = 24;
+// Hurricane replay frames are presently cumulative display payloads.  The
+// bounded 72-hour window is still only about 22 MB, which is small enough to
+// hydrate once per Ops session and avoids a request on every scrub position.
+const HURRICANE_BACKGROUND_BATCH_SIZE = 24;
+const INTERACTIVE_GRACE_MS = 250;
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -45,11 +49,13 @@ export const OpsTimeline = {
   externalProviders: new Map(),
   nwsFrameCache: new Map(),
   nwsRequestToken: 0,
+  nwsInteractiveRequestedAt: 0,
   pointFrameCache: new Map(),
   pointRequestToken: 0,
   hurricaneFrameCache: new Map(),
   hurricaneFrameInFlight: new Map(),
   hurricaneRequestToken: 0,
+  hurricaneInteractiveRequestedAt: 0,
   hurricaneDebounceTimer: null,
   backgroundPrefetchTimers: [],
   backgroundPrefetchRun: 0,
@@ -279,6 +285,7 @@ export const OpsTimeline = {
     const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
     const token = ++this.nwsRequestToken;
+    this.nwsInteractiveRequestedAt = Date.now();
     let loaded = this.nwsFrameCache.get(key);
     if (!loaded) {
       try {
@@ -324,6 +331,7 @@ export const OpsTimeline = {
     const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
     const token = ++this.hurricaneRequestToken;
+    this.hurricaneInteractiveRequestedAt = Date.now();
     const loaded = await this._getHurricaneFrame(key, frame, selectedMs);
     if (!loaded) return;
     if (token !== this.hurricaneRequestToken || this.selectedMs !== selectedMs || !loaded?.display_payload) return;
@@ -374,25 +382,10 @@ export const OpsTimeline = {
       .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'hurricane_history'))
       .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'hurricane_history'))
       .reverse();
-    // Load retained hurricane frames after the live map is usable, stopping
-    // at a real 10 MB browser budget. A future compact delta stream can cover
-    // all 72 hours in that budget; today's cumulative frame format cannot.
-    void (async () => {
-      let loadedBytes = 0;
-      for (const frame of hurricaneFrames) {
-        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
-        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
-        if (!key) continue;
-        const loaded = await this._getHurricaneFrame(key, frame, toMs(frame?.start_at) || timeline.currentMs);
-        if (!loaded) continue;
-        let estimatedBytes = 0;
-        try { estimatedBytes = JSON.stringify(loaded).length; } catch (_) { estimatedBytes = 0; }
-        if (loadedBytes && loadedBytes + estimatedBytes > BACKGROUND_PREFETCH_BUDGET_BYTES) return;
-        loadedBytes += estimatedBytes;
-        // Yield between requests so interactive cursor requests remain first.
-        await new Promise((resolve) => setTimeout(resolve, 30));
-      }
-    })();
+    // Current data renders first.  Then hydrate the complete, bounded
+    // three-day hurricane replay in batched requests.  This intentionally is
+    // silent: background cache warming is not visible map loading.
+    void this._preloadHurricaneFrames(hurricaneFrames, timeline, run);
 
     const nwsFrames = Object.entries(timeline?.feeds || {})
       .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'nws_alerts'))
@@ -408,6 +401,12 @@ export const OpsTimeline = {
   async _preloadNwsFrames(frames, timeline, run) {
     for (let index = 0; index < frames.length; index += NWS_BACKGROUND_BATCH_SIZE) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      // Never let a background batch compete with an immediately preceding
+      // slider action. The visible selected frame always wins.
+      while (Date.now() - this.nwsInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      }
       const batch = frames.slice(index, index + NWS_BACKGROUND_BATCH_SIZE);
       const missing = batch.filter((frame) => {
         const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
@@ -417,7 +416,7 @@ export const OpsTimeline = {
       try {
         const response = await postMsgpack('/api/local/ops/timeline/nws-frames', {
           at: missing.map((frame) => frame.start_at),
-        });
+        }, { silent: true });
         for (const loaded of response?.frames || []) {
           const key = `${String(loaded?.start_at || '')}:${String(loaded?.payload_hash || '')}`;
           if (key) this.nwsFrameCache.set(key, loaded);
@@ -427,6 +426,36 @@ export const OpsTimeline = {
         return;
       }
       // Preserve interactive requests and map rendering between batches.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  },
+
+  async _preloadHurricaneFrames(frames, timeline, run) {
+    for (let index = 0; index < frames.length; index += HURRICANE_BACKGROUND_BATCH_SIZE) {
+      if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      while (Date.now() - this.hurricaneInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      }
+      const batch = frames.slice(index, index + HURRICANE_BACKGROUND_BATCH_SIZE);
+      const missing = batch.filter((frame) => {
+        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        return key && !this.hurricaneFrameCache.has(key);
+      });
+      if (!missing.length) continue;
+      try {
+        const response = await postMsgpack('/api/local/ops/timeline/hurricane-frames', {
+          at: missing.map((frame) => frame.start_at),
+        }, { silent: true });
+        for (const loaded of response?.frames || []) {
+          const key = `${String(loaded?.start_at || '')}:${String(loaded?.payload_hash || '')}`;
+          if (key) this.hurricaneFrameCache.set(key, loaded);
+        }
+      } catch (error) {
+        console.warn('OpsTimeline: background hurricane frame batch failed', error);
+        return;
+      }
+      // Give paint and interactive scrub work a turn before the next bundle.
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   },
