@@ -39,7 +39,7 @@ async def get_physical_mask(resolution: str, req: Request):
     if filename is None:
         return msgpack_error("Unsupported physical mask resolution", 404)
     relative_path = _physical_mask_relative_path(filename)
-    payload = _cloud_object_bytes(relative_path) if _prefer_published_raster_reads() else None
+    payload = _cloud_object_bytes(relative_path, published=True) if _prefer_published_raster_reads() else None
     if not payload:
         path = GEOMETRY_DIR / "masks" / "physical_coastline_v1" / filename
         payload = path.read_bytes() if path.is_file() else None
@@ -67,13 +67,18 @@ def _require_tifffile():
     return tifffile
 
 
-def _cloud_object_bytes(relative_path: str) -> bytes | None:
-    """Fetch an object from the active S3/R2 prefix in cloud mode."""
+def _cloud_object_bytes(relative_path: str, *, published: bool = False) -> bytes | None:
+    """Fetch one raster object from the active or explicitly published R2 lane."""
     import boto3
 
     cloud_cfg = get_runtime_config().get("cloud", {})
     bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    prefix = (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", ""))).strip().strip("/")
+    prefix_value = (
+        os.environ.get("S3_PUBLISHED_PREFIX", "")
+        if published
+        else (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", "")))
+    )
+    prefix = (prefix_value or ("published" if published else "")).strip().strip("/")
     endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
     region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
     key = f"{prefix}/{relative_path}" if prefix else relative_path
@@ -227,9 +232,9 @@ def _load_clip_bundle_bytes(source_id: str, catalog: dict | None, period: str) -
     raster_dir, raster_relative_dir = _raster_dirs_for_source(source_id, catalog)
     relative_path = _clip_bundle_relative_path(raster_relative_dir, period)
     if _prefer_published_raster_reads() and relative_path:
-        published = _cloud_object_bytes(relative_path)
-        if published:
-            return published
+        published_bundle = _cloud_object_bytes(relative_path, published=True)
+        if published_bundle:
+            return published_bundle
     if raster_dir is None:
         return None
     bundle_path = raster_dir / "clip_bundles" / f"{period}.msgpack"
