@@ -124,6 +124,7 @@ const MODEL_OVERRIDES = {
 
 const OPS_FEED_TO_OVERLAY_IDS = {
   currency: ['currency'],
+  cams_air_quality: ['cams-air-quality-grid'],
   earthquakes: ['earthquakes'],
   volcanoes: ['volcanoes'],
   hurricanes: ['hurricanes_live'],
@@ -1003,6 +1004,23 @@ export function applyOverlayCatalogResponse(response = {}) {
       // visibility allowlist.  Mark this local/admin-only test entry visible
       // once the server has already confirmed the WIP surface.
       usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
+    }
+  }
+  // CAMS is an Ops-only public feed, not a normal data-catalog surface. Add
+  // its tray definition directly in Ops so published catalog filtering can
+  // never leak the source into Explore or Research.
+  if (getCurrentOverlayLaneMode() === 'ops') {
+    const climate = ALL_CATEGORIES.find((category) => category.id === 'climate' && category.isCategory);
+    if (climate?.overlays && !climate.overlays.some((overlay) => overlay.id === 'cams-air-quality-grid')) {
+      climate.overlays.push({
+        id: 'cams-air-quality-grid', label: 'CAMS PM2.5',
+        description: 'Global modeled surface PM2.5 analyses from CAMS; updated from real 00/12 UTC source cycles',
+        default: false, locked: false, model: 'ocean-raster', icon: 'A', hasYearFilter: false,
+        live: true, rasterSource: 'cams_air_quality', rasterBasins: ['CAMS_PM25_ANALYSIS_LATEST'],
+        rasterBasinsByLane: { ops: ['CAMS_PM25_ANALYSIS_LATEST'] },
+        rasterCadence: 'twice_daily', rasterCadenceByLane: { ops: 'twice_daily' },
+        rasterVariable: 'pm25_ug_m3', rasterMaskMode: 'none', alwaysVisible: true,
+      });
     }
   }
   CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);

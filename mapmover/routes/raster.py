@@ -141,21 +141,18 @@ def _load_scene_catalog(source_id: str) -> dict | None:
                 {"period": "LAND_TEMPERATURE_LATEST", "file": "LAND_TEMPERATURE_LATEST.msgpack"},
             ],
         }
-    # CAMS is a local/WIP display-first fixture until its source and Ops gates
-    # pass. Keep its raster endpoint contract identical to the published
-    # scenes, but do not require public catalog membership to test the map.
+    # CAMS is a public Ops-only modeled PM2.5 field. Its historical/archive
+    # products deliberately remain outside Explore, Research, API, and MCP.
     if source_id == "cams_air_quality":
         return {
             "source_id": source_id,
-            "display_name": "CAMS Modeled Surface PM2.5 (WIP)",
+            "display_name": "CAMS Modeled Surface PM2.5",
             "crs": "EPSG:4326",
             "nodata": 255.0,
             "value_unit": "ug m-3",
             "relative_dir": "global/climate/cams_air_quality/rasters",
             "scenes": [
                 {"period": "CAMS_PM25_ANALYSIS_LATEST", "file": "CAMS_PM25_ANALYSIS_LATEST.msgpack"},
-                {"period": "CAMS_PM25_WIP", "file": "CAMS_PM25_WIP.msgpack"},
-                {"period": "CAMS_EAC4_MONTHLY_WIP", "file": "CAMS_EAC4_MONTHLY_WIP.msgpack"},
             ],
         }
     metadata = load_source_metadata(source_id) or {}

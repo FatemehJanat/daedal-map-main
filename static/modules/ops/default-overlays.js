@@ -6,6 +6,7 @@ const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'volcanoes',
   'ocean-sst-grid',
   'land-temperature-grid',
+  'cams-air-quality-grid',
   'buoys',
   'aurora',
   'nws_alerts'
