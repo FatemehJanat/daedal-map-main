@@ -22,6 +22,10 @@ const NWS_BACKGROUND_BATCH_SIZE = 24;
 // hydrate once per Ops session and avoids a request on every scrub position.
 const HURRICANE_BACKGROUND_BATCH_SIZE = 24;
 const INTERACTIVE_GRACE_MS = 250;
+const HISTORY_PRELOAD_METHODS = {
+  nws_alerts: '_preloadNwsFrames',
+  hurricane_history: '_preloadHurricaneFrames',
+};
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -378,28 +382,25 @@ export const OpsTimeline = {
     this.backgroundPrefetchTimers = [];
     const run = ++this.backgroundPrefetchRun;
     const timeline = this.timeline;
-    const hurricaneFrames = Object.entries(timeline?.feeds || {})
-      .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'hurricane_history'))
-      .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'hurricane_history'))
-      .reverse();
-    // Current data renders first.  Then hydrate the complete, bounded
-    // three-day hurricane replay in batched requests.  This intentionally is
-    // silent: background cache warming is not visible map loading.
-    void this._preloadHurricaneFrames(hurricaneFrames, timeline, run);
-
-    const nwsFrames = Object.entries(timeline?.feeds || {})
-      .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'nws_alerts'))
-      .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'nws_alerts'))
-      .reverse();
-    // NWS has an explicit larger cache posture: the complete compact 72-hour
-    // state history is about 110 MB, acceptable for an Ops session and far
-    // smaller than replaying repeated county geometry. Batch it after the
-    // current map is visible so slider playback becomes local-cache work.
-    void this._preloadNwsFrames(nwsFrames, timeline, run);
+    const contracts = timeline?.preload_history || {};
+    for (const [feedId, contract] of Object.entries(contracts)) {
+      if (!contract?.preload_history) continue;
+      const provider = String(contract.provider || '');
+      const methodName = HISTORY_PRELOAD_METHODS[provider];
+      const preload = methodName && this[methodName];
+      const frames = Array.isArray(timeline?.feeds?.[feedId])
+        ? timeline.feeds[feedId].filter((frame) => frame?.timeline_provider === provider).reverse()
+        : [];
+      if (!frames.length || typeof preload !== 'function') continue;
+      // Current data has already rendered.  Each declared provider warms its
+      // own fixed retained window silently, in its measured batch size.
+      void preload.call(this, frames, timeline, run, contract.batch_size);
+    }
   },
 
-  async _preloadNwsFrames(frames, timeline, run) {
-    for (let index = 0; index < frames.length; index += NWS_BACKGROUND_BATCH_SIZE) {
+  async _preloadNwsFrames(frames, timeline, run, declaredBatchSize = NWS_BACKGROUND_BATCH_SIZE) {
+    const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || NWS_BACKGROUND_BATCH_SIZE));
+    for (let index = 0; index < frames.length; index += batchSize) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
       // Never let a background batch compete with an immediately preceding
       // slider action. The visible selected frame always wins.
@@ -407,7 +408,7 @@ export const OpsTimeline = {
         await new Promise((resolve) => setTimeout(resolve, 50));
         if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
       }
-      const batch = frames.slice(index, index + NWS_BACKGROUND_BATCH_SIZE);
+      const batch = frames.slice(index, index + batchSize);
       const missing = batch.filter((frame) => {
         const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
         return key && !this.nwsFrameCache.has(key);
@@ -430,14 +431,15 @@ export const OpsTimeline = {
     }
   },
 
-  async _preloadHurricaneFrames(frames, timeline, run) {
-    for (let index = 0; index < frames.length; index += HURRICANE_BACKGROUND_BATCH_SIZE) {
+  async _preloadHurricaneFrames(frames, timeline, run, declaredBatchSize = HURRICANE_BACKGROUND_BATCH_SIZE) {
+    const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || HURRICANE_BACKGROUND_BATCH_SIZE));
+    for (let index = 0; index < frames.length; index += batchSize) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
       while (Date.now() - this.hurricaneInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
         await new Promise((resolve) => setTimeout(resolve, 50));
         if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
       }
-      const batch = frames.slice(index, index + HURRICANE_BACKGROUND_BATCH_SIZE);
+      const batch = frames.slice(index, index + batchSize);
       const missing = batch.filter((frame) => {
         const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
         return key && !this.hurricaneFrameCache.has(key);

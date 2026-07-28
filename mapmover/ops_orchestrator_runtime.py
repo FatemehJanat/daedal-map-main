@@ -49,6 +49,24 @@ LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
+# Per-feed retained-frame browser-cache contract.  A feed opts in here rather
+# than acquiring an accidental frontend-only prefetch path.  The endpoint and
+# provider stay allowlisted in the runtime; a future feed must add a measured
+# contract and its compact frame adapter before it can enable preloading.
+OPS_TIMELINE_PRELOAD_HISTORY = {
+    "usa_nws_alerts": {
+        "preload_history": True,
+        "provider": "nws_alerts",
+        "batch_size": 24,
+        "max_window_bytes": 115 * 1024 * 1024,
+    },
+    "hurricanes_live": {
+        "preload_history": True,
+        "provider": "hurricane_history",
+        "batch_size": 24,
+        "max_window_bytes": 24 * 1024 * 1024,
+    },
+}
 HURRICANE_LIVE_FEED = "hurricanes_live"
 WILDFIRE_LIVE_FEED = "wildfires"
 WILDFIRE_OPS_COLLECTORS = ("wildfires_us_nifc", "wildfires_can_cwfis")
@@ -2013,6 +2031,12 @@ def _ops_timeline_entries(feed: str, snapshot: dict | None, history_entries: lis
     return sorted(by_identity.values(), key=lambda entry: _ops_timeline_entry_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
 
 
+def ops_timeline_preload_history_contract(feed: str) -> dict | None:
+    """Return a safe, copy-on-read retained-history preload declaration."""
+    contract = OPS_TIMELINE_PRELOAD_HISTORY.get(str(feed or "").strip())
+    return dict(contract) if isinstance(contract, dict) else None
+
+
 def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int = DEFAULT_OPS_HISTORY_RETENTION_HOURS) -> dict:
     """Build one retained-history payload for the shared Ops scrubber.
 
@@ -2096,6 +2120,14 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
         "history_hours": requested_hours,
         "cursor_step_seconds": 300,
         "feeds": feeds,
+        # Transport this declarative switch with the frame index.  The client
+        # only maps known providers to known endpoints; this is a per-feed
+        # policy, never arbitrary client-directed fetching.
+        "preload_history": {
+            feed: contract
+            for feed in feeds
+            if (contract := ops_timeline_preload_history_contract(feed)) is not None
+        },
     }
 
 

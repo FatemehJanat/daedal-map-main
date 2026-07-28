@@ -230,6 +230,13 @@ and other histories. Detail text is an event resource, not a repeated frame
 field. The NWS pattern is state + county references + on-click bulletin text;
 it is shared runtime behavior, not an Ops-only exception.
 
+The retained timeline carries the corresponding per-feed `preload_history`
+declaration. It is disabled by default and can be enabled only with an
+allowlisted frame provider, batch size, and measured three-day/window budget.
+The client uses that declaration to begin silent cache hydration after the
+current frame paints; it does not contain arbitrary URLs or turn slider moves
+into fetches.
+
 ## What may remain mode-specific
 
 A mode can own:
