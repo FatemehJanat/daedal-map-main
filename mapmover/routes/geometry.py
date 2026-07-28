@@ -146,6 +146,32 @@ async def get_selection_geometry_endpoint(req: Request):
         return msgpack_error(str(e), 500)
 
 
+@router.post("/geometry/features")
+async def get_geometry_features_endpoint(req: Request):
+    """Return canonical reusable geometry for explicit ``loc_id`` values.
+
+    This is the mode-neutral geometry-resource endpoint.  It intentionally
+    carries no metric, event state, or temporal claim, letting the browser
+    cache geometry independently from Explore, Research, and Ops payloads.
+    ``/geometry/selection`` remains as a compatibility alias for the
+    selection workflow.
+    """
+    try:
+        body = await decode_request_body(req)
+        loc_ids = body.get("loc_ids", [])
+        if not loc_ids:
+            return msgpack_response({"type": "FeatureCollection", "features": []})
+        if not isinstance(loc_ids, list) or len(loc_ids) > MAX_SELECTION_LOC_IDS:
+            return msgpack_error(
+                f"loc_ids must be a list of at most {MAX_SELECTION_LOC_IDS} ids",
+                413,
+            )
+        return msgpack_response(get_selection_geometries_handler(loc_ids))
+    except Exception as e:
+        logger.error(f"Error in /geometry/features: {e}")
+        return msgpack_error(str(e), 500)
+
+
 @router.post("/geometry/resolve-point")
 async def resolve_point_endpoint(req: Request):
     """Resolve a lon/lat point to the deepest available containing loc_id."""

@@ -11,6 +11,7 @@
  * Colors are by alert family. Renders on the shared MapLibre map.
  */
 
+import { GeometryCache } from './cache.js';
 import { fetchMsgpack } from './utils/fetch.js';
 
 const POLL_INTERVAL_MS = 5 * 60_000;
@@ -125,6 +126,37 @@ function decorateAlertFeatures(fc) {
         }
       };
     })
+  };
+}
+
+/**
+ * Join compact NWS alert state to reusable county geometry.  The payload can
+ * be from the live endpoint or a retained Ops frame; only the state differs.
+ */
+async function materializeCountyGeometry(raw) {
+  const references = Array.isArray(raw?.county_geometry_references)
+    ? raw.county_geometry_references
+    : [];
+  if (!references.length) return raw;
+  const locIds = references.flatMap((reference) => Array.isArray(reference?.loc_ids) ? reference.loc_ids : []);
+  const geometries = await GeometryCache.getOrFetchByLocIds(locIds);
+  const countyFeatures = [];
+  for (const reference of references) {
+    for (const rawLocId of reference?.loc_ids || []) {
+      const locId = String(rawLocId || '').trim();
+      const sourceFeature = geometries.get(locId);
+      if (!sourceFeature?.geometry) continue;
+      countyFeatures.push({
+        type: 'Feature',
+        geometry: sourceFeature.geometry,
+        properties: { ...(reference.properties || {}), display: 'county', loc_id: locId },
+      });
+    }
+  }
+  return {
+    ...raw,
+    type: 'FeatureCollection',
+    features: [...(Array.isArray(raw?.features) ? raw.features : []), ...countyFeatures],
   };
 }
 
@@ -385,7 +417,8 @@ export const NwsAlertsOverlay = {
     if (!this.enabled) return;
     try {
       const data = await fetchMsgpack('/api/ops/nws-alerts');
-      const raw = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
+      const response = (data && data.type === 'FeatureCollection') ? data : { type: 'FeatureCollection', features: [] };
+      const raw = await materializeCountyGeometry(response);
       const fc = decorateAlertFeatures(raw);
       this.currentData = fc;
       if (!this.opsTimelineLocked) {
@@ -402,9 +435,10 @@ export const NwsAlertsOverlay = {
     // Polling continues to update currentData, but must not repaint a
     // historical alert state chosen through the shared Ops cursor.
     this.opsTimelineLocked = true;
-    const raw = rawFrame?.type === 'FeatureCollection'
+    const response = rawFrame?.type === 'FeatureCollection'
       ? rawFrame
       : { type: 'FeatureCollection', features: [] };
+    const raw = await materializeCountyGeometry(response);
     const frame = decorateAlertFeatures(raw);
     this.lastData = frame;
     await this._render(frame);

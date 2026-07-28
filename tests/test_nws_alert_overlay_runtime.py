@@ -31,6 +31,25 @@ class NwsAlertOverlayRuntimeTests(unittest.TestCase):
         self.assertEqual(properties["description"], "Strong thunderstorms are moving southeast.")
         self.assertEqual(properties["instruction"], "Move to safe harbor immediately.")
 
+    def test_compact_payload_references_counties_without_repeating_polygons(self):
+        summary = {
+            "alerts": [
+                {
+                    "alert_id": "nws-county-alert",
+                    "event": "Severe Thunderstorm Warning",
+                    "same": ["051001"],
+                    "point": [-77.0, 38.9],
+                }
+            ]
+        }
+
+        payload = _assemble_nws_alerts_geojson(summary, compact_county_geometry=True)
+
+        self.assertEqual(payload["count"], 1)  # only the marker is inline
+        self.assertEqual(len(payload["county_geometry_references"]), 1)
+        self.assertEqual(payload["county_geometry_references"][0]["loc_ids"], ["USA-VA-001"])
+        self.assertEqual(payload["county_geometry_references"][0]["properties"]["display"], "county")
+
 
 if __name__ == "__main__":
     unittest.main()

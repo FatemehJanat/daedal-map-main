@@ -592,17 +592,19 @@ def _nws_alert_loc_ids(same_codes) -> list:
     return loc_ids
 
 
-def _assemble_nws_alerts_geojson(summary: dict) -> dict:
+def _assemble_nws_alerts_geojson(summary: dict, *, compact_county_geometry: bool = False) -> dict:
     alerts = summary.get("alerts") or []
 
-    # Resolve county polygons ONLY for alerts without an inline polygon. Batch
-    # one geometry call for every county needed across those alerts.
+    # Resolve county polygons only for the legacy fully-shaped form.  Ops uses
+    # compact state frames: they carry stable county ids and the browser joins
+    # them with the shared geometry cache once, rather than retransmitting the
+    # same county polygon in every retained alert snapshot.
     needed = set()
     for alert in alerts:
         if not alert.get("geometry"):
             needed.update(_nws_alert_loc_ids(alert.get("same")))
     county_geoms: dict = {}
-    if needed:
+    if needed and not compact_county_geometry:
         try:
             from mapmover.geometry_handlers import get_selection_geometries
             collection = get_selection_geometries(list(needed))
@@ -614,6 +616,7 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
             logger.warning("nws overlay: county geometry resolve failed: %s", exc)
 
     features = []
+    county_references = []
     for alert in alerts:
         props = {
             "alert_id": alert.get("alert_id"),
@@ -633,10 +636,14 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
         if isinstance(geom, dict):
             features.append({"type": "Feature", "geometry": geom, "properties": {**props, "display": "polygon"}})
         else:
-            for lid in _nws_alert_loc_ids(alert.get("same")):
-                poly = county_geoms.get(lid)
-                if poly:
-                    features.append({"type": "Feature", "geometry": poly, "properties": {**props, "display": "county"}})
+            loc_ids = _nws_alert_loc_ids(alert.get("same"))
+            if compact_county_geometry and loc_ids:
+                county_references.append({"loc_ids": loc_ids, "properties": {**props, "display": "county"}})
+            else:
+                for lid in loc_ids:
+                    poly = county_geoms.get(lid)
+                    if poly:
+                        features.append({"type": "Feature", "geometry": poly, "properties": {**props, "display": "county", "loc_id": lid}})
         # ALWAYS add a center marker so every alert has a clear single target,
         # not just a spread of highlighted areas (helps the eye and the click).
         point = alert.get("point")
@@ -646,7 +653,12 @@ def _assemble_nws_alerts_geojson(summary: dict) -> dict:
                 "geometry": {"type": "Point", "coordinates": point},
                 "properties": {**props, "display": "marker"},
             })
-    return {"type": "FeatureCollection", "features": features, "count": len(features)}
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "county_geometry_references": county_references,
+        "count": len(features),
+    }
 
 
 def build_cached_nws_alerts_payload() -> dict:
@@ -655,7 +667,7 @@ def build_cached_nws_alerts_payload() -> dict:
     snapshot = snap if isinstance(snap, dict) else {}
 
     def _builder() -> dict:
-        return _assemble_nws_alerts_geojson(snapshot.get("payload_summary") or {})
+        return _assemble_nws_alerts_geojson(snapshot.get("payload_summary") or {}, compact_county_geometry=True)
 
     return _get_cached_view(
         "ops_nws_alerts",
@@ -668,4 +680,7 @@ def build_cached_nws_alerts_payload() -> dict:
 def build_nws_alerts_payload_for_snapshot(snapshot: dict) -> dict:
     """Build one retained NWS frame without using the current-snapshot cache."""
     summary = snapshot.get("payload_summary") if isinstance(snapshot, dict) else {}
-    return _assemble_nws_alerts_geojson(summary if isinstance(summary, dict) else {})
+    return _assemble_nws_alerts_geojson(
+        summary if isinstance(summary, dict) else {},
+        compact_county_geometry=True,
+    )

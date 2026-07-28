@@ -193,6 +193,23 @@ the same catalog, source metadata, geometry, or computed artifact.
 Cache keys must include every input that changes meaning: source, metric,
 geography, time, aggregation, data revision, and relevant display parameters.
 
+### Geometry resources are separate from temporal state
+
+Reusable geometry has its own shared cache and endpoint contract across every
+mode. Administrative features are addressed by canonical `loc_id` and the
+active geometry revision; event geometry is addressed by stable event identity
+plus a source geometry hash/version. A temporal state frame may reference that
+geometry, but it must not treat a prior state response as proof that geometry
+is current.
+
+The browser resolves missing administrative features through the shared
+`POST /geometry/features` resource endpoint and retains them in
+`GeometryCache`. Explore, Research, Ops, Tutorial, and machine-facing map
+views must use this contract rather than each creating a geometry cache. Large
+optional event geometry remains marker-first and may be requested by viewport
+after a declared zoom threshold. Current-only detail must never be injected
+into a historical replay frame.
+
 ## What may remain mode-specific
 
 A mode can own:
@@ -323,4 +340,3 @@ Treat these as architecture regressions:
 - [DATA_SCHEMAS.md](DATA_SCHEMAS.md) — shared source contract
 - [DATA_PREPARATION.md](DATA_PREPARATION.md) — preparing compatible data
 - [PACK_AUTHORING.md](PACK_AUTHORING.md) — sources, packs, and corpora
-

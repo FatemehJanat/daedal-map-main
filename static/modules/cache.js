@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 
 // ============================================================================
 // GEOMETRY CACHE - In-memory cache for viewport-loaded features
@@ -156,6 +156,48 @@ export const GeometryCache = {
 
   hasLocId(locId) {
     return this.features.has(locId);
+  },
+
+  /**
+   * Return reusable administrative features for the requested canonical ids.
+   * This is deliberately separate from an overlay's temporal/data cache:
+   * callers can reuse the same county or region geometry in Explore, Research,
+   * and Ops without treating an old metric/event response as current state.
+   */
+  getByLocIds(locIds) {
+    const now = Date.now();
+    const found = new Map();
+    for (const rawLocId of locIds || []) {
+      const locId = String(rawLocId || '').trim();
+      const entry = locId ? this.features.get(locId) : null;
+      if (!entry) continue;
+      entry.lastSeen = now;
+      found.set(locId, entry.feature);
+    }
+    return found;
+  },
+
+  /**
+   * Resolve only missing administrative geometry through the shared endpoint.
+   * Geometry is immutable for the active geometry revision, so callers may
+   * compose returned features with any compatible temporal state frame.
+   */
+  async getOrFetchByLocIds(locIds) {
+    const normalized = [...new Set((locIds || [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean))];
+    const resolved = this.getByLocIds(normalized);
+    const missing = normalized.filter((locId) => !resolved.has(locId));
+    if (missing.length) {
+      const data = await postMsgpack('/geometry/features', { loc_ids: missing });
+      const features = Array.isArray(data?.features) ? data.features : [];
+      this.add(features);
+      for (const feature of features) {
+        const locId = String(feature?.properties?.loc_id || '').trim();
+        if (locId) resolved.set(locId, feature);
+      }
+    }
+    return resolved;
   },
 
   isLocIdInFlight(level, locId) {
