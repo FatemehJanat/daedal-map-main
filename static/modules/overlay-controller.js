@@ -3194,6 +3194,31 @@ export const OverlayController = {
         return;
       }
       if (isActive && this._opsWatchHasOverlay(overlayId)) {
+        // A saved watch can contain a feed that was not part of the initial
+        // rendered overlay set. Fetch the active watch set once before
+        // treating its missing payload as stale; otherwise a valid hurricane
+        // (or any other snapshot-managed event feed) only appears after an
+        // unrelated chat/report refresh.
+        const activeFeedIds = Array.from(new Set(
+          (OverlaySelector?.getActiveOverlays?.() || [])
+            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+            .filter(Boolean)
+        ));
+        if (activeFeedIds.length && typeof ChatManager?.loadOpsFeedSet === 'function') {
+          try {
+            await ChatManager.loadOpsFeedSet(activeFeedIds, {
+              label: `${formatSurfaceLabel(overlayId)} Ops snapshot`,
+              preserveWatchUniverse: true,
+            });
+          } catch (error) {
+            console.warn(`OverlayController: Failed to hydrate Ops snapshot for ${overlayId}`, error);
+          }
+          if (this.opsSnapshotPayloads.has(overlayId)) {
+            this.renderOpsSnapshotOverlay(overlayId);
+            emitOverlayStatusMessage(overlayId, true, options);
+            return;
+          }
+        }
         this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
         emitOverlayStatusMessage(overlayId, true, options);
         return;
