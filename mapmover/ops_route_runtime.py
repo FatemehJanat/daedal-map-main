@@ -10,6 +10,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from mapmover import session_manager
+from mapmover.ops_feed_registry import ops_feed_ids
 from mapmover.paths import ACCOUNT_URL
 from mapmover.ops_orchestrator_runtime import build_ops_report, load_current_state_snapshot
 from mapmover.runtime.explainer_response import (
@@ -21,22 +22,9 @@ from mapmover.runtime.chat_route_context import build_base_chat_route_context
 from mapmover.runtime.chat_route_support import anonymous_budget_rejection_payload
 from mapmover.routes.chat_shared import human_chat_rate_limit_response
 
-OPS_SUPPORTED_FEEDS = (
-    "currency",
-    "airnow",
-    "cams_air_quality",
-    "earthquakes",
-    "hurricanes_live",
-    "noaa_aurora",
-    "noaa_ndbc",
-    "noaa_swpc",
-    "ocean_sst",
-    "era5_land_temperature",
-    "tsunamis",
-    "usa_nws_alerts",
-    "volcanoes",
-    "wildfires",
-)
+# The shared data-root registry is the one universe of logical Ops feeds.
+# Defaults and account selection are subsets defined by flags there.
+OPS_SUPPORTED_FEEDS = ops_feed_ids(flag="runtime_enabled")
 
 OPS_FEED_ALIASES = {
     "hurricanes": "hurricanes_live",
@@ -169,20 +157,7 @@ def _account_ops_feeds(auth_user: dict | None) -> list[str]:
 
 
 def _public_default_ops_feeds() -> list[str]:
-    return _supported_ops_feeds([
-        "earthquakes",
-        "hurricanes_live",
-        "noaa_aurora",
-        "noaa_ndbc",
-        "noaa_swpc",
-        "cams_air_quality",
-        "ocean_sst",
-        "era5_land_temperature",
-        "tsunamis",
-        "usa_nws_alerts",
-        "volcanoes",
-        "wildfires",
-    ])
+    return _supported_ops_feeds(ops_feed_ids(flag="default_watch"))
 
 
 def _base_ops_feeds(auth_user: dict | None) -> list[str]:
