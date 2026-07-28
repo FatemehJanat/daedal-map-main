@@ -12,6 +12,10 @@ import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 import { getLivePointOverlay } from './live-point-overlay.js';
 
 const CURSOR_STEP_MS = 5 * 60 * 1000;
+// The shared Ops cursor is an operational replay, not each source's complete
+// archive. Long retained histories remain available for event drill-down, but
+// the normal cross-overlay scrubber always means "the last three days".
+const SHARED_OPS_HISTORY_MS = 72 * 60 * 60 * 1000;
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -113,12 +117,13 @@ export const OpsTimeline = {
       this.clear();
       return;
     }
-    const rangeStart = toMs(timeline.range_start);
+    const suppliedRangeStart = toMs(timeline.range_start);
     const currentMs = toMs(timeline.range_end);
-    if (!Number.isFinite(rangeStart) || !Number.isFinite(currentMs)) {
+    if (!Number.isFinite(suppliedRangeStart) || !Number.isFinite(currentMs)) {
       this.clear();
       return;
     }
+    const rangeStart = Math.max(suppliedRangeStart, currentMs - SHARED_OPS_HISTORY_MS);
     const frameCount = Object.values(feedFrames).reduce(
       (total, frames) => total + (Array.isArray(frames) ? frames.length : 0),
       0
@@ -146,7 +151,7 @@ export const OpsTimeline = {
       rangeStart,
       currentMs,
       rangeEnd,
-      historyHours: Number(timeline.history_hours) || Math.max(1, Math.round((currentMs - rangeStart) / 3_600_000)),
+      historyHours: Math.max(1, Math.round((currentMs - rangeStart) / 3_600_000)),
     };
     this._render();
     this.selectAt(currentMs, { preserveCurrent: true });
