@@ -25,6 +25,7 @@ from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 from mapmover.runtime.preprocess_user_intents import normalize_query_for_location_matching
 from mapmover.runtime_config import get_runtime_config
 from mapmover.paths import DATA_ROOT
+from mapmover.ops_feed_registry import ops_feed_record
 
 try:
     import boto3
@@ -49,23 +50,13 @@ LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
-# Per-feed retained-frame browser-cache contract.  A feed opts in here rather
-# than acquiring an accidental frontend-only prefetch path.  The endpoint and
-# provider stay allowlisted in the runtime; a future feed must add a measured
-# contract and its compact frame adapter before it can enable preloading.
-OPS_TIMELINE_PRELOAD_HISTORY = {
-    "usa_nws_alerts": {
-        "preload_history": True,
-        "provider": "nws_alerts",
-        "batch_size": 24,
-        "max_window_bytes": 115 * 1024 * 1024,
-    },
-    "hurricanes_live": {
-        "preload_history": True,
-        "provider": "hurricane_history",
-        "batch_size": 24,
-        "max_window_bytes": 24 * 1024 * 1024,
-    },
+# Compatibility floor while an older published ops_feed_registry.json is still
+# in object storage. The registry is authoritative once its `timeline` record
+# arrives; these preserve the already-released NWS/hurricane behavior during a
+# code-first deploy and may be removed after that registry version is universal.
+_BUILTIN_TIMELINE_PRELOAD_COMPAT = {
+    "usa_nws_alerts": {"preload_history": True, "provider": "nws_alerts", "batch_size": 24, "max_window_bytes": 115 * 1024 * 1024},
+    "hurricanes_live": {"preload_history": True, "provider": "hurricane_history", "batch_size": 24, "max_window_bytes": 24 * 1024 * 1024},
 }
 HURRICANE_LIVE_FEED = "hurricanes_live"
 WILDFIRE_LIVE_FEED = "wildfires"
@@ -2032,9 +2023,13 @@ def _ops_timeline_entries(feed: str, snapshot: dict | None, history_entries: lis
 
 
 def ops_timeline_preload_history_contract(feed: str) -> dict | None:
-    """Return a safe, copy-on-read retained-history preload declaration."""
-    contract = OPS_TIMELINE_PRELOAD_HISTORY.get(str(feed or "").strip())
-    return dict(contract) if isinstance(contract, dict) else None
+    """Return the canonical feed-owned retained-history preload declaration."""
+    record = ops_feed_record(feed)
+    contract = record.get("timeline") if isinstance(record, dict) else None
+    if isinstance(contract, dict):
+        return dict(contract)
+    fallback = _BUILTIN_TIMELINE_PRELOAD_COMPAT.get(str(feed or "").strip())
+    return dict(fallback) if isinstance(fallback, dict) else None
 
 
 def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int = DEFAULT_OPS_HISTORY_RETENTION_HOURS) -> dict:

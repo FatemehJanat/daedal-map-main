@@ -25,6 +25,7 @@ const INTERACTIVE_GRACE_MS = 250;
 const HISTORY_PRELOAD_METHODS = {
   nws_alerts: '_preloadNwsFrames',
   hurricane_history: '_preloadHurricaneFrames',
+  live_point: '_preloadPointFrames',
 };
 
 function toMs(value) {
@@ -56,6 +57,7 @@ export const OpsTimeline = {
   nwsInteractiveRequestedAt: 0,
   pointFrameCache: new Map(),
   pointRequestToken: 0,
+  pointInteractiveRequestedAt: 0,
   hurricaneFrameCache: new Map(),
   hurricaneFrameInFlight: new Map(),
   hurricaneRequestToken: 0,
@@ -313,6 +315,7 @@ export const OpsTimeline = {
     const key = `${overlayId}:${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!overlayId || !key) return;
     const token = ++this.pointRequestToken;
+    this.pointInteractiveRequestedAt = Date.now();
     let loaded = this.pointFrameCache.get(key);
     if (!loaded) {
       try {
@@ -394,7 +397,7 @@ export const OpsTimeline = {
       if (!frames.length || typeof preload !== 'function') continue;
       // Current data has already rendered.  Each declared provider warms its
       // own fixed retained window silently, in its measured batch size.
-      void preload.call(this, frames, timeline, run, contract.batch_size);
+      void preload.call(this, frames, timeline, run, contract.batch_size, contract);
     }
   },
 
@@ -458,6 +461,39 @@ export const OpsTimeline = {
         return;
       }
       // Give paint and interactive scrub work a turn before the next bundle.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  },
+
+  async _preloadPointFrames(frames, timeline, run, declaredBatchSize, contract = {}) {
+    const overlayId = String(contract.overlay_id || '');
+    if (!overlayId) return;
+    const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || 24));
+    for (let index = 0; index < frames.length; index += batchSize) {
+      if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      while (Date.now() - this.pointInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      }
+      const batch = frames.slice(index, index + batchSize);
+      const missing = batch.filter((frame) => {
+        const key = `${overlayId}:${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        return key && !this.pointFrameCache.has(key);
+      });
+      if (!missing.length) continue;
+      try {
+        const response = await postMsgpack('/api/local/ops/timeline/point-frames', {
+          overlay_id: overlayId,
+          at: missing.map((frame) => frame.start_at),
+        }, { silent: true });
+        for (const loaded of response?.frames || []) {
+          const key = `${overlayId}:${String(loaded?.start_at || '')}:${String(loaded?.payload_hash || '')}`;
+          if (key) this.pointFrameCache.set(key, loaded);
+        }
+      } catch (error) {
+        console.warn(`OpsTimeline: background ${overlayId} point frame batch failed`, error);
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   },

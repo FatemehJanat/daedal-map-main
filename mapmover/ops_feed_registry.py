@@ -45,3 +45,12 @@ def ops_feed_ids(*, flag: str = "runtime_enabled") -> tuple[str, ...]:
         for record in load_ops_feed_records()
         if bool(record.get(flag))
     )
+
+
+def ops_feed_record(feed_id: str) -> dict | None:
+    """Return one canonical logical-feed record for runtime contracts."""
+    wanted = str(feed_id or "").strip()
+    for record in load_ops_feed_records():
+        if str(record.get("feed_id") or "").strip() == wanted:
+            return record
+    return None

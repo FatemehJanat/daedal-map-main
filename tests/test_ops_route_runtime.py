@@ -204,6 +204,32 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertEqual("first", frame["payload_hash"])
         self.assertEqual(11.0, frame["geojson"]["features"][0]["properties"]["sst_c"])
 
+    def test_retained_point_frames_batch_uses_each_requested_snapshot(self):
+        original_history = ops_routes.load_current_state_history
+        original_snapshot = ops_routes.load_current_state_snapshot
+        first = {
+            "published_at": "2026-07-27T00:00:00+00:00",
+            "payload_hash": "first",
+            "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 11.0}]},
+        }
+        second = {
+            "published_at": "2026-07-27T00:05:00+00:00",
+            "payload_hash": "second",
+            "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 12.5}]},
+        }
+        try:
+            ops_routes.load_current_state_history = lambda _feed: [first, second]
+            ops_routes.load_current_state_snapshot = lambda _feed: second
+            frames = ops_routes._local_point_timeline_frames_at(
+                "buoys", ["2026-07-27T00:03:00Z", "2026-07-27T00:06:00Z"]
+            )
+        finally:
+            ops_routes.load_current_state_history = original_history
+            ops_routes.load_current_state_snapshot = original_snapshot
+
+        self.assertEqual(["first", "second"], [frame["payload_hash"] for frame in frames])
+        self.assertEqual(12.5, frames[-1]["geojson"]["features"][0]["properties"]["sst_c"])
+
     def test_timeline_expands_to_declared_display_window(self):
         original_history = ops_orchestrator_runtime.load_current_state_history
         original_snapshot = ops_orchestrator_runtime.load_current_state_snapshot

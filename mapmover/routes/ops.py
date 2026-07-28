@@ -417,6 +417,18 @@ def _local_point_timeline_frame_at(overlay_id: str, raw_at: object) -> dict | No
     }
 
 
+def _local_point_timeline_frames_at(overlay_id: str, raw_values: object) -> list[dict]:
+    """Return a bounded generic batch of retained point-reading frames."""
+    if not isinstance(raw_values, list):
+        return []
+    frames = []
+    for value in raw_values:
+        frame = _local_point_timeline_frame_at(overlay_id, value)
+        if frame is not None:
+            frames.append(frame)
+    return frames
+
+
 @router.get("/api/ops/ticker")
 async def ops_ticker_endpoint(req: Request):
     """Live announcement ticker items (space weather, etc.). Public, read-only.
@@ -764,6 +776,27 @@ async def local_ops_timeline_point_frame_endpoint(req: Request):
         return msgpack_response({"type": "ops_live_point_frame", "frame": frame})
     except Exception as exc:
         logger.exception("Ops point timeline frame error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/point-frames")
+async def local_ops_timeline_point_frames_endpoint(req: Request):
+    """Return generic retained point-reading frames for silent hydration."""
+    try:
+        body = await decode_request_body(req)
+        overlay_id = str(body.get("overlay_id") or "").strip()
+        values = body.get("at")
+        if not is_point_feed(overlay_id):
+            return msgpack_error("Unknown live point overlay", 404)
+        if not isinstance(values, list) or len(values) > 24:
+            return msgpack_error("at must be a list of at most 24 retained frame timestamps", 413)
+        return msgpack_response({
+            "type": "ops_live_point_frames",
+            "overlay_id": overlay_id,
+            "frames": _local_point_timeline_frames_at(overlay_id, values),
+        })
+    except Exception as exc:
+        logger.exception("Ops point timeline batch error")
         return msgpack_error(str(exc), 500)
 
 
