@@ -1248,6 +1248,25 @@ export const OverlayController = {
     }
   },
 
+  _activeOpsTimelineFeedIds() {
+    return Array.from(new Set(
+      (OverlaySelector?.getActiveOverlays?.() || [])
+        .map((overlayId) => this._opsFeedIdForOverlay(overlayId))
+        .filter(Boolean)
+    ));
+  },
+
+  _refreshOpsTimelineForActiveOverlays(label = 'Ops watch timeline') {
+    if (!this._isOpsMode()) return;
+    // The shared cursor is a coordinator, never a single-overlay timeline.
+    // Replacing its feed set with the toggled layer makes every other active
+    // provider absent during a scrub and can incorrectly clear its renderer.
+    void ChatManager?.refreshLocalOpsTimeline?.({
+      feedIds: this._activeOpsTimelineFeedIds(),
+      label,
+    });
+  },
+
   _getOpsReportFeedSnapshot(overlayId) {
     const feedId = this._opsFeedIdForOverlay(overlayId);
     const feedSnapshots = Array.isArray(ChatManager?.latestOpsReport?.feed_snapshots)
@@ -1659,13 +1678,7 @@ export const OverlayController = {
         });
       }
     }
-    const activeFeedIds = Array.from(new Set(
-      activeOverlayIds.map((overlayId) => this._opsFeedIdForOverlay(overlayId)).filter(Boolean)
-    ));
-    void ChatManager?.refreshLocalOpsTimeline?.({
-      feedIds: activeFeedIds,
-      label: 'Ops watch timeline',
-    });
+    this._refreshOpsTimelineForActiveOverlays();
   },
 
   renderOpsSnapshotOverlay(overlayId) {
@@ -3094,39 +3107,17 @@ export const OverlayController = {
           AuroraOverlay.getOpsTimelineFrames?.() || [],
           (timestamp) => AuroraOverlay.setOpsTimelineTime?.(timestamp)
         );
-        const activeFeedIds = Array.from(new Set(
-          (OverlaySelector?.getActiveOverlays?.() || [])
-            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-            .filter(Boolean)
-        ));
-        void ChatManager?.refreshLocalOpsTimeline?.({
-          feedIds: activeFeedIds,
-          label: 'Aurora timeline'
-        });
       } else {
         OpsTimeline.setExternalProvider('aurora', [], null);
       }
+      this._refreshOpsTimelineForActiveOverlays();
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
     if (overlayId === 'nws_alerts') {
       await NwsAlertsOverlay.setEnabled(isActive);
-      if (isActive) {
-        // The shared cursor owns every enabled Ops overlay, not just the
-        // overlay that triggered this refresh. Requesting NWS alone replaced
-        // the wildfire/hurricane frame index; then a deliberate scrub had no
-        // event payload for those active layers and cleared them.
-        const activeFeedIds = Array.from(new Set(
-          (OverlaySelector?.getActiveOverlays?.() || [])
-            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-            .filter(Boolean)
-        ));
-        void ChatManager?.refreshLocalOpsTimeline?.({
-          feedIds: activeFeedIds,
-          label: 'Ops watch timeline'
-        });
-      }
+      this._refreshOpsTimelineForActiveOverlays();
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
@@ -3166,17 +3157,7 @@ export const OverlayController = {
     const livePointOverlay = getLivePointOverlay(overlayId);
     if (livePointOverlay) {
       await livePointOverlay.setEnabled(isActive);
-      if (this._isOpsMode() && isActive) {
-        const activeFeedIds = Array.from(new Set(
-          (OverlaySelector?.getActiveOverlays?.() || [])
-            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-            .filter(Boolean)
-        ));
-        void ChatManager?.refreshLocalOpsTimeline?.({
-          feedIds: activeFeedIds,
-          label: `${formatSurfaceLabel(overlayId)} Ops timeline`
-        });
-      }
+      this._refreshOpsTimelineForActiveOverlays();
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
@@ -3187,18 +3168,7 @@ export const OverlayController = {
         this.renderOpsSnapshotOverlay(overlayId);
         // The shared Ops cursor is intentionally opt-in per overlay. Do not
         // hydrate every feed merely because it is selected in an account watch.
-        const feedId = this._opsFeedIdForOverlay(overlayId);
-        if (feedId) {
-          const activeFeedIds = Array.from(new Set(
-            (OverlaySelector?.getActiveOverlays?.() || [])
-              .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-              .filter(Boolean)
-          ));
-          void ChatManager?.refreshLocalOpsTimeline?.({
-            feedIds: activeFeedIds,
-            label: `${formatSurfaceLabel(overlayId)} Ops timeline`
-          });
-        }
+        this._refreshOpsTimelineForActiveOverlays();
         emitOverlayStatusMessage(overlayId, true, options);
         return;
       }
@@ -3208,11 +3178,7 @@ export const OverlayController = {
         // treating its missing payload as stale; otherwise a valid hurricane
         // (or any other snapshot-managed event feed) only appears after an
         // unrelated chat/report refresh.
-        const activeFeedIds = Array.from(new Set(
-          (OverlaySelector?.getActiveOverlays?.() || [])
-            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-            .filter(Boolean)
-        ));
+        const activeFeedIds = this._activeOpsTimelineFeedIds();
         if (activeFeedIds.length && typeof ChatManager?.loadOpsFeedSet === 'function') {
           try {
             await ChatManager.loadOpsFeedSet(activeFeedIds, {
@@ -3224,6 +3190,7 @@ export const OverlayController = {
           }
           if (this.opsSnapshotPayloads.has(overlayId)) {
             this.renderOpsSnapshotOverlay(overlayId);
+            this._refreshOpsTimelineForActiveOverlays();
             emitOverlayStatusMessage(overlayId, true, options);
             return;
           }
@@ -3249,6 +3216,8 @@ export const OverlayController = {
       }
       if (!isActive) {
         this.hideOverlay(overlayId);
+        this._refreshOpsTimelineForActiveOverlays();
+        refreshTickerForOverlayState();
         emitOverlayStatusMessage(overlayId, false, options);
         return;
       }
@@ -3431,22 +3400,12 @@ export const OverlayController = {
     }));
     const providerId = `raster:${overlayId}`;
     OpsTimeline.setExternalProvider(providerId, frames, renderAt);
-    // Keep the server-owned event feeds in this refresh. Passing an explicit
-    // empty list replaces the event frame index with the raster-only provider,
-    // which leaves correct current-status copy but clears every event layer.
-    const activeFeedIds = Array.from(new Set(
-      (OverlaySelector?.getActiveOverlays?.() || [])
-        .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
-        .filter(Boolean)
-    ));
-    void ChatManager?.refreshLocalOpsTimeline?.({
-      feedIds: activeFeedIds,
-      label: `${formatSurfaceLabel(overlayId)} raster timeline`,
-    });
+    this._refreshOpsTimelineForActiveOverlays(`${formatSurfaceLabel(overlayId)} raster timeline`);
   },
 
   _clearOpsRasterTimelineProvider(overlayId) {
     OpsTimeline.setExternalProvider(`raster:${overlayId}`, [], null);
+    this._refreshOpsTimelineForActiveOverlays();
   },
 
   async loadWeatherGridOverlay(overlayId, config) {
