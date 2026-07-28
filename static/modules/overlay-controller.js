@@ -3113,9 +3113,18 @@ export const OverlayController = {
     if (overlayId === 'nws_alerts') {
       await NwsAlertsOverlay.setEnabled(isActive);
       if (isActive) {
+        // The shared cursor owns every enabled Ops overlay, not just the
+        // overlay that triggered this refresh. Requesting NWS alone replaced
+        // the wildfire/hurricane frame index; then a deliberate scrub had no
+        // event payload for those active layers and cleared them.
+        const activeFeedIds = Array.from(new Set(
+          (OverlaySelector?.getActiveOverlays?.() || [])
+            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+            .filter(Boolean)
+        ));
         void ChatManager?.refreshLocalOpsTimeline?.({
-          feedIds: ['usa_nws_alerts'],
-          label: 'NWS alert timeline'
+          feedIds: activeFeedIds,
+          label: 'Ops watch timeline'
         });
       }
       refreshTickerForOverlayState();
