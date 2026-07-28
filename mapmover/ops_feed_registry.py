@@ -22,7 +22,14 @@ def load_ops_feed_records(path: Path | None = None) -> list[dict]:
     try:
         payload = json.loads((path or REGISTRY_PATH).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
+        # Cloud runtimes read data control files from the published S3 prefix;
+        # they do not require every small registry file to be present in the
+        # container's filesystem.
+        try:
+            from mapmover.data_loading import _fetch_json_from_s3
+            payload = _fetch_json_from_s3("ops_feed_registry.json")
+        except Exception:
+            return []
     records = payload.get("feeds") if isinstance(payload, dict) else []
     if not isinstance(records, list):
         return []
