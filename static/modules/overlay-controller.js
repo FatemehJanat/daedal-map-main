@@ -1375,7 +1375,7 @@ export const OverlayController = {
           ? 0
           : (Number.isFinite(requestedMinAreaKm2) && requestedMinAreaKm2 >= 0
             ? requestedMinAreaKm2
-            : 5.0); // Default Ops readability cutoff for the combined NA feed.
+            : 10.0); // Default Ops readability cutoff for the combined NA feed.
         const requestedCountry = String(sourcePayload?.ops_country_iso3 || '').trim().toUpperCase();
         const filtered = sourceFeatures.filter((feature) => (
           Number(feature?.properties?.area_km2) >= minAreaKm2

@@ -644,6 +644,46 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertNotIn("forecast", kinds)
         self.assertEqual("ended_recent", payload["geojson"]["features"][0]["properties"]["track_state"])
 
+    def test_legacy_nhc_west_longitudes_are_repaired_in_display_frames(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "collector": "hurricanes_live",
+            "payload_hash": "fausto-legacy-hash",
+            "ops_history_display_hours": 72,
+            "payload_summary": {"storms": [{
+                "storm_id": "EP062026",
+                "name": "FAUSTO",
+                "source": "NHC",
+                "issued_at": now.isoformat(),
+                "current_position": {
+                    "timestamp": now.isoformat(),
+                    "latitude": 21.9,
+                    # Legacy parser dropped the W suffix.
+                    "longitude": 151.7,
+                },
+                "observed_track": [{
+                    "timestamp": (now - timedelta(hours=6)).isoformat(),
+                    "latitude": 20.2,
+                    "longitude": 149.0,
+                }],
+                "forecast_points": [{
+                    "valid_at": (now + timedelta(hours=12)).isoformat(),
+                    "latitude": 23.1,
+                    "longitude": 153.5,
+                }],
+            }]},
+        }
+
+        payload = ops._build_live_hurricane_display_payload(snapshot)
+        features = payload["geojson"]["features"]
+        observed = next(feature for feature in features if feature["properties"]["track_kind"] == "observed")
+        current = next(feature for feature in features if feature["properties"]["track_kind"] == "current")
+        forecast = next(feature for feature in features if feature["properties"]["track_kind"] == "forecast")
+        self.assertEqual([[-149.0, 20.2], [-151.7, 21.9]], observed["geometry"]["coordinates"])
+        self.assertEqual([-151.7, 21.9], current["geometry"]["coordinates"])
+        self.assertEqual(-151.7, current["properties"]["longitude"])
+        self.assertEqual([[-151.7, 21.9], [-153.5, 23.1]], forecast["geometry"]["coordinates"])
+
     def test_logical_wildfire_history_carries_forward_other_child_state(self):
         def child_entry(collector, at, event_id, iso3):
             return {

@@ -57,7 +57,10 @@ WILDFIRE_COLLECTOR_ISO3 = {
 }
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
-WILDFIRE_DEFAULT_MIN_AREA_KM2 = 5.0
+# A 10 km² default keeps the combined North American live fire snapshot quick
+# enough to be a dependable Ops overlay. Chat can still explicitly request a
+# lower cutoff or all fires.
+WILDFIRE_DEFAULT_MIN_AREA_KM2 = 10.0
 # The live source perimeters are authoritative, but several incidents contain
 # hundreds of thousands of vertices.  Sending those raw shapes to every Ops
 # page load made a normal wildfire report exceed 40 MB.  Keep an honestly
@@ -1280,11 +1283,26 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             hours = 120
         return now + timedelta(hours=max(hours, 1))
 
-    def point_coord(point: dict) -> list[float] | None:
+    def point_coord(storm: dict, point: dict) -> list[float] | None:
         try:
-            return [float(point.get("longitude")), float(point.get("latitude"))]
+            longitude = float(point.get("longitude"))
+            latitude = float(point.get("latitude"))
         except (TypeError, ValueError):
             return None
+        # NHC source positions are west-longitude for the Atlantic and east/
+        # central Pacific basins. Older retained NHC snapshots were parsed by
+        # a numeric-only reader and lost the `W` suffix (for example Fausto
+        # 151.7W became +151.7). Repair that known legacy shape at display time
+        # so the current view and every retained replay frame stay coherent
+        # while corrected collector snapshots replace the old rows.
+        if source_key(storm) == "NHC" and 0.0 < longitude <= 180.0:
+            longitude = -longitude
+        return [longitude, latitude]
+
+    def normalized_coord_pair(storm: dict, raw_coord: object) -> list[float] | None:
+        if not isinstance(raw_coord, (list, tuple)) or len(raw_coord) < 2:
+            return None
+        return point_coord(storm, {"longitude": raw_coord[0], "latitude": raw_coord[1]})
 
     for storm in storms:
         if not isinstance(storm, dict):
@@ -1356,13 +1374,13 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
         observed = []
         observed_times = []
         for point in observed_points:
-            coord = point_coord(point)
+            coord = point_coord(storm, point)
             if coord:
                 observed.append(coord)
                 observed_times.append(point_time(point, storm.get("issued_at")))
         current_time = point_time(current, storm.get("issued_at"))
         current_in_history_window = current_time is not None and history_cutoff <= current_time <= now
-        current_coord = point_coord(current) if current_in_history_window else None
+        current_coord = point_coord(storm, current) if current_in_history_window else None
         latest_observed_time = max(
             [value for value in observed_times if value is not None],
             default=None,
@@ -1405,11 +1423,11 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
             "advisory_ended_at": advisory_ended_at.isoformat() if advisory_ended_at else None,
             "source_priority": _hurricane_source_priority_for_storm(storm),
         })
-        forecast_coords = [coord for coord in (point_coord(point) for point in forecast_points) if coord]
+        forecast_coords = [coord for coord in (point_coord(storm, point) for point in forecast_points) if coord]
         if not forecast_coords:
             raw_track = storm.get("forecast_track") if isinstance(storm.get("forecast_track"), dict) else {}
             raw_coords = raw_track.get("coordinates") if raw_track.get("type") == "LineString" else []
-            forecast_coords = [coord for coord in raw_coords if isinstance(coord, list) and len(coord) >= 2]
+            forecast_coords = [coord for coord in (normalized_coord_pair(storm, raw_coord) for raw_coord in raw_coords) if coord]
         if not observed and not current_coord and not forecast_coords:
             continue
         storm_ids.add(storm_id)
@@ -1424,12 +1442,15 @@ def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
                 },
             })
         if current_coord:
+            current_properties = dict(current)
+            current_properties["longitude"] = current_coord[0]
+            current_properties["latitude"] = current_coord[1]
             features.append({
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": current_coord},
                 "properties": {
                     **base_props,
-                    **current,
+                    **current_properties,
                     "track_kind": "current",
                 },
             })
