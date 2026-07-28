@@ -644,6 +644,46 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertNotIn("forecast", kinds)
         self.assertEqual("ended_recent", payload["geojson"]["features"][0]["properties"]["track_state"])
 
+    def test_logical_wildfire_history_carries_forward_other_child_state(self):
+        def child_entry(collector, at, event_id, iso3):
+            return {
+                "collector": collector,
+                "published_at": at,
+                "last_checked_at": at,
+                "last_changed_at": at,
+                "payload_hash": f"{collector}:{event_id}:{at}",
+                "payload_summary": {
+                    "events": [{
+                        "event_id": event_id,
+                        "latitude": 45.0,
+                        "longitude": -120.0,
+                        "area_km2": 10.0,
+                        "iso3": iso3,
+                    }],
+                },
+            }
+
+        histories = [
+            [
+                child_entry("wildfires_us_nifc", "2026-07-27T00:00:00+00:00", "usa-1", "USA"),
+                child_entry("wildfires_us_nifc", "2026-07-27T02:00:00+00:00", "usa-2", "USA"),
+            ],
+            [
+                child_entry("wildfires_can_cwfis", "2026-07-27T01:00:00+00:00", "can-1", "CAN"),
+            ],
+        ]
+
+        frames = ops._compose_logical_history(
+            ops.WILDFIRE_LIVE_FEED,
+            ops.WILDFIRE_OPS_COLLECTORS,
+            histories,
+        )
+
+        self.assertEqual(3, len(frames))
+        self.assertEqual(["USA"], [event["iso3"] for event in frames[0]["payload_summary"]["events"]])
+        self.assertEqual({"USA", "CAN"}, {event["iso3"] for event in frames[1]["payload_summary"]["events"]})
+        self.assertEqual({"usa-2", "can-1"}, {event["event_id"] for event in frames[-1]["payload_summary"]["events"]})
+
 
 if __name__ == "__main__":
     unittest.main()

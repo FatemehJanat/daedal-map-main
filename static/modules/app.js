@@ -849,9 +849,9 @@ export const App = {
     // Initialize components
     ChatManager.init();
     OpsTimeline.init({
-      onFrame: (displayPayloads) => {
+      onFrame: (displayPayloads, options = {}) => {
         if (ChatManager?.mode !== 'ops') return;
-        OverlayController?.setOpsSnapshotPayloads?.(displayPayloads);
+        OverlayController?.setOpsSnapshotPayloads?.(displayPayloads, options);
       }
     });
     OrderManager.init();

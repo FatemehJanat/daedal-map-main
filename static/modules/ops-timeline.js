@@ -219,7 +219,13 @@ export const OpsTimeline = {
     // first hydrate retain the normal Ops snapshot rather than blanking the
     // map; later deliberate scrubs can still show an honestly empty moment.
     if (displayPayloads.length || !preserveCurrent) {
-      this.onFrame?.(displayPayloads, { at: new Date(ms).toISOString() });
+      this.onFrame?.(displayPayloads, {
+        at: new Date(ms).toISOString(),
+        // Initial hydration can legitimately have retained frames for only a
+        // subset of active feeds. Keep their normal current snapshots until
+        // the user deliberately scrubs to a time where a feed is absent.
+        preserveMissing: preserveCurrent,
+      });
     }
     for (const frame of specialFrames) {
       if (frame.ops_timeline_provider === 'nws_alerts') {

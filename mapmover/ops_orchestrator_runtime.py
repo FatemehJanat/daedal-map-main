@@ -634,15 +634,21 @@ def _wildfire_event_with_geography(event: dict, collector_name: str) -> dict:
     return result
 
 
-def load_current_state_snapshot(collector_name: str) -> dict | None:
+def load_current_state_snapshot(
+    collector_name: str,
+    _composed_children: list[dict] | None = None,
+) -> dict | None:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector:
         return None
     if collector == HURRICANE_LIVE_FEED:
         # Each authority is an independent runtime read. Loading them together
         # avoids turning four site-fallback timeouts into a serial startup cost.
-        with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
-            children = list(executor.map(_load_snapshot_child_safely, HURRICANE_OPS_COLLECTORS))
+        if _composed_children is None:
+            with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
+                children = list(executor.map(_load_snapshot_child_safely, HURRICANE_OPS_COLLECTORS))
+        else:
+            children = _composed_children
         children = [item for item in children if isinstance(item, dict)]
         if not children:
             return None
@@ -760,8 +766,11 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
             "ops_default_load": "history",
         }
     if collector == WILDFIRE_LIVE_FEED:
-        with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
-            children = list(executor.map(_load_snapshot_child_safely, WILDFIRE_OPS_COLLECTORS))
+        if _composed_children is None:
+            with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
+                children = list(executor.map(_load_snapshot_child_safely, WILDFIRE_OPS_COLLECTORS))
+        else:
+            children = _composed_children
         children = [item for item in children if isinstance(item, dict)]
         if not children:
             return None
@@ -816,53 +825,85 @@ def load_current_state_snapshot(collector_name: str) -> dict | None:
     return None
 
 
+def _compose_logical_history(
+    logical_feed: str,
+    physical_collectors: tuple[str, ...],
+    child_histories: list[list[dict]],
+) -> list[dict]:
+    """Reconstruct complete logical frames at each physical-child change.
+
+    A raw union of child histories is not a valid map replay: it makes one
+    child look like the entire wildfire/hurricane feed. Carry forward each
+    healthy child's latest known snapshot, then run the same composition used
+    for the current logical state.
+    """
+    changes: list[tuple[str, str, dict]] = []
+    for collector, entries in zip(physical_collectors, child_histories):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            observed_at = str(
+                entry.get("published_at")
+                or entry.get("last_changed_at")
+                or entry.get("upstream_issued_at")
+                or ""
+            ).strip()
+            if observed_at:
+                changes.append((observed_at, collector, entry))
+    changes.sort(key=lambda item: item[0])
+
+    latest_by_collector: dict[str, dict] = {}
+    composed_entries: list[dict] = []
+    previous_hash = ""
+    for observed_at, collector, entry in changes:
+        latest_by_collector[collector] = {
+            **entry,
+            # History entries are snapshots in compact form; retain their
+            # physical identity so the normal logical composer can attribute
+            # geography and authority correctly.
+            "collector": str(entry.get("collector") or collector),
+        }
+        logical_snapshot = load_current_state_snapshot(
+            logical_feed,
+            _composed_children=list(latest_by_collector.values()),
+        )
+        if not isinstance(logical_snapshot, dict):
+            continue
+        payload_hash = str(logical_snapshot.get("payload_hash") or "")
+        if payload_hash and payload_hash == previous_hash:
+            continue
+        previous_hash = payload_hash
+        composed_entries.append({
+            "collector": logical_feed,
+            "published_at": observed_at,
+            "last_changed_at": observed_at,
+            "upstream_issued_at": logical_snapshot.get("upstream_issued_at"),
+            "collector_status": logical_snapshot.get("collector_status"),
+            "payload_hash": payload_hash,
+            "payload_summary": logical_snapshot.get("payload_summary"),
+            "schema_version": logical_snapshot.get("schema_version"),
+            "feed_type": logical_snapshot.get("feed_type"),
+            "ops_default_load": logical_snapshot.get("ops_default_load"),
+        })
+    return composed_entries
+
+
 def load_current_state_history(collector_name: str, limit: int | None = None) -> list[dict]:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector:
         return []
     if collector == HURRICANE_LIVE_FEED:
-        # Keep the merged response deterministic below, but fetch the four
-        # independent authority histories concurrently.
+        # Fetch independently, then retain one authority-prioritized logical
+        # storm state for each child change.
         with ThreadPoolExecutor(max_workers=len(HURRICANE_OPS_COLLECTORS)) as executor:
             child_histories = list(executor.map(_load_history_child_safely, HURRICANE_OPS_COLLECTORS))
-        merged = [entry for entries in child_histories for entry in entries]
-        merged.sort(key=lambda item: str(
-            item.get("published_at")
-            or item.get("last_changed_at")
-            or item.get("upstream_issued_at")
-            or ""
-        ))
-        return merged[-limit:] if limit is not None and limit >= 0 else merged
+        entries = _compose_logical_history(HURRICANE_LIVE_FEED, HURRICANE_OPS_COLLECTORS, child_histories)
+        return entries[-limit:] if limit is not None and limit >= 0 else entries
     if collector == WILDFIRE_LIVE_FEED:
         with ThreadPoolExecutor(max_workers=len(WILDFIRE_OPS_COLLECTORS)) as executor:
             child_histories = list(executor.map(_load_history_child_safely, WILDFIRE_OPS_COLLECTORS))
-        merged = []
-        for child_collector, entries in zip(WILDFIRE_OPS_COLLECTORS, child_histories):
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                summary = entry.get("payload_summary")
-                if not isinstance(summary, dict) or not isinstance(summary.get("events"), list):
-                    merged.append(entry)
-                    continue
-                merged.append({
-                    **entry,
-                    "payload_summary": {
-                        **summary,
-                        "events": [
-                            _wildfire_event_with_geography(event, child_collector)
-                            for event in summary["events"]
-                            if isinstance(event, dict)
-                        ],
-                    },
-                })
-        merged.sort(key=lambda item: str(
-            item.get("published_at")
-            or item.get("last_changed_at")
-            or item.get("upstream_issued_at")
-            or ""
-        ))
-        return merged[-limit:] if limit is not None and limit >= 0 else merged
+        entries = _compose_logical_history(WILDFIRE_LIVE_FEED, WILDFIRE_OPS_COLLECTORS, child_histories)
+        return entries[-limit:] if limit is not None and limit >= 0 else entries
     cached = _get_live_state_cache(collector, "history")
     if isinstance(cached, list):
         _set_live_state_status(collector, "history", "cache")

@@ -1591,7 +1591,7 @@ export const OverlayController = {
     }
   },
 
-  setOpsSnapshotPayloads(displayPayloads = []) {
+  setOpsSnapshotPayloads(displayPayloads = [], options = {}) {
     const previousOverlayIds = new Set(this.opsSnapshotPayloads.keys());
     this.opsSnapshotPayloads.clear();
     for (const payload of displayPayloads || []) {
@@ -1628,6 +1628,7 @@ export const OverlayController = {
       const hasSnapshot = this.opsSnapshotPayloads.has(overlayId);
       if (!isActive || !hasSnapshot) {
         if (isActive && !hasSnapshot) {
+          if (options.preserveMissing === true) continue;
           this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
         } else {
           this.hideOverlay(overlayId);
