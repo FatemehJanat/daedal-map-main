@@ -160,10 +160,10 @@ export const OpsTimeline = {
       <div class="ops-timeline-track">
         <span class="ops-timeline-past" aria-hidden="true"></span>
         <span class="ops-timeline-forecast" aria-hidden="true"></span>
-        <span class="ops-timeline-now" title="Now" aria-hidden="true"></span>
+        <button type="button" class="ops-timeline-now" data-ops-now title="Jump to live now" aria-label="Jump to live now"></button>
         <input data-ops-timeline-input type="range" step="${CURSOR_STEP_MS}" aria-label="Ops snapshot time">
       </div>
-      <div class="ops-timeline-labels"><span>${this.timeline.historyHours >= 48 && this.timeline.historyHours % 24 === 0 ? `${this.timeline.historyHours / 24}d` : `${this.timeline.historyHours}h`} history</span><span class="ops-timeline-now-label">Now</span><span>${this.timeline.rangeEnd > currentMs ? `${Math.max(1, Math.round((this.timeline.rangeEnd - currentMs) / 60_000))}m forecast` : 'No forecast'}</span></div>
+      <div class="ops-timeline-labels"><span>${this.timeline.historyHours >= 48 && this.timeline.historyHours % 24 === 0 ? `${this.timeline.historyHours / 24}d` : `${this.timeline.historyHours}h`} history</span><button type="button" class="ops-timeline-now-label" data-ops-now>Now</button><span>${this.timeline.rangeEnd > currentMs ? `${Math.max(1, Math.round((this.timeline.rangeEnd - currentMs) / 60_000))}m forecast` : 'No forecast'}</span></div>
     `;
     this.input = this.element.querySelector('[data-ops-timeline-input]');
     this.timeLabel = this.element.querySelector('[data-ops-time]');
@@ -173,6 +173,9 @@ export const OpsTimeline = {
     const nowPercent = ((currentMs - rangeStart) / (rangeEnd - rangeStart)) * 100;
     this.element.style.setProperty('--ops-now-position', `${Math.max(0, Math.min(100, nowPercent))}%`);
     this.input.addEventListener('input', () => this.selectAt(Number(this.input.value)));
+    this.element.querySelectorAll('[data-ops-now]').forEach((control) => {
+      control.addEventListener('click', () => this.selectAt(this.timeline.currentMs));
+    });
   },
 
   selectAt(ms, { preserveCurrent = false } = {}) {
