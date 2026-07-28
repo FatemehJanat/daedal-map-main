@@ -3390,10 +3390,16 @@ export const OverlayController = {
     }));
     const providerId = `raster:${overlayId}`;
     OpsTimeline.setExternalProvider(providerId, frames, renderAt);
-    // The local Ops timeline has no collector feed for display-ready rasters;
-    // refresh it so this external provider can supply the cursor bounds.
+    // Keep the server-owned event feeds in this refresh. Passing an explicit
+    // empty list replaces the event frame index with the raster-only provider,
+    // which leaves correct current-status copy but clears every event layer.
+    const activeFeedIds = Array.from(new Set(
+      (OverlaySelector?.getActiveOverlays?.() || [])
+        .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+        .filter(Boolean)
+    ));
     void ChatManager?.refreshLocalOpsTimeline?.({
-      feedIds: [],
+      feedIds: activeFeedIds,
       label: `${formatSurfaceLabel(overlayId)} raster timeline`,
     });
   },
@@ -3428,7 +3434,7 @@ export const OverlayController = {
       );
 
       // Set TimeSlider to default range (2000-present, data exists back to 1940 via chat)
-      if (TimeSlider && !this.suppressTimelineAutoShow) {
+      if (TimeSlider && !this._isOpsMode() && !this.suppressTimelineAutoShow) {
         const minDate = new Date(Date.UTC(2000, 0, 1));  // Jan 1, 2000 (default view)
         const maxDate = new Date();  // Now
         TimeSlider.setTimeRange({
@@ -3539,7 +3545,10 @@ export const OverlayController = {
     }
 
     const range = OceanRasterModel.getTimestampRange(overlayId);
-    if (TimeSlider && range && !this.suppressTimelineAutoShow) {
+    // Ops uses OpsTimeline as its one shared cursor.  A delayed raster must
+    // render its nearest authoritative frame at that cursor, never move the
+    // legacy Explore slider back to the raster's latest date.
+    if (TimeSlider && !this._isOpsMode() && range && !this.suppressTimelineAutoShow) {
       if (resetTimeRange) {
         // Default view: the latest year of the prepared window; the full
         // prepared span stays available so chat can ask for more time.
