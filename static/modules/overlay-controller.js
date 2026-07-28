@@ -3092,8 +3092,13 @@ export const OverlayController = {
           AuroraOverlay.getOpsTimelineFrames?.() || [],
           (timestamp) => AuroraOverlay.setOpsTimelineTime?.(timestamp)
         );
+        const activeFeedIds = Array.from(new Set(
+          (OverlaySelector?.getActiveOverlays?.() || [])
+            .map((activeOverlayId) => this._opsFeedIdForOverlay(activeOverlayId))
+            .filter(Boolean)
+        ));
         void ChatManager?.refreshLocalOpsTimeline?.({
-          feedIds: [],
+          feedIds: activeFeedIds,
           label: 'Aurora timeline'
         });
       } else {
