@@ -195,6 +195,7 @@ export const OpsTimeline = {
     if (this.timeLabel) this.timeLabel.textContent = formatCursor(ms);
     const displayPayloads = [];
     const specialFrames = [];
+    let hasDeferredPayload = false;
     for (const [feedId, frames] of Object.entries(this.timeline.feeds || {})) {
       if (!Array.isArray(frames)) continue;
       let selected = null;
@@ -219,7 +220,10 @@ export const OpsTimeline = {
         // The live snapshot is already on-map. Historical additive tracks are
         // intentionally materialized only after a user moves the cursor so
         // timeline hydration stays fast even with many retained collector polls.
-        if (ms < this.timeline.currentMs) void this._loadHurricaneFrame(feedId, selected, ms);
+        if (ms < this.timeline.currentMs) {
+          hasDeferredPayload = true;
+          void this._loadHurricaneFrame(feedId, selected, ms);
+        }
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
       } else if (selected?.display_payload) {
@@ -242,7 +246,9 @@ export const OpsTimeline = {
         // Initial hydration can legitimately have retained frames for only a
         // subset of active feeds. Keep their normal current snapshots until
         // the user deliberately scrubs to a time where a feed is absent.
-        preserveMissing: preserveCurrent,
+        // A deferred additive hurricane frame must not clear the last
+        // coherent track while its compact frame is materialized.
+        preserveMissing: preserveCurrent || hasDeferredPayload,
       });
     }
     for (const frame of specialFrames) {
