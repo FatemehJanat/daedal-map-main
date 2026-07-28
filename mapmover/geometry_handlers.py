@@ -475,7 +475,17 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
 
         if county_query_ids:
             try:
-                if prefer_local and county_geom_file.exists():
+                # The live NWS overlay repeatedly resolves US county ids. A
+                # bounded Railway prewarm can hold this exact county bank,
+                # while every other caller still uses predicate pushdown.
+                county_cache_key = ("exact_county", iso3)
+                with _country_parquet_cache_lock:
+                    cached_counties = _country_parquet_cache.get(county_cache_key)
+                    if cached_counties is not None:
+                        _country_parquet_cache.move_to_end(county_cache_key)
+                if cached_counties is not None:
+                    df = cached_counties[cached_counties["loc_id"].isin(county_query_ids)].copy()
+                elif prefer_local and county_geom_file.exists():
                     df = pd.read_parquet(
                         county_geom_file,
                         filters=[("loc_id", "in", county_query_ids)],
@@ -2357,9 +2367,9 @@ def clear_cache():
 def prewarm_geometry() -> None:
     """Pre-warm the global countries CSV into memory.
 
-    All deeper geometry (country level 1/2/3) is loaded on demand as users zoom.
-    Only the global CSV (country outlines at admin level 0) is pre-warmed since
-    it is needed on every page load.
+    The global country layer is always warm.  In cloud mode the USA county
+    bank is also warmed because live NWS frames repeatedly resolve county ids;
+    it remains subject to the same bounded LRU budget as all other geometry.
     """
     import time as _time
 
@@ -2376,6 +2386,27 @@ def prewarm_geometry() -> None:
             logger.warning("prewarm geometry global CSV: empty result in %.1fs", elapsed)
     except Exception as exc:
         logger.warning("prewarm geometry global CSV failed: %s", exc)
+
+    # NWS is the only current live feed with a bounded, repeatedly reused
+    # national administrative geometry set.  Loading the exact county bank
+    # once prevents each retained alert frame from paying an R2/DuckDB lookup.
+    county_geom_file = DATA_ROOT / "countries" / "USA" / "geometry" / "county.parquet"
+    county_cache_key = ("exact_county", "USA")
+    try:
+        with _country_parquet_cache_lock:
+            cached = _country_parquet_cache.get(county_cache_key)
+        if cached is None:
+            counties = select_rows(county_geom_file)
+            if counties is not None and not counties.empty:
+                with _country_parquet_cache_lock:
+                    _cache_country_frame(county_cache_key, counties)
+                logger.info("prewarm geometry USA county bank: %d rows in %.1fs", len(counties), _time.monotonic() - t0)
+            else:
+                logger.warning("prewarm geometry USA county bank: empty result")
+        else:
+            logger.info("prewarm geometry USA county bank: reused %d rows", len(cached))
+    except Exception as exc:
+        logger.warning("prewarm geometry USA county bank failed: %s", exc)
 
     logger.info("Geometry pre-warmer complete")
 
