@@ -1203,15 +1203,24 @@ def _build_wildfire_display_payload(
     return payload
 
 
-def _build_live_hurricane_display_payload(snapshot: dict | None) -> dict | None:
-    """Build one display payload from the merged live advisory collectors."""
+def _build_live_hurricane_display_payload(
+    snapshot: dict | None,
+    *,
+    as_of: datetime | None = None,
+) -> dict | None:
+    """Build one display payload from the merged live advisory collectors.
+
+    ``as_of`` makes retained replay answer the cursor's time rather than the
+    server's wall clock.  That keeps a trail additive between advisory fixes:
+    the last known position remains current until a newer one arrives.
+    """
     if not isinstance(snapshot, dict):
         return None
     summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
     storms = summary.get("storms") if isinstance(summary.get("storms"), list) else []
     features = []
     storm_ids = set()
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
     history_hours = _ops_history_display_hours_for_snapshot(snapshot)
     history_cutoff = now - timedelta(hours=max(history_hours, 1))
 
@@ -1854,7 +1863,12 @@ def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries
     return _build_history_event_payload(feed=feed, in_window=in_window, window_label=window_label)
 
 
-def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | None:
+def _build_snapshot_display_payload(
+    feed: str,
+    snapshot: dict | None,
+    *,
+    as_of: datetime | None = None,
+) -> dict | None:
     if feed == "earthquakes":
         return _build_point_event_display_payload(
             snapshot,
@@ -1879,7 +1893,7 @@ def _build_snapshot_display_payload(feed: str, snapshot: dict | None) -> dict | 
     if feed == WILDFIRE_LIVE_FEED:
         return _build_wildfire_display_payload(snapshot)
     if _is_hurricane_live_feed(feed):
-        return _build_live_hurricane_display_payload(snapshot)
+        return _build_live_hurricane_display_payload(snapshot, as_of=as_of)
     if feed == "currency":
         return _build_currency_display_payload(snapshot)
     return None
@@ -1981,17 +1995,18 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
         feed: load_current_state_snapshot(feed)
         for feed in effective_feeds
     }
-    # The cursor must cover the longest declared display window among its
-    # active feeds. NWS deliberately keeps a longer full-snapshot window; do
-    # not silently crop it back to the generic 72-hour default.
+    # Retained source history can be longer (NWS and hurricane child archives
+    # deliberately are), but the shared Ops replay is a bounded 72-hour
+    # operational cursor. Keep the transport bounded server-side as well as
+    # in the browser.
     # ``max(base, *values)`` turns into ``max(base)`` when this request only
     # has external providers (Aurora/raster) and therefore no collector feed.
     # In that one-argument form Python expects an iterable. Build one explicit
     # collection so a timeline with only external frames remains valid.
-    requested_hours = max([
+    requested_hours = min(DEFAULT_OPS_HISTORY_DISPLAY_HOURS, max([
         max(1, int(history_hours)),
         *(_ops_timeline_display_hours_for_snapshot(snapshot) for snapshot in snapshots.values()),
-    ])
+    ]))
     range_start = now - timedelta(hours=requested_hours)
     feeds: dict[str, list[dict]] = {}
     for feed in effective_feeds:
@@ -2010,7 +2025,14 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             end = next_start
             if end is not None and end < range_start:
                 continue
-            display_payload = _build_snapshot_display_payload(feed, entry)
+            display_snapshot = entry
+            if _is_hurricane_live_feed(feed):
+                # Hurricane fixes are history, not independently-replacing
+                # point snapshots.  At each cursor position carry the last
+                # known location forward and append only real newer fixes, so
+                # a track builds instead of flashing at exact poll moments.
+                display_snapshot = _with_hurricane_history_tracks(entry, entries[:index + 1])
+            display_payload = _build_snapshot_display_payload(feed, display_snapshot, as_of=start)
             if display_payload is None:
                 continue
             display_payload["ops_default_view"] = "snapshot"

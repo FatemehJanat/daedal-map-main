@@ -684,6 +684,47 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual(-151.7, current["properties"]["longitude"])
         self.assertEqual([[-151.7, 21.9], [-153.5, 23.1]], forecast["geometry"]["coordinates"])
 
+    def test_hurricane_timeline_carries_the_last_fix_until_a_newer_fix_arrives(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        first_at = now - timedelta(hours=2)
+        second_at = now - timedelta(hours=1)
+
+        def frame(at, longitude, latitude):
+            return {
+                "collector": "hurricanes_live",
+                "published_at": at.isoformat(),
+                "payload_hash": f"fausto-{at.isoformat()}",
+                "ops_history_display_hours": 72,
+                "payload_summary": {"storms": [{
+                    "storm_id": "EP062026",
+                    "name": "FAUSTO",
+                    "source": "NHC",
+                    "issued_at": at.isoformat(),
+                    "current_position": {
+                        "timestamp": at.isoformat(),
+                        "longitude": longitude,
+                        "latitude": latitude,
+                    },
+                }]},
+            }
+
+        older = frame(first_at, -149.0, 20.2)
+        newer = frame(second_at, -151.7, 21.9)
+        with patch.object(ops, "load_current_state_history", return_value=[older]), patch.object(
+            ops, "load_current_state_snapshot", return_value=newer
+        ):
+            timeline = ops.build_ops_timeline_payload(effective_feeds=["hurricanes_live"])
+
+        frames = timeline["feeds"]["hurricanes_live"]
+        self.assertEqual(2, len(frames))
+        older_kinds = [feature["properties"]["track_kind"] for feature in frames[0]["display_payload"]["geojson"]["features"]]
+        self.assertEqual(["current"], older_kinds)
+        newer_observed = next(
+            feature for feature in frames[1]["display_payload"]["geojson"]["features"]
+            if feature["properties"]["track_kind"] == "observed"
+        )
+        self.assertEqual([[-149.0, 20.2], [-151.7, 21.9]], newer_observed["geometry"]["coordinates"])
+
     def test_logical_wildfire_history_carries_forward_other_child_state(self):
         def child_entry(collector, at, event_id, iso3):
             return {
