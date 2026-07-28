@@ -1015,15 +1015,12 @@ def _simplify_wildfire_perimeter_geometry(geometry: dict, *, max_positions: int)
     polygons = coordinates if geometry_type == "MultiPolygon" else [coordinates]
     if not isinstance(polygons, list):
         return geometry
-    rings: list[list] = []
-    for polygon in polygons:
-        if not isinstance(polygon, list):
-            continue
-        for ring in polygon:
-            if isinstance(ring, list) and len(ring) >= 4:
-                rings.append(ring)
-    total_positions = sum(len(ring) for ring in rings)
-    if total_positions <= max_positions or not rings:
+    total_positions = sum(
+        len(ring)
+        for polygon in polygons if isinstance(polygon, list)
+        for ring in polygon if isinstance(ring, list)
+    )
+    if total_positions <= max_positions:
         return geometry
 
     def compact_ring(ring: list, budget: int) -> list:
@@ -1038,18 +1035,29 @@ def _simplify_wildfire_perimeter_geometry(geometry: dict, *, max_positions: int)
             result.append(result[0])
         return result
 
+    # Source multipolygons can carry thousands of tiny islands/holes. A
+    # per-ring cap is not a payload cap in that case. For the overview keep
+    # the largest exterior rings only; the detailed source geometry remains
+    # available in the current artifact and event drill-down path.
+    exterior_rings = [
+        (index, polygon[0])
+        for index, polygon in enumerate(polygons)
+        if isinstance(polygon, list) and polygon and isinstance(polygon[0], list) and len(polygon[0]) >= 4
+    ]
+    if not exterior_rings:
+        return geometry
+    max_rings = max(1, max_positions // 4)
+    selected_indexes = {
+        index for index, _ring in sorted(exterior_rings, key=lambda item: len(item[1]), reverse=True)[:max_rings]
+    }
+    selected_total = sum(len(ring) for index, ring in exterior_rings if index in selected_indexes)
     simplified_polygons = []
-    for polygon in polygons:
-        if not isinstance(polygon, list):
-            simplified_polygons.append(polygon)
+    for index, polygon in enumerate(polygons):
+        if index not in selected_indexes:
             continue
-        simplified_rings = []
-        for ring in polygon:
-            if not isinstance(ring, list) or len(ring) < 4:
-                simplified_rings.append(ring)
-                continue
-            budget = max(4, round(max_positions * len(ring) / total_positions))
-            simplified_rings.append(compact_ring(ring, budget))
+        ring = polygon[0]
+        budget = max(4, round(max_positions * len(ring) / max(selected_total, 1)))
+        simplified_rings = [compact_ring(ring, budget)]
         simplified_polygons.append(simplified_rings)
     return {
         **geometry,
