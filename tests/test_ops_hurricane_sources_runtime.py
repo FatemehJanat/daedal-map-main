@@ -717,10 +717,14 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         frames = timeline["feeds"]["hurricanes_live"]
         self.assertEqual(2, len(frames))
-        older_kinds = [feature["properties"]["track_kind"] for feature in frames[0]["display_payload"]["geojson"]["features"]]
-        self.assertEqual(["current"], older_kinds)
+        self.assertEqual("hurricane_history", frames[0]["timeline_provider"])
+        # Historical tracks are materialized on demand so the slider receives
+        # its compact frame index immediately. The underlying composition
+        # remains additive: the later frame retains the older fix.
+        composed = ops._with_hurricane_history_tracks(newer, [older, newer])
+        payload = ops._build_live_hurricane_display_payload(composed, as_of=second_at)
         newer_observed = next(
-            feature for feature in frames[1]["display_payload"]["geojson"]["features"]
+            feature for feature in payload["geojson"]["features"]
             if feature["properties"]["track_kind"] == "observed"
         )
         self.assertEqual([[-149.0, 20.2], [-151.7, 21.9]], newer_observed["geometry"]["coordinates"])

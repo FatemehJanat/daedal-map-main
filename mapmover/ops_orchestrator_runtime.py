@@ -1308,7 +1308,18 @@ def _build_live_hurricane_display_payload(
         # while corrected collector snapshots replace the old rows.
         if source_key(storm) == "NHC" and 0.0 < longitude <= 180.0:
             longitude = -longitude
+        if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+            return None
         return [longitude, latitude]
+
+    def distance_km(first: list[float], second: list[float]) -> float:
+        lon1, lat1 = map(math.radians, first)
+        lon2, lat2 = map(math.radians, second)
+        a = (
+            math.sin((lat2 - lat1) / 2) ** 2
+            + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+        )
+        return 6371.0088 * 2 * math.asin(min(1.0, math.sqrt(a)))
 
     def normalized_coord_pair(storm: dict, raw_coord: object) -> list[float] | None:
         if not isinstance(raw_coord, (list, tuple)) or len(raw_coord) < 2:
@@ -1331,6 +1342,7 @@ def _build_live_hurricane_display_payload(
                 and history_cutoff <= observed_time <= now
             )
         ]
+        observed_points.sort(key=lambda point: point_time(point, storm.get("issued_at")) or datetime.min.replace(tzinfo=timezone.utc))
         forecast_points = [
             point for point in (storm.get("forecast_points") or [])
             if (
@@ -1386,9 +1398,24 @@ def _build_live_hurricane_display_payload(
         observed_times = []
         for point in observed_points:
             coord = point_coord(storm, point)
-            if coord:
-                observed.append(coord)
-                observed_times.append(point_time(point, storm.get("issued_at")))
+            observed_at = point_time(point, storm.get("issued_at"))
+            if not coord or observed_at is None:
+                continue
+            if observed and observed_times:
+                prior_at = observed_times[-1]
+                elapsed_hours = max(0.0, (observed_at - prior_at).total_seconds() / 3600.0) if prior_at else 0.0
+                # A real tropical cyclone cannot cross an ocean basin between
+                # two advisory fixes.  Keep generous room for fast motion and
+                # sparse reports, but reject a malformed longitude/latitude
+                # before it turns one bad row into a map-spanning line.
+                allowed_km = 500.0 + (300.0 * elapsed_hours)
+                if elapsed_hours > 0 and distance_km(observed[-1], coord) > allowed_km:
+                    logger.warning("ops hurricane: dropped implausible track jump storm=%s at=%s", storm_id, observed_at.isoformat())
+                    continue
+            if observed and observed[-1] == coord:
+                continue
+            observed.append(coord)
+            observed_times.append(observed_at)
         current_time = point_time(current, storm.get("issued_at"))
         current_in_history_window = current_time is not None and history_cutoff <= current_time <= now
         current_coord = point_coord(storm, current) if current_in_history_window else None
@@ -2029,11 +2056,27 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
                 continue
             display_snapshot = entry
             if _is_hurricane_live_feed(feed):
-                # Hurricane fixes are history, not independently-replacing
-                # point snapshots.  At each cursor position carry the last
-                # known location forward and append only real newer fixes, so
-                # a track builds instead of flashing at exact poll moments.
-                display_snapshot = _with_hurricane_history_tracks(entry, entries[:index + 1])
+                # Hurricane tracks are additive history.  Send a compact
+                # frame index now; constructing every cumulative GeoJSON
+                # payload here made the slider wait on an O(n²) hydrate.
+                # The selected cursor frame is composed and cached on demand
+                # by the dedicated Ops route below.
+                frame = {
+                    "start_at": start.isoformat(),
+                    "end_at": end.isoformat() if end is not None else None,
+                    "payload_hash": entry.get("payload_hash"),
+                    "timeline_provider": "hurricane_history",
+                }
+                # Keep the single live/current payload inline. It is small and
+                # lets the cursor return to Now without another request; only
+                # historical cumulative tracks take the lazy path.
+                if index == len(entries) - 1:
+                    current_payload = _build_snapshot_display_payload(feed, entry, as_of=start)
+                    if current_payload is not None:
+                        frame.pop("timeline_provider", None)
+                        frame["display_payload"] = current_payload
+                frames.append(frame)
+                continue
             display_payload = _build_snapshot_display_payload(feed, display_snapshot, as_of=start)
             if display_payload is None:
                 continue

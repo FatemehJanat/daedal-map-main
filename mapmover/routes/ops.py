@@ -18,6 +18,10 @@ from mapmover.ops_route_runtime import (
 from mapmover.ops_orchestrator_runtime import (
     WILDFIRE_LIVE_FEED,
     _wildfire_perimeter_geometry,
+    _build_live_hurricane_display_payload,
+    _is_hurricane_live_feed,
+    _ops_timeline_entries,
+    _with_hurricane_history_tracks,
     build_ops_timeline_payload,
     load_current_state_history,
     load_current_state_snapshot,
@@ -193,6 +197,37 @@ def _local_nws_timeline_frame_at(raw_at: object) -> dict | None:
         "payload_hash": selected.get("payload_hash"),
         "start_at": (_snapshot_time(selected) or target).isoformat(),
         "geojson": build_nws_alerts_payload_for_snapshot(selected),
+    }
+
+
+def _local_hurricane_timeline_frame_at(raw_at: object) -> dict | None:
+    """Compose one additive hurricane replay frame only when the cursor needs it."""
+    try:
+        target = datetime.fromisoformat(str(raw_at or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    target = target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc)
+    collector = "hurricanes_live"
+    current = load_current_state_snapshot(collector)
+    entries = _ops_timeline_entries(collector, current, load_current_state_history(collector))
+    selected_index = -1
+    for index, entry in enumerate(entries):
+        at = _snapshot_time(entry)
+        if at is not None and at <= target:
+            selected_index = index
+        elif at is not None:
+            break
+    if selected_index < 0:
+        return None
+    selected = entries[selected_index]
+    composed = _with_hurricane_history_tracks(selected, entries[:selected_index + 1])
+    payload = _build_live_hurricane_display_payload(composed, as_of=target)
+    if payload is None:
+        return None
+    return {
+        "payload_hash": selected.get("payload_hash"),
+        "start_at": (_snapshot_time(selected) or target).isoformat(),
+        "display_payload": payload,
     }
 
 
@@ -542,6 +577,18 @@ async def local_ops_timeline_nws_frame_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_nws_frame", "frame": frame})
     except Exception as exc:
         logger.exception("Local Ops NWS timeline frame error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/hurricane-frame")
+async def local_ops_timeline_hurricane_frame_endpoint(req: Request):
+    """Return one additive hurricane replay payload for a selected cursor time."""
+    try:
+        body = await decode_request_body(req)
+        frame = _local_hurricane_timeline_frame_at(body.get("at"))
+        return msgpack_response({"type": "local_ops_hurricane_frame", "frame": frame})
+    except Exception as exc:
+        logger.exception("Ops hurricane timeline frame error")
         return msgpack_error(str(exc), 500)
 
 

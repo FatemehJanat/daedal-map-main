@@ -45,6 +45,9 @@ export const OpsTimeline = {
   nwsRequestToken: 0,
   pointFrameCache: new Map(),
   pointRequestToken: 0,
+  hurricaneFrameCache: new Map(),
+  hurricaneRequestToken: 0,
+  selectedDisplayPayloads: new Map(),
 
   init({ onFrame } = {}) {
     this.element = document.getElementById('opsTimelineContainer');
@@ -58,6 +61,8 @@ export const OpsTimeline = {
     this.selectedMs = null;
     this.nwsFrameCache.clear();
     this.pointFrameCache.clear();
+    this.hurricaneFrameCache.clear();
+    this.selectedDisplayPayloads.clear();
     if (this.element) {
       this.element.hidden = true;
       this.element.replaceChildren();
@@ -210,10 +215,18 @@ export const OpsTimeline = {
         const pointOverlay = getLivePointOverlay(frames[0].overlay_id);
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
         else pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
+      } else if (selected?.timeline_provider === 'hurricane_history') {
+        // The live snapshot is already on-map. Historical additive tracks are
+        // intentionally materialized only after a user moves the cursor so
+        // timeline hydration stays fast even with many retained collector polls.
+        if (ms < this.timeline.currentMs) void this._loadHurricaneFrame(feedId, selected, ms);
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
       } else if (selected?.display_payload) {
         displayPayloads.push(selected.display_payload);
+        this.selectedDisplayPayloads.set(feedId, selected.display_payload);
+      } else if (!feedId.startsWith('external:')) {
+        this.selectedDisplayPayloads.delete(feedId);
       }
       if (feedId.startsWith('external:')) {
         const provider = this.externalProviders.get(feedId.slice('external:'.length));
@@ -224,7 +237,7 @@ export const OpsTimeline = {
     // first hydrate retain the normal Ops snapshot rather than blanking the
     // map; later deliberate scrubs can still show an honestly empty moment.
     if (displayPayloads.length || !preserveCurrent) {
-      this.onFrame?.(displayPayloads, {
+      this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
         at: new Date(ms).toISOString(),
         // Initial hydration can legitimately have retained frames for only a
         // subset of active feeds. Keep their normal current snapshots until
@@ -286,5 +299,30 @@ export const OpsTimeline = {
     }
     if (token !== this.pointRequestToken || this.selectedMs !== selectedMs || !loaded?.geojson) return;
     void getLivePointOverlay(overlayId)?.setOpsTimelineFrame?.(loaded.geojson);
+  },
+
+  async _loadHurricaneFrame(feedId, frame, selectedMs) {
+    const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+    if (!key) return;
+    const token = ++this.hurricaneRequestToken;
+    let loaded = this.hurricaneFrameCache.get(key);
+    if (!loaded) {
+      try {
+        const response = await postMsgpack('/api/local/ops/timeline/hurricane-frame', {
+          at: frame.start_at || new Date(selectedMs).toISOString(),
+        });
+        loaded = response?.frame;
+        if (loaded) this.hurricaneFrameCache.set(key, loaded);
+      } catch (error) {
+        console.warn('OpsTimeline: retained hurricane frame failed', error);
+        return;
+      }
+    }
+    if (token !== this.hurricaneRequestToken || this.selectedMs !== selectedMs || !loaded?.display_payload) return;
+    this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
+    this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
+      at: new Date(selectedMs).toISOString(),
+      preserveMissing: true,
+    });
   },
 };
