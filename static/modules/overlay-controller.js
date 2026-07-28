@@ -1267,6 +1267,22 @@ export const OverlayController = {
     });
   },
 
+  async _hydrateActiveOpsFeedSet(label = 'Ops snapshot') {
+    if (!this._isOpsMode() || typeof ChatManager?.loadOpsFeedSet !== 'function') return false;
+    const feedIds = this._activeOpsTimelineFeedIds();
+    if (!feedIds.length) return false;
+    try {
+      await ChatManager.loadOpsFeedSet(feedIds, {
+        label,
+        preserveWatchUniverse: true,
+      });
+      return true;
+    } catch (error) {
+      console.warn(`OverlayController: Failed to refresh ${label}`, error);
+      return false;
+    }
+  },
+
   _getOpsReportFeedSnapshot(overlayId) {
     const feedId = this._opsFeedIdForOverlay(overlayId);
     const feedSnapshots = Array.isArray(ChatManager?.latestOpsReport?.feed_snapshots)
@@ -3164,40 +3180,23 @@ export const OverlayController = {
     }
 
     if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
-      if (isActive && this.opsSnapshotPayloads.has(overlayId)) {
-        this.renderOpsSnapshotOverlay(overlayId);
-        // The shared Ops cursor is intentionally opt-in per overlay. Do not
-        // hydrate every feed merely because it is selected in an account watch.
-        this._refreshOpsTimelineForActiveOverlays();
-        emitOverlayStatusMessage(overlayId, true, options);
-        return;
-      }
-      if (isActive && this._opsWatchHasOverlay(overlayId)) {
-        // A saved watch can contain a feed that was not part of the initial
-        // rendered overlay set. Fetch the active watch set once before
-        // treating its missing payload as stale; otherwise a valid hurricane
-        // (or any other snapshot-managed event feed) only appears after an
-        // unrelated chat/report refresh.
-        const activeFeedIds = this._activeOpsTimelineFeedIds();
-        if (activeFeedIds.length && typeof ChatManager?.loadOpsFeedSet === 'function') {
-          try {
-            await ChatManager.loadOpsFeedSet(activeFeedIds, {
-              label: `${formatSurfaceLabel(overlayId)} Ops snapshot`,
-              preserveWatchUniverse: true,
-            });
-          } catch (error) {
-            console.warn(`OverlayController: Failed to hydrate Ops snapshot for ${overlayId}`, error);
-          }
-          if (this.opsSnapshotPayloads.has(overlayId)) {
-            this.renderOpsSnapshotOverlay(overlayId);
-            this._refreshOpsTimelineForActiveOverlays();
-            emitOverlayStatusMessage(overlayId, true, options);
-            return;
-          }
+      if (isActive) {
+        // A toggle is also a freshness boundary. Re-read the enabled feed set
+        // before composing the status copy or the first cursor frame, so a
+        // stale page report cannot claim "0 earthquakes" while the collector
+        // already has a newer active snapshot.
+        await this._hydrateActiveOpsFeedSet(`${formatSurfaceLabel(overlayId)} Ops snapshot`);
+        if (this.opsSnapshotPayloads.has(overlayId)) {
+          this.renderOpsSnapshotOverlay(overlayId);
+          this._refreshOpsTimelineForActiveOverlays();
+          emitOverlayStatusMessage(overlayId, true, options);
+          return;
         }
-        this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
-        emitOverlayStatusMessage(overlayId, true, options);
-        return;
+        if (this._opsWatchHasOverlay(overlayId)) {
+          this._clearStaleOpsManagedOverlay(overlayId, 'no current Ops payload');
+          emitOverlayStatusMessage(overlayId, true, options);
+          return;
+        }
       }
       if (
         isActive &&
