@@ -17,6 +17,7 @@ const CURSOR_STEP_MS = 5 * 60 * 1000;
 // the normal cross-overlay scrubber always means "the last three days".
 const SHARED_OPS_HISTORY_MS = 72 * 60 * 60 * 1000;
 const BACKGROUND_PREFETCH_BUDGET_BYTES = 10 * 1024 * 1024;
+const NWS_BACKGROUND_BATCH_SIZE = 24;
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -392,5 +393,41 @@ export const OpsTimeline = {
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
     })();
+
+    const nwsFrames = Object.entries(timeline?.feeds || {})
+      .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'nws_alerts'))
+      .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'nws_alerts'))
+      .reverse();
+    // NWS has an explicit larger cache posture: the complete compact 72-hour
+    // state history is about 110 MB, acceptable for an Ops session and far
+    // smaller than replaying repeated county geometry. Batch it after the
+    // current map is visible so slider playback becomes local-cache work.
+    void this._preloadNwsFrames(nwsFrames, timeline, run);
+  },
+
+  async _preloadNwsFrames(frames, timeline, run) {
+    for (let index = 0; index < frames.length; index += NWS_BACKGROUND_BATCH_SIZE) {
+      if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+      const batch = frames.slice(index, index + NWS_BACKGROUND_BATCH_SIZE);
+      const missing = batch.filter((frame) => {
+        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        return key && !this.nwsFrameCache.has(key);
+      });
+      if (!missing.length) continue;
+      try {
+        const response = await postMsgpack('/api/local/ops/timeline/nws-frames', {
+          at: missing.map((frame) => frame.start_at),
+        });
+        for (const loaded of response?.frames || []) {
+          const key = `${String(loaded?.start_at || '')}:${String(loaded?.payload_hash || '')}`;
+          if (key) this.nwsFrameCache.set(key, loaded);
+        }
+      } catch (error) {
+        console.warn('OpsTimeline: background NWS frame batch failed', error);
+        return;
+      }
+      // Preserve interactive requests and map rendering between batches.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   },
 };

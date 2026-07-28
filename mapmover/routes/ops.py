@@ -200,6 +200,35 @@ def _local_nws_timeline_frame_at(raw_at: object) -> dict | None:
     }
 
 
+def _local_nws_timeline_frames_at(raw_values: object) -> list[dict]:
+    """Build a bounded batch of retained compact NWS map frames.
+
+    Background browser hydration uses this instead of hundreds of individual
+    requests. Full bulletin prose remains out-of-band on the clicked-alert
+    endpoint, and county geometry remains separately cacheable.
+    """
+    if not isinstance(raw_values, list):
+        return []
+    requested = {
+        str(value or "").replace("Z", "+00:00")
+        for value in raw_values
+        if str(value or "").strip()
+    }
+    if not requested:
+        return []
+    frames = []
+    for entry in _local_nws_timeline_entries():
+        at = _snapshot_time(entry)
+        if at is None or at.isoformat() not in requested:
+            continue
+        frames.append({
+            "payload_hash": entry.get("payload_hash"),
+            "start_at": at.isoformat(),
+            "geojson": build_nws_alerts_payload_for_snapshot(entry),
+        })
+    return frames
+
+
 def _local_nws_alert_detail_at(raw_at: object, alert_id: object) -> dict | None:
     """Return full retained bulletin text only for a clicked Ops alert."""
     try:
@@ -608,6 +637,20 @@ async def local_ops_timeline_nws_frame_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_nws_frame", "frame": frame})
     except Exception as exc:
         logger.exception("Local Ops NWS timeline frame error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/nws-frames")
+async def local_ops_timeline_nws_frames_endpoint(req: Request):
+    """Return up to 24 compact retained NWS frames for background hydration."""
+    try:
+        body = await decode_request_body(req)
+        values = body.get("at")
+        if not isinstance(values, list) or len(values) > 24:
+            return msgpack_error("at must be a list of at most 24 retained frame timestamps", 413)
+        return msgpack_response({"type": "local_ops_nws_frames", "frames": _local_nws_timeline_frames_at(values)})
+    except Exception as exc:
+        logger.exception("Local Ops NWS timeline batch error")
         return msgpack_error(str(exc), 500)
 
 

@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
 from mapmover.ops_route_runtime import _public_default_ops_feeds
@@ -13,6 +14,31 @@ class DummyCache:
 
 
 class OpsRouteRuntimeTest(unittest.TestCase):
+    def test_nws_background_batch_returns_compact_selected_frames(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "published_at": now.isoformat(),
+            "payload_hash": "nws-current",
+            "payload_summary": {
+                "alerts": [{
+                    "alert_id": "nws-1",
+                    "event": "Special Marine Warning",
+                    "description": "Detailed retained bulletin text.",
+                    "point": [-77.0, 38.9],
+                }]
+            },
+        }
+        with patch.object(ops_routes, "load_current_state_history", return_value=[]), patch.object(
+            ops_routes, "load_current_state_snapshot", return_value=snapshot
+        ):
+            frames = ops_routes._local_nws_timeline_frames_at([now.isoformat()])
+
+        self.assertEqual(1, len(frames))
+        props = frames[0]["geojson"]["features"][0]["properties"]
+        self.assertEqual("nws-1", props["alert_id"])
+        self.assertNotIn("description", props)
+        self.assertTrue(props["detail_available"])
+
     def test_requested_sources_replace_cached_watch_feeds(self):
         cache = DummyCache()
         cache.map_state["ops_watch"] = {
