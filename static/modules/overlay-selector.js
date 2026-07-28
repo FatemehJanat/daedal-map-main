@@ -629,6 +629,29 @@ function buildCategoriesFromTree(overlayTree) {
     });
   }
 
+  // The published catalog intentionally does not send anonymous visitors its
+  // historical pack sources.  Ops must nevertheless expose the real, public
+  // collector-backed hazard overlays.  Define those leaves here instead of
+  // borrowing Explore catalog entries: the controller hydrates them from the
+  // active Ops watch and its short retained-history window.
+  if (getCurrentOverlayLaneMode() === 'ops') {
+    const opsDisasters = categories.find((cat) => cat.id === 'disasters' && cat.isCategory);
+    const opsLiveHazardOverlays = [
+      { id: 'earthquakes', label: 'Earthquakes', description: 'Recent seismic events', default: false, locked: false, model: 'point-radius', icon: 'E', hasYearFilter: false, live: true },
+      { id: 'wildfires', label: 'Wildfires', description: 'Current wildfire incidents', default: false, locked: false, model: 'point-radius', icon: 'W', hasYearFilter: false, live: true },
+      { id: 'tsunamis', label: 'Tsunamis', description: 'Recent tsunami events', default: false, locked: false, model: 'point-radius', icon: 'T', hasYearFilter: false, live: true },
+      { id: 'volcanoes', label: 'Volcanoes', description: 'Recent volcanic activity', default: false, locked: false, model: 'point-radius', icon: 'V', hasYearFilter: false, live: true }
+    ];
+    if (opsDisasters?.overlays) {
+      const existingIds = new Set(opsDisasters.overlays.map((overlay) => overlay.id));
+      for (const overlay of opsLiveHazardOverlays) {
+        if (!existingIds.has(overlay.id)) {
+          opsDisasters.overlays.push(overlay);
+        }
+      }
+    }
+  }
+
   // Add or extend climate overlays. Some catalogs now provide a Climate
   // category, so merge instead of blindly appending a duplicate section.
   const hardcodedClimateOverlays = [
