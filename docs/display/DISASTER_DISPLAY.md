@@ -314,6 +314,23 @@ For families that do not yet have a proper Ops snapshot collector, the correct
 Ops behavior is "do not render yet" rather than silently falling back to the
 historical animation/parquet path.
 
+### Live retained-replay rendering
+
+Ops disaster overlays render the current collector state immediately, then
+hydrate their declared bounded retained replay cache behind the visible map.
+The shared cursor coordinates time; it does not own or replace individual
+hazard layers. Each overlay must keep its previous coherent frame visible until
+its selected replacement is ready, and must leave every other active overlay
+untouched.
+
+For alert-style overlays, map state is compact: stable alert id, severity,
+times, point/native geometry, and reusable administrative geometry references.
+Long instruction/description text loads only when the user opens that alert.
+For wildfires, a supplied incident point remains visible even when an optional
+perimeter is loaded; the perimeter adds footprint context, not a replacement
+that makes point-only fires disappear. For close viewport perimeters, marker
+first plus zoom/bbox detail is the standard pattern.
+
 ---
 
 ## Frontend Architecture

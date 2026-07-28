@@ -68,6 +68,29 @@ Enforced in overlay-controller.js handleTimeChange ->
 onTimeChangeTimestamp/onTimeChange via the TimeSlider change source
 ('playback' vs 'slider'/'api'/'bounds').
 
+### Bounded live-replay hydration
+
+The Ops retained cursor uses the same timestamp semantics but a different
+initial-load posture from broad Explore history: show the live/current frame
+first, then hydrate the explicitly bounded recent replay cache in the
+background. This is not a playback-tick fetch. It is a one-time, declared
+session cache fill after the map has become usable.
+
+- A compact, measured window may use `background_full` batch hydration.
+  NWS is the reference: frames hold alert state and geometry references while
+  full bulletin text remains an on-click resource.
+- A cumulative event history must not background-fetch the same prior track in
+  every frame merely because it fits a superficial count cap. Use a
+  `delta_stream`/additive-fix representation, or keep a measured
+  `near_cursor` cache until it is converted.
+- A selected frame replaces a provider only after its payload is ready. The
+  previous coherent frame remains visible during decode/fetch.
+- Every active provider receives the same cursor time but owns its own source
+  and cache; one overlay's background hydration cannot erase another overlay.
+
+The retained browser budget, batch size, and encoded three-day/window size are
+release-checked display contract values, not incidental frontend tuning.
+
 ## What datasets must provide
 
 Registering with the slider (`setTimeRange` / scale config):

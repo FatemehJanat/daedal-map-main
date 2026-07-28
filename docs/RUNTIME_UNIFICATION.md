@@ -210,6 +210,26 @@ optional event geometry remains marker-first and may be requested by viewport
 after a declared zoom threshold. Current-only detail must never be injected
 into a historical replay frame.
 
+### Current-first temporal hydration
+
+A live/recent overlay has two separately owned browser holdings: an
+authoritative current frame and a bounded retained replay cache. It must render
+the current frame first. The shared timeline index and retained frames may then
+hydrate in the background without restoring a loading curtain or replacing a
+coherent on-map frame with emptiness.
+
+All active providers share one cursor, but retain their own layer and frame
+cache. Selecting a time may update one provider only; it must not clear, lock,
+or replace another provider's layer. A replacement frame is decoded before it
+is painted, so slider movement never creates intentional blank/flash frames.
+
+Each feed declares one measured browser-cache posture: `background_full` for
+a compact bounded window, `near_cursor` for a limited warm neighborhood,
+`viewport_detail` for optional geometry, or `delta_stream` for additive tracks
+and other histories. Detail text is an event resource, not a repeated frame
+field. The NWS pattern is state + county references + on-click bulletin text;
+it is shared runtime behavior, not an Ops-only exception.
+
 ## What may remain mode-specific
 
 A mode can own:
