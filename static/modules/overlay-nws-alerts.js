@@ -436,6 +436,13 @@ export const NwsAlertsOverlay = {
 
   async setOpsTimelineFrame(rawFrame) {
     if (!this.enabled || !rawFrame) return false;
+    // Geometry resolution is asynchronous. A later cursor position must win
+    // even when an earlier retained frame finishes materializing afterwards.
+    // This matters most when NWS shares the cursor with rasters/aurora, where
+    // several independent providers can otherwise make old county state look
+    // sticky.
+    const timelineRenderToken = (this.opsTimelineRenderToken || 0) + 1;
+    this.opsTimelineRenderToken = timelineRenderToken;
     // Polling continues to update currentData, but must not repaint a
     // historical alert state chosen through the shared Ops cursor.
     this.opsTimelineLocked = true;
@@ -443,6 +450,7 @@ export const NwsAlertsOverlay = {
       ? rawFrame
       : { type: 'FeatureCollection', features: [] };
     const raw = await materializeCountyGeometry(response);
+    if (timelineRenderToken !== this.opsTimelineRenderToken) return false;
     this.opsTimelineFrameAt = String(response?.detail_at || '').trim() || null;
     const frame = decorateAlertFeatures(raw);
     this.lastData = frame;
@@ -451,6 +459,7 @@ export const NwsAlertsOverlay = {
   },
 
   clearOpsTimelineFrame() {
+    this.opsTimelineRenderToken = (this.opsTimelineRenderToken || 0) + 1;
     this.opsTimelineLocked = false;
     this.opsTimelineFrameAt = this.currentDetailAt;
     if (this.currentData) {
