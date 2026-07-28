@@ -317,6 +317,44 @@ def _compact_tool_result_for_prompt(tool_name: str, tool_result: dict) -> dict:
         if key in tool_result:
             compact[key] = tool_result.get(key)
 
+    if tool_name == "ask_research_sources":
+        compact.update({
+            "outcome": tool_result.get("outcome"),
+            "pack_ids": tool_result.get("pack_ids") or [],
+            "source_ids": tool_result.get("source_ids") or [],
+            "source_boundary": tool_result.get("source_boundary") or [],
+            "binding_rule": tool_result.get("binding_rule"),
+        })
+        return compact
+
+    if tool_name == "get_research_pack":
+        pack = tool_result.get("pack") or {}
+        compact.update({
+            "outcome": tool_result.get("outcome"),
+            "source_boundary": tool_result.get("source_boundary") or [],
+            "pack": {
+                "pack_id": pack.get("pack_id"),
+                "source_ids": pack.get("source_ids") or [],
+                "sources": pack.get("sources") or [],
+            },
+            "research_query_contract": tool_result.get("research_query_contract") or {},
+        })
+        return compact
+
+    if tool_name == "query_research_source_data":
+        rows = tool_result.get("rows") or []
+        compact.update({
+            "outcome": tool_result.get("outcome"),
+            "source_id": tool_result.get("source_id"),
+            "metrics": tool_result.get("metrics") or [],
+            "filters_applied": tool_result.get("filters_applied") or {},
+            "source_boundary": tool_result.get("source_boundary") or [],
+            "rows_preview": rows[:TOOL_ROWS_PREVIEW_LIMIT],
+            "returned_row_count": len(rows),
+            "warnings": tool_result.get("warnings") or [],
+        })
+        return compact
+
     if tool_name == "list_artifacts":
         artifacts = tool_result.get("artifacts") or []
         compact["artifacts"] = [

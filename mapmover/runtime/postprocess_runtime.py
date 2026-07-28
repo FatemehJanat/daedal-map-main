@@ -100,6 +100,10 @@ from mapmover.runtime.postprocess_source_helpers import (
     source_supports_events as source_supports_events_impl,
 )
 from mapmover.runtime.postprocess_validation import validate_item as validate_item_impl
+from mapmover.runtime.source_response_semantics import (
+    append_source_caveats,
+    collect_metric_caveats,
+)
 from mapmover.runtime.query_intent_primitives import (
     query_explicit_view_mode as query_explicit_view_mode_impl,
     query_prefers_event_source as query_prefers_event_source_impl,
@@ -494,16 +498,22 @@ def run_postprocess_order(
 
     metric_warning = build_metric_warning(metric_count, policy=metric_warning_policy)
 
+    display_summary = rewrite_processed_order_summary_impl(
+        order,
+        validated_items,
+        load_source_metadata_func=load_source_metadata,
+    )
+    source_caveats = collect_metric_caveats(
+        validated_items,
+        load_source_metadata_func=load_source_metadata,
+    )
+
     return build_processed_order_result(
         order,
         validated_items=validated_items,
         derived_specs=derived_specs,
         validation_summary=summary,
         all_valid=len(errors) == 0,
-        summary=rewrite_processed_order_summary_impl(
-            order,
-            validated_items,
-            load_source_metadata_func=load_source_metadata,
-        ),
+        summary=append_source_caveats(display_summary, source_caveats),
         metric_warning=metric_warning,
     )

@@ -3,9 +3,17 @@ import unittest
 
 from mapmover.duckdb_helpers import build_guarded_connection
 from mapmover import research_tools
+from mapmover.research_prompt import RESEARCH_SYSTEM_PROMPT
 
 
 class ResearchToolGuardTests(unittest.TestCase):
+    def test_app_research_uses_the_source_bound_mcp_data_contract(self):
+        tool_names = {tool["name"] for tool in research_tools.RESEARCH_TOOL_DEFINITIONS}
+        self.assertTrue({"ask_research_sources", "get_research_pack", "query_research_source_data"}.issubset(tool_names))
+        self.assertNotIn("query_artifact_slice", tool_names)
+        self.assertNotIn("query_artifact_subset_join", tool_names)
+        self.assertIn("Copy the full source_ids boundary unchanged", RESEARCH_SYSTEM_PROMPT)
+
     def test_build_guarded_connection_applies_memory_limit(self):
         previous = os.environ.get("DUCKDB_MEMORY_LIMIT")
         os.environ["DUCKDB_MEMORY_LIMIT"] = "128MB"

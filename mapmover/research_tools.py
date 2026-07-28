@@ -6,6 +6,8 @@ JSON-serializable results for LLM context.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import math
 import os
 from pathlib import Path
@@ -13,7 +15,13 @@ from typing import Any
 
 from mapmover import logger
 from mapmover.corpus_registry import corpus_registry
-from mapmover.data_loading import get_source_path, load_source_metadata, load_source_reference
+from mapmover.data_loading import (
+    get_source_path,
+    load_api_pack_detail,
+    load_catalog,
+    load_source_metadata,
+    load_source_reference,
+)
 from mapmover.loc_id_join import apply_loc_id_subset_filter, unique_loc_ids_from_rows
 from mapmover.source_time_contract import build_metric_year_ranges
 from mapmover.duckdb_helpers import (
@@ -27,6 +35,7 @@ from mapmover.foundation_helpers import bridge_loc_id_family, get_foundation_hel
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.runtime.result_cap import apply_row_count_cap_to_payload
 from mapmover.runtime.source_hints import build_reference_summary, build_source_routing_guidance, get_routing_hints
+from mapmover.runtime.source_hints import get_metric_alias_matches
 from mapmover.runtime.warning_policy import DEFAULT_DISPLAY_WARNING_POLICY
 from mapmover.runtime.warning_primitives import (
     interrupt_display_payload_if_needed,
@@ -41,76 +50,41 @@ except Exception:  # pragma: no cover - optional runtime dependency
 
 RESEARCH_TOOL_DEFINITIONS = [
     {
-        "name": "list_artifacts",
-        "description": "List the artifacts currently loaded in the active research corpus.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-    {
-        "name": "describe_artifact",
-        "description": "Get metadata, fields, metrics, geography, and summary for one loaded artifact.",
+        "name": "ask_research_sources",
+        "description": "Bind this question to the explicit source_ids already loaded in the active Research corpus. Call before any evidence query. This never calls an LLM.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "artifact_id": {"type": "string"},
+                "pack_ids": {"type": "array", "items": {"type": "string"}},
+                "source_ids": {"type": "array", "items": {"type": "string"}},
+                "question": {"type": "string"},
             },
-            "required": ["artifact_id"],
         },
     },
     {
-        "name": "query_artifact_slice",
-        "description": "Return a small filtered, grouped, sorted slice from one loaded artifact. Grouped numeric metrics include sum, avg, count, min, and max fields.",
+        "name": "get_research_pack",
+        "description": "Read the published source contract for one bound pack before constructing a query: metrics, fields, time, geography, and source guidance.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "artifact_id": {"type": "string"},
-                "fields": {"type": "array", "items": {"type": "string"}},
-                "metrics": {"type": "array", "items": {"type": "string"}},
-                "filters": {"type": "object"},
-                "group_by": {"type": "array", "items": {"type": "string"}},
-                "order_by": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field": {"type": "string"},
-                            "direction": {"type": "string", "enum": ["asc", "desc"]},
-                        },
-                    },
-                },
+                "pack_id": {"type": "string"},
+                "source_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pack_id"],
+        },
+    },
+    {
+        "name": "query_research_source_data",
+        "description": "Run one deterministic query_dataset-style query against one concrete source_id inside the full source_ids boundary returned by ask_research_sources. This is the same source-query contract used by the Research MCP and never calls an LLM.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_ids": {"type": "array", "items": {"type": "string"}},
+                "pack_ids": {"type": "array", "items": {"type": "string"}},
+                "query": {"type": "object"},
                 "limit": {"type": "integer", "minimum": 1},
             },
-            "required": ["artifact_id"],
-        },
-    },
-    {
-        "name": "query_artifact_subset_join",
-        "description": "Query one artifact after restricting it to the loc_ids enumerated by another loaded artifact. Use when one artifact defines a subset and the other holds the metric values.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "artifact_id": {"type": "string"},
-                "subset_artifact_id": {"type": "string"},
-                "subset_filters": {"type": "object"},
-                "fields": {"type": "array", "items": {"type": "string"}},
-                "metrics": {"type": "array", "items": {"type": "string"}},
-                "filters": {"type": "object"},
-                "group_by": {"type": "array", "items": {"type": "string"}},
-                "order_by": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field": {"type": "string"},
-                            "direction": {"type": "string", "enum": ["asc", "desc"]},
-                        },
-                    },
-                },
-                "limit": {"type": "integer", "minimum": 1},
-            },
-            "required": ["artifact_id", "subset_artifact_id"],
+            "required": ["source_ids", "query"],
         },
     },
     {
@@ -147,19 +121,6 @@ RESEARCH_TOOL_DEFINITIONS = [
             "required": ["artifact_id"],
         },
     },
-    {
-        "name": "bridge_loc_ids",
-        "description": "Translate loc_ids between local/canonical and geometry/global families using the shared runtime crosswalk helper. Use when loaded artifacts appear to describe the same geography level but their loc_ids do not match.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "artifact_id": {"type": "string"},
-                "loc_ids": {"type": "array", "items": {"type": "string"}},
-                "target_family": {"type": "string", "enum": ["geometry", "local"]},
-            },
-            "required": ["loc_ids"],
-        },
-    },
 ]
 
 
@@ -169,11 +130,269 @@ RESEARCH_TOOL_MAX_INPUT_ROWS = max(
 )
 
 
+def _normalize_source_ids(value) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return list(dict.fromkeys(str(item or "").strip() for item in values if str(item or "").strip()))
+
+
+def _active_research_source_ids(session_id: str) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(artifact.get("source_id") or "").strip()
+            for artifact in corpus_registry.list_artifacts(session_id)
+            if str(artifact.get("source_id") or "").strip()
+        )
+    )
+
+
+def _build_research_query_contract(sources: list[dict], *, boundary: list[str]) -> dict:
+    """Match the MCP's query-planning guidance for the app-side client."""
+    contracts: list[dict] = []
+    for source in sources:
+        source_id = str(source.get("source_id") or "").strip()
+        if not source_id:
+            continue
+        contract = {
+            "source_id": source_id,
+            "metric_ids": sorted((source.get("metrics") or {}).keys()),
+            "filterable_fields": list(source.get("filterable_fields") or []),
+            "sortable_fields": list(source.get("sortable_fields") or []),
+            "location_field": source.get("location_field"),
+            "time_field": source.get("time_field"),
+            "temporal_coverage": source.get("temporal_coverage"),
+        }
+        try:
+            from mapmover.api_query_runtime import get_api_source_spec
+            spec = get_api_source_spec(source_id)
+        except Exception:
+            spec = None
+        if spec is not None:
+            contract.update({
+                "metric_ids": sorted(spec.metrics.keys()),
+                "filterable_fields": sorted(spec.filterable_fields),
+                "sortable_fields": sorted(spec.sortable_fields),
+                "default_limit": spec.default_limit,
+                "max_limit": spec.max_limit,
+                "time_granularity": spec.time_granularity,
+                "location_filter_mode": spec.location_filter_mode,
+            })
+        semantics = {
+            metric_id: metric.get("response_semantics")
+            for metric_id, metric in (source.get("metrics") or {}).items()
+            if isinstance(metric, dict) and isinstance(metric.get("response_semantics"), dict)
+        }
+        if semantics:
+            contract["metric_response_semantics"] = semantics
+        contracts.append(contract)
+    return {
+        "execution_tool": "query_research_source_data",
+        "boundary_argument": "Copy the exact source_ids returned by ask_research_sources into every query_research_source_data call.",
+        "query_payload": {
+            "source_id": "One source_id inside the active boundary.",
+            "metrics": "Exact metric_ids from that source contract.",
+            "filters.region_ids": "Canonical geographic loc_ids.",
+            "filters.time": "Use {value} or {start, end}; timestamp sources use ISO-8601 timestamps.",
+            "filters.equals": "Exact matches for published filterable fields.",
+            "sort": "Exact sortable fields or selected metric aliases.",
+            "limit": "Positive integer no greater than the selected source max_limit.",
+        },
+        "rules": [
+            "Select only metrics the question needs; do not add an unrelated severity or observation metric.",
+            "Query one concrete source inside the full boundary at a time.",
+            "A shared loc_id field is not proof of a join; query compatible rows or a source-owned bridge before claiming one.",
+            "Use only returned rows and source metadata for claims.",
+        ],
+        "sources": contracts,
+    }
+
+
+def _bind_research_sources(session_id: str, tool_input: dict) -> dict:
+    """Bind the app Research turn to the same explicit source boundary as MCP."""
+    active_source_ids = _active_research_source_ids(session_id)
+    requested_source_ids = _normalize_source_ids(tool_input.get("source_ids"))
+    requested_pack_ids = _normalize_source_ids(tool_input.get("pack_ids"))
+    active_by_pack: dict[str, list[str]] = {}
+    for source_id in active_source_ids:
+        pack_id = str((load_source_metadata(source_id) or {}).get("pack_id") or "").strip()
+        if pack_id:
+            active_by_pack.setdefault(pack_id, []).append(source_id)
+
+    boundary = requested_source_ids or [
+        source_id
+        for pack_id in requested_pack_ids
+        for source_id in active_by_pack.get(pack_id, [])
+    ]
+    if not boundary and not requested_pack_ids:
+        boundary = active_source_ids
+    unavailable = [source_id for source_id in boundary if source_id not in active_source_ids]
+    missing_packs = [pack_id for pack_id in requested_pack_ids if not active_by_pack.get(pack_id)]
+    if unavailable or missing_packs or not boundary:
+        return {
+            "tool_name": "ask_research_sources",
+            "outcome": "error",
+            "error": {
+                "code": "source_outside_active_corpus",
+                "message": "Research can query only sources currently loaded in this corpus.",
+                "available_source_ids": active_source_ids,
+                "unavailable_source_ids": unavailable,
+                "unavailable_pack_ids": missing_packs,
+            },
+        }
+    pack_ids = list(
+        dict.fromkeys(
+            str((load_source_metadata(source_id) or {}).get("pack_id") or "").strip()
+            for source_id in boundary
+            if str((load_source_metadata(source_id) or {}).get("pack_id") or "").strip()
+        )
+    )
+    return {
+        "tool_name": "ask_research_sources",
+        "outcome": "ok",
+        "pack_ids": pack_ids,
+        "source_ids": boundary,
+        "source_boundary": boundary,
+        "binding_rule": "Copy this exact source_ids list unchanged into every query_research_source_data call.",
+        "server_llm_used": False,
+        "reasoning_owner": "client_llm",
+        "execution_path": "shared_dataset_query_runtime",
+    }
+
+
+def _get_bound_research_pack(session_id: str, tool_input: dict) -> dict:
+    pack_id = str(tool_input.get("pack_id") or "").strip()
+    active_source_ids = _active_research_source_ids(session_id)
+    boundary = _normalize_source_ids(tool_input.get("source_ids")) or active_source_ids
+    if not pack_id:
+        return {"tool_name": "get_research_pack", "outcome": "error", "error": {"code": "missing_pack_id"}}
+    detail = load_api_pack_detail(pack_id) or {}
+    if not detail:
+        catalog = load_catalog() or {}
+        pack_row = next(
+            (row for row in catalog.get("packs") or [] if str(row.get("pack_id") or "").strip() == pack_id),
+            {},
+        )
+        detail = dict(pack_row or {})
+        detail["sources"] = []
+        for source_id in detail.get("source_ids") or []:
+            metadata = load_source_metadata(source_id) or {}
+            if not metadata:
+                continue
+            detail["sources"].append({
+                "source_id": source_id,
+                "source_name": metadata.get("source_name") or source_id,
+                "description": metadata.get("description") or "",
+                "data_type": metadata.get("data_type") or "metrics",
+                "location_field": metadata.get("location_field") or "loc_id",
+                "time_field": metadata.get("time_field"),
+                "temporal_coverage": metadata.get("temporal_coverage"),
+                "metrics": metadata.get("metrics") or {},
+                "filterable_fields": metadata.get("filterable_fields") or [],
+                "sortable_fields": metadata.get("sortable_fields") or [],
+                "reference_guidance": load_source_reference(source_id) or {},
+            })
+    sources = [
+        source for source in detail.get("sources") or []
+        if str(source.get("source_id") or "").strip() in boundary
+        and str(source.get("source_id") or "").strip() in active_source_ids
+    ]
+    if not sources:
+        return {
+            "tool_name": "get_research_pack",
+            "outcome": "error",
+            "error": {"code": "pack_outside_active_corpus", "available_source_ids": active_source_ids},
+        }
+    return {
+        "tool_name": "get_research_pack",
+        "outcome": "ok",
+        "pack": {**detail, "source_ids": [str(source.get("source_id")) for source in sources], "sources": sources},
+        "source_boundary": boundary,
+        "research_query_contract": _build_research_query_contract(sources, boundary=boundary),
+        "server_llm_used": False,
+        "reasoning_owner": "client_llm",
+        "execution_path": "shared_dataset_query_runtime",
+    }
+
+
+def _query_bound_research_source(session_id: str, tool_input: dict, *, original_query: str = "") -> dict:
+    """Execute the MCP's query_dataset payload through the shared app executor."""
+    boundary = _normalize_source_ids(tool_input.get("source_ids"))
+    active_source_ids = _active_research_source_ids(session_id)
+    query = dict(tool_input.get("query") or {})
+    source_id = str(query.get("source_id") or "").strip()
+    if not boundary or not source_id or source_id not in boundary or source_id not in active_source_ids:
+        return {
+            "tool_name": "query_research_source_data",
+            "outcome": "error",
+            "error": {"code": "source_outside_boundary", "allowed_source_ids": boundary, "requested_source_id": source_id},
+        }
+    if tool_input.get("limit") is not None and "limit" not in query:
+        query["limit"] = tool_input.get("limit")
+    metadata = load_source_metadata(source_id) or {}
+    matched_metrics = [metric for _, metric in get_metric_alias_matches(metadata, original_query)]
+    specific_metrics = list(dict.fromkeys(metric for metric in matched_metrics if metric != "event_count"))
+    intended_metrics = specific_metrics or list(dict.fromkeys(matched_metrics))
+    if len(intended_metrics) == 1:
+        # The source owns its aliases. A single explicit metric intent wins
+        # over an LLM's attempt to decorate a table with adjacent fields.
+        query["metrics"] = intended_metrics
+    try:
+        from starlette.requests import Request
+        from mapmover.routes.api_query import execute_query_dataset_payload
+
+        request_headers = [(b"accept", b"application/json"), (b"user-agent", b"DaedalMap-Research/0.2")]
+        # Cloud QA for a paid pack must exercise the published data path with a
+        # real trusted-artifact credential.  This is intentionally opt-in and
+        # limited to an already-tagged QA suite; it never changes ordinary
+        # Research traffic or bypasses server-side token validation.
+        qa_artifact_token = os.getenv("QA_RESEARCH_ARTIFACT_TOKEN", "").strip()
+        if qa_artifact_token and os.getenv("LLM_USAGE_FORCE_QA_USER_ID", "").strip():
+            request_headers.append((b"authorization", f"Bearer {qa_artifact_token}".encode("utf-8")))
+        request = Request({
+            "type": "http", "method": "POST", "path": "/api/v1/query/dataset",
+            "headers": request_headers,
+            "client": ("research", 0), "server": ("research", 0), "scheme": "http", "query_string": b"",
+        })
+        # This is an in-process, corpus-bound Research tool call, not the
+        # public endpoint. The MCP's local executor accepts the same bounded
+        # source query without the public anti-scan gate.
+        request.state.research_source_contract = True
+        response = asyncio.run(execute_query_dataset_payload(request, query))
+        result = json.loads(bytes(response.body).decode("utf-8"))
+    except Exception as exc:
+        return {"tool_name": "query_research_source_data", "outcome": "error", "error": {"code": "data_query_failed", "message": str(exc)}}
+    if response.status_code >= 400:
+        error = result.get("error") if isinstance(result.get("error"), dict) else result
+        return {"tool_name": "query_research_source_data", "outcome": "error", "error": {"code": error.get("code") or "shared_query_failed", "message": error.get("message")}, "source_boundary": boundary}
+    return {
+        "tool_name": "query_research_source_data",
+        "outcome": "ok",
+        **result,
+        "source_boundary": boundary,
+        "server_llm_used": False,
+        "reasoning_owner": "client_llm",
+        "execution_path": "shared_dataset_query_runtime",
+    }
+
+
 def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict:
     if not isinstance(tool_input, dict):
         return {}
 
     normalized: dict[str, Any] = {}
+    if tool_name in {"ask_research_sources", "get_research_pack", "query_research_source_data"}:
+        for key in ("source_ids", "pack_ids"):
+            if key in tool_input:
+                normalized[key] = _normalize_source_ids(tool_input.get(key))
+        if "question" in tool_input:
+            normalized["question"] = str(tool_input.get("question") or "")
+        if "pack_id" in tool_input:
+            normalized["pack_id"] = str(tool_input.get("pack_id") or "").strip()
+        if isinstance(tool_input.get("query"), dict):
+            normalized["query"] = dict(tool_input["query"])
+        if "limit" in tool_input:
+            normalized["limit"] = tool_input.get("limit")
+        return normalized
+
     artifact_id = tool_input.get("artifact_id")
     if artifact_id is not None:
         normalized["artifact_id"] = str(artifact_id)
@@ -1562,9 +1781,16 @@ def execute_research_tool(
     *,
     force_large_display: bool = False,
     display_warning_policy=DEFAULT_DISPLAY_WARNING_POLICY,
+    original_query: str = "",
 ) -> dict:
     try:
         tool_input = _normalize_tool_input(tool_name, tool_input)
+        if tool_name == "ask_research_sources":
+            return _bind_research_sources(session_id, tool_input)
+        if tool_name == "get_research_pack":
+            return _get_bound_research_pack(session_id, tool_input)
+        if tool_name == "query_research_source_data":
+            return _query_bound_research_source(session_id, tool_input, original_query=original_query)
         if tool_name == "bridge_loc_ids":
             loc_ids = tool_input.get("loc_ids") or []
             artifact_id = tool_input.get("artifact_id")

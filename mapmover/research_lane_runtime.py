@@ -48,11 +48,9 @@ from mapmover.llm_usage import ensure_recorder
 
 
 RESEARCH_TOOL_PROGRESS_MESSAGES = {
-    "list_artifacts": "Listing loaded research data...",
-    "describe_artifact": "Inspecting an artifact...",
-    "bridge_loc_ids": "Checking the loc_id bridge...",
-    "query_artifact_slice": "Reading values from your workspace...",
-    "query_artifact_subset_join": "Joining loaded artifacts by loc_id...",
+    "ask_research_sources": "Binding the Research source corpus...",
+    "get_research_pack": "Inspecting the published source contract...",
+    "query_research_source_data": "Querying grounded source rows...",
     "build_artifact_display_subset": "Preparing the map display...",
 }
 
@@ -216,7 +214,7 @@ def run_research_chat(
                 query=query,
             )
 
-        return finalize_research_response(
+        final_result = finalize_research_response(
             response=response,
             client=client,
             model=model,
@@ -248,6 +246,10 @@ def run_research_chat(
             broad_research_fallback_message_func=_broad_research_fallback_message,
             normalize_research_result_func=normalize_research_result,
         )
+        # Keep an auditable record of the bounded tool choices behind this
+        # answer. It contains inputs/outcomes only, never copied source rows.
+        final_result["research_tool_trace"] = tool_state.get("tool_trace") or []
+        return final_result
     finally:
         if owns_main:
             usage_recorder.flush(skip_if_empty=True)

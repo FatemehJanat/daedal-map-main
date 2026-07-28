@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .source_hints import (
+    get_metric_alias_matches,
     get_routing_hints,
     get_single_metric_default,
     get_supported_geography_summary,
@@ -13,6 +14,25 @@ from .source_hints import (
     source_geometry_kind,
     source_geometry_subkind,
 )
+
+
+def _should_enforce_event_count_intent(
+    query: str,
+    metadata: dict | None,
+    inferred_metric: str | None,
+) -> bool:
+    """Keep a plain event-listing request from acquiring an unrelated metric.
+
+    This is deliberately source-neutral: a source opts in by declaring an
+    ``event_count`` alias.  We only replace an LLM-selected metric when every
+    explicit metric phrase in the user's query resolves to that event-count
+    metric.  A query that also names deaths, water height, damage, etc. keeps
+    its more specific requested metric.
+    """
+    if str(inferred_metric or "").strip() != "event_count":
+        return False
+    matches = get_metric_alias_matches(metadata, query)
+    return bool(matches) and {metric for _, metric in matches} == {"event_count"}
 
 
 def _coerce_year_hint(value) -> int | None:
@@ -360,7 +380,7 @@ def validate_item(
         else:
             metadata = load_source_metadata_func(source_id)
         inferred_metric = preferred_metric or select_query_guided_metric(query, metadata)
-        if inferred_metric and not metric:
+        if inferred_metric and (not metric or _should_enforce_event_count_intent(query, metadata, inferred_metric)):
             item["metric"] = inferred_metric
             metric = inferred_metric
         inferred_geo_level = infer_requested_geo_level_from_query(query, metadata)

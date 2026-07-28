@@ -5,6 +5,32 @@ from __future__ import annotations
 import json
 
 
+def _requires_cross_source_query_evidence(query: str) -> bool:
+    """Return whether a question needs returned rows, not metadata alone.
+
+    Source contracts can establish what is *possible*, but cannot establish that
+    two sources actually share compatible rows.  Keep this deliberately narrow
+    so definition/availability questions remain metadata-only.
+    """
+    normalized = " ".join(str(query or "").casefold().split())
+    cross_source_terms = (
+        "normalized", "per capita", "per-capita", "join", "bridge",
+    )
+    return any(term in normalized for term in cross_source_terms)
+
+
+def _has_loc_id_bridge_query(tool_trace: list[dict]) -> bool:
+    """Whether a cross-source answer actually tried a returned loc_id bridge."""
+    for entry in tool_trace:
+        if not isinstance(entry, dict) or entry.get("name") != "query_research_source_data":
+            continue
+        query = (entry.get("input") or {}).get("query") or {}
+        filters = query.get("filters") or {} if isinstance(query, dict) else {}
+        if isinstance(filters, dict) and filters.get("region_ids"):
+            return True
+    return False
+
+
 def build_research_messages(
     *,
     prompt_manifest: dict,
@@ -71,8 +97,11 @@ def run_research_tool_loop(
     final_displays: list[dict] = []
     display_warning = None
     tool_iterations_used = 0
+    tool_trace: list[dict] = []
     recent_tool_signatures: list[str] = []
     last_guardrail_message: str | None = None
+    missing_cross_source_evidence_prompted = False
+    missing_loc_id_bridge_prompted = False
 
     for iteration in range(max_tool_iterations + 1):
         try:
@@ -99,6 +128,52 @@ def run_research_tool_loop(
             raise
 
         if response.stop_reason != "tool_use":
+            has_data_query = any(
+                entry.get("name") == "query_research_source_data"
+                for entry in tool_trace
+                if isinstance(entry, dict)
+            )
+            if (
+                not missing_cross_source_evidence_prompted
+                and _requires_cross_source_query_evidence(query)
+                and not has_data_query
+            ):
+                # Do not let a fluent metadata-only response turn a possible
+                # join into a claimed one. Give the model one bounded repair
+                # turn to obtain row evidence, then let its final answer stand.
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "This cross-source comparison has no returned data-query evidence yet. "
+                        "Before answering, call query_research_source_data for the relevant "
+                        "sources. For a claimed join, verify a compatible real row or state "
+                        "plainly that the join is not confirmed."
+                    ),
+                })
+                missing_cross_source_evidence_prompted = True
+                continue
+            if (
+                _requires_cross_source_query_evidence(query)
+                and has_data_query
+                and not missing_loc_id_bridge_prompted
+                and not _has_loc_id_bridge_query(tool_trace)
+            ):
+                # Independent top-N samples are not join evidence. Require the
+                # second source to be queried with a concrete loc_id obtained
+                # from the first source, or a plainly bounded non-confirmation.
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "The returned queries are independent samples, not a loc_id bridge. "
+                        "Take one concrete loc_id returned by one source and query the other "
+                        "source with filters.region_ids for that exact id. Only then claim a "
+                        "compatible join; otherwise say the attempted exact-id bridge did not match."
+                    ),
+                })
+                missing_loc_id_bridge_prompted = True
+                continue
             break
         tool_iterations_used += 1
 
@@ -122,6 +197,24 @@ def run_research_tool_loop(
                     block.input,
                     force_large_display=force_large_display,
                     display_warning_policy=display_warning_policy,
+                    original_query=query,
+                )
+                tool_trace.append(
+                    {
+                        "name": block.name,
+                        "input": block.input if isinstance(block.input, dict) else {},
+                        "outcome": tool_result.get("outcome") if isinstance(tool_result, dict) else None,
+                        "effective_metrics": (
+                            list(tool_result.get("metrics") or [])
+                            if isinstance(tool_result, dict) and block.name == "query_research_source_data"
+                            else []
+                        ),
+                        "error_code": (
+                            ((tool_result.get("error") or {}).get("code"))
+                            if isinstance(tool_result, dict) and isinstance(tool_result.get("error"), dict)
+                            else None
+                        ),
+                    }
                 )
                 recent_tool_signatures.append(tool_call_signature_func(block.name, block.input))
                 if len(recent_tool_signatures) > 8:
@@ -173,6 +266,7 @@ def run_research_tool_loop(
         "final_display": final_display,
         "final_displays": final_displays,
         "tool_iterations_used": tool_iterations_used,
+        "tool_trace": tool_trace,
     }
 
 

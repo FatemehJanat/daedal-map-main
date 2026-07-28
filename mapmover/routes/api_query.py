@@ -948,7 +948,11 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         query_scope=query_scope,
         access_lane=current_access_lane(pack_id_hint=spec.pack_id),
     )
-    scope_rejection = query_scope_rejection(query_scope)
+    # Corpus-bound Research invokes this executor in-process with the same
+    # explicit source/query contract used by Research MCP. Its source boundary
+    # and tool limits are the safeguard; the public anti-scan gate would make
+    # the two supported Research surfaces disagree on the same query.
+    scope_rejection = None if getattr(req.state, "research_source_contract", False) else query_scope_rejection(query_scope)
     if scope_rejection:
         return error_response(
             request_id,
