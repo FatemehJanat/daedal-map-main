@@ -686,7 +686,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
     def test_hurricane_timeline_carries_the_last_fix_until_a_newer_fix_arrives(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        first_at = now - timedelta(hours=2)
+        first_at = now - timedelta(hours=4)
         second_at = now - timedelta(hours=1)
 
         def frame(at, longitude, latitude):

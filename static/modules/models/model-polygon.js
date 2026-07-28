@@ -161,11 +161,12 @@ export const PolygonModel = {
       0, ['*', perimeterIconSize, 1],
       4, ['*', perimeterIconSize, 1.5],
       5, ['*', perimeterIconSize, 1.7],
-      8, ['*', perimeterIconSize, 2],
-      10, ['*', perimeterIconSize, 3.2],
-      12, ['*', perimeterIconSize, 4.6],
-      14, ['*', perimeterIconSize, 6],
-      16, ['*', perimeterIconSize, 7.5]
+      6, ['*', perimeterIconSize, 3.6],
+      8, ['*', perimeterIconSize, 4],
+      10, ['*', perimeterIconSize, 5.2],
+      12, ['*', perimeterIconSize, 6.6],
+      14, ['*', perimeterIconSize, 8],
+      16, ['*', perimeterIconSize, 9.5]
     ];
   },
 

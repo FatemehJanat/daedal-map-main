@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from mapmover.geometry_handlers import get_selection_geometries
+from mapmover import logger
 from mapmover.foundation_helpers import load_reference_dict
 from mapmover.preprocessor_locations import detect_location_candidates
 from mapmover.routes.disasters.related import _classify_exact_event_identifier

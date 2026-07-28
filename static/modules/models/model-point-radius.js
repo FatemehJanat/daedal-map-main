@@ -211,6 +211,22 @@ export const PointRadiusModel = {
 
   _buildIconSizeExpr(eventType, iconSizeExpr) {
     const baseExpr = ['*', DISASTER_ICON_SCALE, this._iconScaleForType(eventType), iconSizeExpr];
+    if (eventType === 'wildfire') {
+      return [
+        'interpolate', ['linear'], ['zoom'],
+        0, ['*', baseExpr, 1],
+        4, ['*', baseExpr, 1.5],
+        5, ['*', baseExpr, 1.7],
+        // Close wildfire inspection needs a clearly legible icon. At zoom 6
+        // this is twice the prior scale, while map-wide scanning is unchanged.
+        6, ['*', baseExpr, 3.6],
+        8, ['*', baseExpr, 4],
+        10, ['*', baseExpr, 5.2],
+        12, ['*', baseExpr, 6.6],
+        14, ['*', baseExpr, 8],
+        16, ['*', baseExpr, 9.5]
+      ];
+    }
     return [
       'interpolate', ['linear'], ['zoom'],
       0, ['*', baseExpr, 1],

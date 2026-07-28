@@ -46,7 +46,10 @@ export const OpsTimeline = {
   pointFrameCache: new Map(),
   pointRequestToken: 0,
   hurricaneFrameCache: new Map(),
+  hurricaneFrameInFlight: new Map(),
   hurricaneRequestToken: 0,
+  hurricaneDebounceTimer: null,
+  backgroundPrefetchTimers: [],
   selectedDisplayPayloads: new Map(),
 
   init({ onFrame } = {}) {
@@ -62,7 +65,12 @@ export const OpsTimeline = {
     this.nwsFrameCache.clear();
     this.pointFrameCache.clear();
     this.hurricaneFrameCache.clear();
+    this.hurricaneFrameInFlight.clear();
     this.selectedDisplayPayloads.clear();
+    if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
+    this.hurricaneDebounceTimer = null;
+    for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
+    this.backgroundPrefetchTimers = [];
     if (this.element) {
       this.element.hidden = true;
       this.element.replaceChildren();
@@ -160,6 +168,7 @@ export const OpsTimeline = {
     };
     this._render();
     this.selectAt(currentMs, { preserveCurrent: true });
+    this._scheduleBackgroundPrefetch();
   },
 
   _render() {
@@ -222,7 +231,7 @@ export const OpsTimeline = {
         // timeline hydration stays fast even with many retained collector polls.
         if (ms < this.timeline.currentMs) {
           hasDeferredPayload = true;
-          void this._loadHurricaneFrame(feedId, selected, ms);
+          this._scheduleHurricaneFrame(feedId, selected, ms);
         }
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
@@ -311,24 +320,65 @@ export const OpsTimeline = {
     const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
     const token = ++this.hurricaneRequestToken;
-    let loaded = this.hurricaneFrameCache.get(key);
-    if (!loaded) {
-      try {
-        const response = await postMsgpack('/api/local/ops/timeline/hurricane-frame', {
-          at: frame.start_at || new Date(selectedMs).toISOString(),
-        });
-        loaded = response?.frame;
-        if (loaded) this.hurricaneFrameCache.set(key, loaded);
-      } catch (error) {
-        console.warn('OpsTimeline: retained hurricane frame failed', error);
-        return;
-      }
-    }
+    const loaded = await this._getHurricaneFrame(key, frame, selectedMs);
+    if (!loaded) return;
     if (token !== this.hurricaneRequestToken || this.selectedMs !== selectedMs || !loaded?.display_payload) return;
     this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
     this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
       at: new Date(selectedMs).toISOString(),
       preserveMissing: true,
+    });
+  },
+
+  _scheduleHurricaneFrame(feedId, frame, selectedMs) {
+    if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
+    // Slider input can emit dozens of intermediate cursor positions. Keep the
+    // last coherent track visible and only materialize the settled position.
+    this.hurricaneDebounceTimer = setTimeout(() => {
+      this.hurricaneDebounceTimer = null;
+      void this._loadHurricaneFrame(feedId, frame, selectedMs);
+    }, 90);
+  },
+
+  async _getHurricaneFrame(key, frame, selectedMs) {
+    const cached = this.hurricaneFrameCache.get(key);
+    if (cached) return cached;
+    const inFlight = this.hurricaneFrameInFlight.get(key);
+    if (inFlight) return inFlight;
+    const request = postMsgpack('/api/local/ops/timeline/hurricane-frame', {
+      at: frame.start_at || new Date(selectedMs).toISOString(),
+    }).then((response) => {
+      const loaded = response?.frame || null;
+      if (loaded) this.hurricaneFrameCache.set(key, loaded);
+      return loaded;
+    }).catch((error) => {
+      console.warn('OpsTimeline: retained hurricane frame failed', error);
+      return null;
+    }).finally(() => {
+      this.hurricaneFrameInFlight.delete(key);
+    });
+    this.hurricaneFrameInFlight.set(key, request);
+    return request;
+  },
+
+  _scheduleBackgroundPrefetch() {
+    for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
+    this.backgroundPrefetchTimers = [];
+    const hurricaneFrames = Object.entries(this.timeline?.feeds || {})
+      .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'hurricane_history'))
+      .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'hurricane_history'))
+      .slice(-12)
+      .reverse();
+    // Twelve nearest historical hurricane frames are small enough to warm in
+    // the background without recreating the old full-window O(n²) hydrate.
+    // NWS frames deliberately remain demand-loaded: a full warning frame can
+    // be multi-megabyte even after county geometry is separated.
+    hurricaneFrames.forEach((frame, index) => {
+      const timer = setTimeout(() => {
+        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        if (key) void this._getHurricaneFrame(key, frame, toMs(frame?.start_at) || this.timeline.currentMs);
+      }, 250 * (index + 1));
+      this.backgroundPrefetchTimers.push(timer);
     });
   },
 };
