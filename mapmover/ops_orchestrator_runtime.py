@@ -57,10 +57,11 @@ WILDFIRE_COLLECTOR_ISO3 = {
 }
 HURRICANE_LEGACY_OPS_FEED = "hurricanes"
 HURRICANE_OPS_COLLECTORS = ("tc_nhc", "tc_gdacs", "tc_jtwc", "tc_jma")
-# A 10 km² default keeps the combined North American live fire snapshot quick
+# A 50 km² default keeps the combined North American live fire snapshot quick
 # enough to be a dependable Ops overlay. Chat can still explicitly request a
-# lower cutoff or all fires.
-WILDFIRE_DEFAULT_MIN_AREA_KM2 = 10.0
+# lower cutoff or all fires; detailed perimeters are fetched separately for a
+# settled close viewport.
+WILDFIRE_DEFAULT_MIN_AREA_KM2 = 50.0
 # The live source perimeters are authoritative, but several incidents contain
 # hundreds of thousands of vertices.  Sending those raw shapes to every Ops
 # page load made a normal wildfire report exceed 40 MB.  Keep an honestly
@@ -1128,7 +1129,9 @@ def _build_point_event_display_payload(
                 continue
         include_perimeter = (
             collector == WILDFIRE_LIVE_FEED
-            and (perimeter_minimum_area_km2 is None or (wildfire_area_km2 is not None and wildfire_area_km2 >= perimeter_minimum_area_km2))
+            and perimeter_minimum_area_km2 is not None
+            and wildfire_area_km2 is not None
+            and wildfire_area_km2 >= perimeter_minimum_area_km2
         )
         geometry = (
             _wildfire_perimeter_geometry(row, max_positions=WILDFIRE_MAP_MAX_PERIMETER_POSITIONS)
@@ -1190,16 +1193,15 @@ def _build_wildfire_display_payload(
         event_type="wildfire",
         label="Ops Wildfire Snapshot",
         minimum_area_km2=minimum_area_km2,
-        perimeter_minimum_area_km2=(
-            minimum_area_km2 if perimeter_minimum_area_km2 is None else perimeter_minimum_area_km2
-        ),
+        # The initial Ops overview is marker-only. Perimeters are a separate
+        # viewport detail request once the operator zooms in far enough for
+        # their shape to be useful.
+        perimeter_minimum_area_km2=perimeter_minimum_area_km2,
     )
     if payload:
         payload["ops_min_area_km2"] = minimum_area_km2
         payload["ops_show_all"] = minimum_area_km2 <= 0
-        payload["ops_perimeter_min_area_km2"] = (
-            minimum_area_km2 if perimeter_minimum_area_km2 is None else perimeter_minimum_area_km2
-        )
+        payload["ops_perimeter_min_area_km2"] = perimeter_minimum_area_km2
     return payload
 
 
@@ -4155,7 +4157,7 @@ def _try_wildfire_snapshot_filter_result(
     source_payload = _build_wildfire_display_payload(
         load_current_state_snapshot(WILDFIRE_LIVE_FEED),
         minimum_area_km2=0.0,
-        perimeter_minimum_area_km2=max(WILDFIRE_DEFAULT_MIN_AREA_KM2, threshold_km2),
+        perimeter_minimum_area_km2=None,
     )
     # Keep the pure report path useful in offline QA fixtures and when a
     # transient current-state read fails after the report was already built.

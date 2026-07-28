@@ -15,7 +15,13 @@ from mapmover.ops_route_runtime import (
     setup_required_ops_message,
     snapshot_ops_report,
 )
-from mapmover.ops_orchestrator_runtime import build_ops_timeline_payload, load_current_state_history, load_current_state_snapshot
+from mapmover.ops_orchestrator_runtime import (
+    WILDFIRE_LIVE_FEED,
+    _wildfire_perimeter_geometry,
+    build_ops_timeline_payload,
+    load_current_state_history,
+    load_current_state_snapshot,
+)
 from mapmover.ops_ticker import (
     build_cached_aurora_payload,
     build_cached_aurora_frames_payload,
@@ -310,6 +316,56 @@ async def ops_nws_alerts_endpoint(req: Request):
         return msgpack_response(build_cached_nws_alerts_payload())
     except Exception as exc:
         logger.exception("Ops NWS alerts error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.get("/api/ops/wildfires/perimeters")
+async def ops_wildfire_perimeters_endpoint(
+    req: Request,
+    bbox: str | None = None,
+    min_area_km2: float = 50.0,
+):
+    """Return simplified current fire perimeters only for a close viewport.
+
+    The normal wildfire snapshot remains compact marker state. Perimeters are
+    stable detail geometry, requested only after an operator has zoomed in and
+    only for incidents whose supplied point lies inside the current viewport.
+    """
+    try:
+        bounds = _optional_bbox(bbox)
+        if bounds is None:
+            return msgpack_error("A valid west,south,east,north bbox is required", 400)
+        west, south, east, north = bounds
+        threshold = max(0.0, float(min_area_km2))
+        snapshot = load_current_state_snapshot(WILDFIRE_LIVE_FEED)
+        summary = snapshot.get("payload_summary") if isinstance(snapshot, dict) else {}
+        features = []
+        for event in summary.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            try:
+                area = float(event.get("area_km2"))
+                longitude = float(event.get("longitude"))
+                latitude = float(event.get("latitude"))
+            except (TypeError, ValueError):
+                continue
+            if area < threshold or not (west <= longitude <= east and south <= latitude <= north):
+                continue
+            geometry = _wildfire_perimeter_geometry(event, max_positions=300)
+            if geometry is None:
+                continue
+            properties = {key: value for key, value in event.items() if key != "perimeter"}
+            features.append({"type": "Feature", "geometry": geometry, "properties": properties})
+            if len(features) >= 120:
+                break
+        return msgpack_response({
+            "type": "FeatureCollection",
+            "features": features,
+            "snapshot_hash": snapshot.get("payload_hash") if isinstance(snapshot, dict) else None,
+            "min_area_km2": threshold,
+        })
+    except Exception as exc:
+        logger.exception("Ops wildfire perimeter error")
         return msgpack_error(str(exc), 500)
 
 

@@ -1025,6 +1025,10 @@ export const OverlayController = {
   // Format: { geojson, geometryType, options }
   pendingGeometry: null,
   opsSnapshotPayloads: new Map(),
+  opsWildfirePerimeterSnapshotHash: null,
+  opsWildfirePerimeters: new Map(),
+  opsWildfireViewportTimer: null,
+  opsWildfireViewportMoveHandler: null,
   defaultLoadExecutor: null,
 
   // Startup/runtime mode flags
@@ -1391,7 +1395,7 @@ export const OverlayController = {
           ? 0
           : (Number.isFinite(requestedMinAreaKm2) && requestedMinAreaKm2 >= 0
             ? requestedMinAreaKm2
-            : 10.0); // Default Ops readability cutoff for the combined NA feed.
+            : 50.0); // Default Ops readability cutoff for the combined NA feed.
         const requestedCountry = String(sourcePayload?.ops_country_iso3 || '').trim().toUpperCase();
         const filtered = sourceFeatures.filter((feature) => (
           Number(feature?.properties?.area_km2) >= minAreaKm2
@@ -1701,9 +1705,15 @@ export const OverlayController = {
     const payload = this.opsSnapshotPayloads.get(overlayId);
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     const preparedPayload = this._buildFilteredOpsPayload(overlayId, payload);
-    const displayPayload = preparedPayload?.payload;
+    let displayPayload = preparedPayload?.payload;
     if (!displayPayload?.geojson?.features?.length) {
       return false;
+    }
+
+    if (overlayId === 'wildfires') {
+      displayPayload = this._mergeOpsWildfirePerimeters(displayPayload);
+      this._bindOpsWildfireViewportDetails();
+      this._scheduleOpsWildfireViewportDetails();
     }
 
     if (displayPayload?.data_type === 'metrics' || overlayId === 'currency') {
@@ -1736,6 +1746,75 @@ export const OverlayController = {
       return true;
     }
     return false;
+  },
+
+  _wildfireEventKey(feature) {
+    const props = feature?.properties || {};
+    return String(props.event_id || props.incident_id || props.id || '').trim();
+  },
+
+  _mergeOpsWildfirePerimeters(payload) {
+    const snapshotHash = String(payload?.snapshot_hash || '').trim();
+    if (snapshotHash && snapshotHash !== this.opsWildfirePerimeterSnapshotHash) {
+      this.opsWildfirePerimeterSnapshotHash = snapshotHash;
+      this.opsWildfirePerimeters.clear();
+    }
+    const features = (payload?.geojson?.features || []).map((feature) => {
+      const perimeter = this.opsWildfirePerimeters.get(this._wildfireEventKey(feature));
+      return perimeter || feature;
+    });
+    return {
+      ...payload,
+      geojson: { ...payload.geojson, features },
+    };
+  },
+
+  _bindOpsWildfireViewportDetails() {
+    const map = MapAdapter?.map;
+    if (!map || this.opsWildfireViewportMoveHandler) return;
+    this.opsWildfireViewportMoveHandler = () => this._scheduleOpsWildfireViewportDetails();
+    map.on('moveend', this.opsWildfireViewportMoveHandler);
+  },
+
+  _scheduleOpsWildfireViewportDetails() {
+    if (!this._isOpsMode() || !OverlaySelector?.isActive?.('wildfires')) return;
+    if (this.opsWildfireViewportTimer) clearTimeout(this.opsWildfireViewportTimer);
+    this.opsWildfireViewportTimer = setTimeout(() => {
+      this.opsWildfireViewportTimer = null;
+      void this._loadOpsWildfireViewportPerimeters();
+    }, 180);
+  },
+
+  async _loadOpsWildfireViewportPerimeters() {
+    const map = MapAdapter?.map;
+    if (!map || map.getZoom() < 6) return;
+    // Perimeters describe the latest physical incident footprint. Historical
+    // cursor replay deliberately stays compact point state.
+    if (OpsTimeline?.timeline && OpsTimeline.selectedMs < OpsTimeline.timeline.currentMs - 60_000) return;
+    const payload = this.opsSnapshotPayloads.get('wildfires');
+    const prepared = this._buildFilteredOpsPayload('wildfires', payload)?.payload;
+    if (!prepared?.geojson?.features?.length) return;
+    const bounds = map.getBounds();
+    if (!bounds) return;
+    const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()]
+      .map((value) => Number(value).toFixed(4)).join(',');
+    const minimum = Number(prepared.ops_min_area_km2);
+    try {
+      const response = await fetchMsgpack(
+        `/api/ops/wildfires/perimeters?bbox=${encodeURIComponent(bbox)}&min_area_km2=${encodeURIComponent(Number.isFinite(minimum) ? minimum : 50)}`
+      );
+      for (const feature of response?.features || []) {
+        const key = this._wildfireEventKey(feature);
+        if (key) this.opsWildfirePerimeters.set(key, feature);
+      }
+      const merged = this._mergeOpsWildfirePerimeters(prepared);
+      ModelRegistry?.render(merged.geojson, OVERLAY_ENDPOINTS.wildfires.eventType, {
+        displayContract: getOverlayDisplayContract('wildfires'),
+        onEventClick: (props) => this.handleEventClick('wildfires', props)
+      });
+    } catch (error) {
+      console.warn('OverlayController: wildfire viewport perimeters failed', error);
+    }
   },
 
   _usesOpsRetainedHistoryWindow(overlayId) {
