@@ -12,7 +12,7 @@
  */
 
 import { GeometryCache } from './cache.js';
-import { fetchMsgpack } from './utils/fetch.js';
+import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
 
 const POLL_INTERVAL_MS = 5 * 60_000;
 const SRC_ID = 'nws-alerts-src';
@@ -220,6 +220,8 @@ export const NwsAlertsOverlay = {
   lastData: null,
   currentData: null,
   opsTimelineLocked: false,
+  opsTimelineFrameAt: null,
+  currentDetailAt: null,
   _clickBound: false,
   _popupHandler: null,
   _mouseenterHandler: null,
@@ -421,7 +423,9 @@ export const NwsAlertsOverlay = {
       const raw = await materializeCountyGeometry(response);
       const fc = decorateAlertFeatures(raw);
       this.currentData = fc;
+      this.currentDetailAt = String(response?.detail_at || '').trim() || null;
       if (!this.opsTimelineLocked) {
+        this.opsTimelineFrameAt = this.currentDetailAt;
         this.lastData = fc;
         this._render(fc);
       }
@@ -439,6 +443,7 @@ export const NwsAlertsOverlay = {
       ? rawFrame
       : { type: 'FeatureCollection', features: [] };
     const raw = await materializeCountyGeometry(response);
+    this.opsTimelineFrameAt = String(response?.detail_at || '').trim() || null;
     const frame = decorateAlertFeatures(raw);
     this.lastData = frame;
     await this._render(frame);
@@ -447,6 +452,7 @@ export const NwsAlertsOverlay = {
 
   clearOpsTimelineFrame() {
     this.opsTimelineLocked = false;
+    this.opsTimelineFrameAt = this.currentDetailAt;
     if (this.currentData) {
       this.lastData = this.currentData;
       void this._render(this.currentData);
@@ -562,6 +568,8 @@ export const NwsAlertsOverlay = {
       const p = f.properties || {};
       const coords = [e.lngLat.lng, e.lngLat.lat];
       const productId = this.historical ? String(p.product_id || '').trim() : '';
+      const opsDetailAt = !this.historical ? String(this.opsTimelineFrameAt || '').trim() : '';
+      const needsOpsDetail = Boolean(opsDetailAt && p.alert_id && p.detail_available && !p.description && !p.instruction);
       const popupToken = ++this._historicalPopupToken;
       MapAdapter?.registerFeaturePopupClick?.();
       MapAdapter?.showPopup?.(coords, buildNwsPopupHtml(p, productId ? 'Loading archived bulletin text…' : ''));
@@ -572,6 +580,19 @@ export const NwsAlertsOverlay = {
           overlayId: 'nws_alerts',
           properties: p,
         });
+      }
+      if (needsOpsDetail) {
+        postMsgpack('/api/local/ops/timeline/nws-alert-detail', { at: opsDetailAt, alert_id: p.alert_id })
+          .then((response) => {
+            if (popupToken !== this._historicalPopupToken || this.historical) return;
+            MapAdapter?.showPopup?.(coords, buildNwsPopupHtml({ ...p, ...(response?.detail || {}) }));
+          })
+          .catch(() => {
+            if (popupToken === this._historicalPopupToken && !this.historical) {
+              MapAdapter?.showPopup?.(coords, buildNwsPopupHtml(p, 'Full alert details are unavailable for this retained frame.'));
+            }
+          });
+        return;
       }
       if (!productId) return;
       fetchMsgpack(`/api/wip/nws-alerts/text?product_id=${encodeURIComponent(productId)}`)

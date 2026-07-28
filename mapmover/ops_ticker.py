@@ -592,7 +592,12 @@ def _nws_alert_loc_ids(same_codes) -> list:
     return loc_ids
 
 
-def _assemble_nws_alerts_geojson(summary: dict, *, compact_county_geometry: bool = False) -> dict:
+def _assemble_nws_alerts_geojson(
+    summary: dict,
+    *,
+    compact_county_geometry: bool = False,
+    compact_detail_text: bool = False,
+) -> dict:
     alerts = summary.get("alerts") or []
 
     # Resolve county polygons only for the legacy fully-shaped form.  Ops uses
@@ -626,11 +631,14 @@ def _assemble_nws_alerts_geojson(summary: dict, *, compact_county_geometry: bool
             "certainty": alert.get("certainty"),
             "headline": alert.get("headline"),
             "area": alert.get("area"),
-            "description": alert.get("description"),
-            "instruction": alert.get("instruction"),
             "issued_at": alert.get("issued_at"),
             "expires": alert.get("expires"),
         }
+        if compact_detail_text:
+            props["detail_available"] = bool(alert.get("description") or alert.get("instruction"))
+        else:
+            props["description"] = alert.get("description")
+            props["instruction"] = alert.get("instruction")
         # Area geometry: the exact warning polygon, or the affected counties.
         geom = alert.get("geometry")
         if isinstance(geom, dict):
@@ -667,7 +675,13 @@ def build_cached_nws_alerts_payload() -> dict:
     snapshot = snap if isinstance(snap, dict) else {}
 
     def _builder() -> dict:
-        return _assemble_nws_alerts_geojson(snapshot.get("payload_summary") or {}, compact_county_geometry=True)
+        payload = _assemble_nws_alerts_geojson(
+            snapshot.get("payload_summary") or {},
+            compact_county_geometry=True,
+            compact_detail_text=True,
+        )
+        payload["detail_at"] = snapshot.get("published_at") or snapshot.get("fetched_at")
+        return payload
 
     return _get_cached_view(
         "ops_nws_alerts",
@@ -680,7 +694,10 @@ def build_cached_nws_alerts_payload() -> dict:
 def build_nws_alerts_payload_for_snapshot(snapshot: dict) -> dict:
     """Build one retained NWS frame without using the current-snapshot cache."""
     summary = snapshot.get("payload_summary") if isinstance(snapshot, dict) else {}
-    return _assemble_nws_alerts_geojson(
+    payload = _assemble_nws_alerts_geojson(
         summary if isinstance(summary, dict) else {},
         compact_county_geometry=True,
+        compact_detail_text=True,
     )
+    payload["detail_at"] = snapshot.get("published_at") or snapshot.get("fetched_at")
+    return payload

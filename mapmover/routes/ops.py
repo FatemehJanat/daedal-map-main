@@ -200,6 +200,37 @@ def _local_nws_timeline_frame_at(raw_at: object) -> dict | None:
     }
 
 
+def _local_nws_alert_detail_at(raw_at: object, alert_id: object) -> dict | None:
+    """Return full retained bulletin text only for a clicked Ops alert."""
+    try:
+        target = datetime.fromisoformat(str(raw_at or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    target = target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc)
+    selected = None
+    for entry in _local_nws_timeline_entries():
+        at = _snapshot_time(entry)
+        if at is not None and at <= target:
+            selected = entry
+        elif at is not None:
+            break
+    if not isinstance(selected, dict):
+        return None
+    wanted = str(alert_id or "").strip()
+    summary = selected.get("payload_summary") if isinstance(selected.get("payload_summary"), dict) else {}
+    for alert in summary.get("alerts") or []:
+        if isinstance(alert, dict) and str(alert.get("alert_id") or "").strip() == wanted:
+            return {
+                "alert_id": wanted,
+                "headline": alert.get("headline"),
+                "area": alert.get("area"),
+                "description": alert.get("description"),
+                "instruction": alert.get("instruction"),
+                "source_product_url": alert.get("source_product_url"),
+            }
+    return None
+
+
 def _local_hurricane_timeline_frame_at(raw_at: object) -> dict | None:
     """Compose one additive hurricane replay frame only when the cursor needs it."""
     try:
@@ -577,6 +608,20 @@ async def local_ops_timeline_nws_frame_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_nws_frame", "frame": frame})
     except Exception as exc:
         logger.exception("Local Ops NWS timeline frame error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/nws-alert-detail")
+async def local_ops_timeline_nws_alert_detail_endpoint(req: Request):
+    """Load one selected retained NWS alert's full bulletin text."""
+    try:
+        body = await decode_request_body(req)
+        detail = _local_nws_alert_detail_at(body.get("at"), body.get("alert_id"))
+        if detail is None:
+            return msgpack_error("NWS alert detail is unavailable for that retained frame", 404)
+        return msgpack_response({"type": "local_ops_nws_alert_detail", "detail": detail})
+    except Exception as exc:
+        logger.exception("Ops NWS alert detail error")
         return msgpack_error(str(exc), 500)
 
 

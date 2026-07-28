@@ -43,6 +43,7 @@ export const OpsTimeline = {
   externalProviders: new Map(),
   nwsFrameCache: new Map(),
   nwsRequestToken: 0,
+  nwsDebounceTimer: null,
   pointFrameCache: new Map(),
   pointRequestToken: 0,
   hurricaneFrameCache: new Map(),
@@ -63,6 +64,8 @@ export const OpsTimeline = {
     this.timeline = null;
     this.selectedMs = null;
     this.nwsFrameCache.clear();
+    if (this.nwsDebounceTimer) clearTimeout(this.nwsDebounceTimer);
+    this.nwsDebounceTimer = null;
     this.pointFrameCache.clear();
     this.hurricaneFrameCache.clear();
     this.hurricaneFrameInFlight.clear();
@@ -216,7 +219,10 @@ export const OpsTimeline = {
       }
       if (selected?.timeline_provider === 'nws_alerts') {
         if (ms >= this.timeline.currentMs) NwsAlertsOverlay.clearOpsTimelineFrame?.();
-        else void this._loadNwsFrame(selected, ms);
+        else {
+          hasDeferredPayload = true;
+          this._scheduleNwsFrame(selected, ms);
+        }
       } else if (selected?.timeline_provider === 'live_point') {
         const pointOverlay = getLivePointOverlay(selected.overlay_id);
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
@@ -291,6 +297,16 @@ export const OpsTimeline = {
     // Do not paint a late response after the cursor moved to a newer frame.
     if (token !== this.nwsRequestToken || this.selectedMs !== selectedMs || !loaded?.geojson) return;
     void NwsAlertsOverlay.setOpsTimelineFrame?.(loaded.geojson);
+  },
+
+  _scheduleNwsFrame(frame, selectedMs) {
+    if (this.nwsDebounceTimer) clearTimeout(this.nwsDebounceTimer);
+    // A second overlay can redraw frequently during a scrub. Only request the
+    // settled NWS frame so superseded county joins do not starve its renderer.
+    this.nwsDebounceTimer = setTimeout(() => {
+      this.nwsDebounceTimer = null;
+      void this._loadNwsFrame(frame, selectedMs);
+    }, 70);
   },
 
   async _loadPointFrame(frame, selectedMs) {

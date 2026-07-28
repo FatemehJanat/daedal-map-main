@@ -39,16 +39,23 @@ class NwsAlertOverlayRuntimeTests(unittest.TestCase):
                     "event": "Severe Thunderstorm Warning",
                     "same": ["051001"],
                     "point": [-77.0, 38.9],
+                    "description": "Detailed bulletin prose.",
                 }
             ]
         }
 
-        payload = _assemble_nws_alerts_geojson(summary, compact_county_geometry=True)
+        payload = _assemble_nws_alerts_geojson(
+            summary,
+            compact_county_geometry=True,
+            compact_detail_text=True,
+        )
 
         self.assertEqual(payload["count"], 1)  # only the marker is inline
         self.assertEqual(len(payload["county_geometry_references"]), 1)
         self.assertEqual(payload["county_geometry_references"][0]["loc_ids"], ["USA-VA-001"])
         self.assertEqual(payload["county_geometry_references"][0]["properties"]["display"], "county")
+        self.assertNotIn("description", payload["county_geometry_references"][0]["properties"])
+        self.assertTrue(payload["county_geometry_references"][0]["properties"]["detail_available"])
 
 
 if __name__ == "__main__":
