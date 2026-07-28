@@ -16,6 +16,7 @@ const CURSOR_STEP_MS = 5 * 60 * 1000;
 // archive. Long retained histories remain available for event drill-down, but
 // the normal cross-overlay scrubber always means "the last three days".
 const SHARED_OPS_HISTORY_MS = 72 * 60 * 60 * 1000;
+const BACKGROUND_PREFETCH_BUDGET_BYTES = 10 * 1024 * 1024;
 
 function toMs(value) {
   const result = Date.parse(String(value || ''));
@@ -43,7 +44,6 @@ export const OpsTimeline = {
   externalProviders: new Map(),
   nwsFrameCache: new Map(),
   nwsRequestToken: 0,
-  nwsDebounceTimer: null,
   pointFrameCache: new Map(),
   pointRequestToken: 0,
   hurricaneFrameCache: new Map(),
@@ -51,6 +51,7 @@ export const OpsTimeline = {
   hurricaneRequestToken: 0,
   hurricaneDebounceTimer: null,
   backgroundPrefetchTimers: [],
+  backgroundPrefetchRun: 0,
   selectedDisplayPayloads: new Map(),
 
   init({ onFrame } = {}) {
@@ -64,8 +65,6 @@ export const OpsTimeline = {
     this.timeline = null;
     this.selectedMs = null;
     this.nwsFrameCache.clear();
-    if (this.nwsDebounceTimer) clearTimeout(this.nwsDebounceTimer);
-    this.nwsDebounceTimer = null;
     this.pointFrameCache.clear();
     this.hurricaneFrameCache.clear();
     this.hurricaneFrameInFlight.clear();
@@ -74,6 +73,7 @@ export const OpsTimeline = {
     this.hurricaneDebounceTimer = null;
     for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
     this.backgroundPrefetchTimers = [];
+    this.backgroundPrefetchRun += 1;
     if (this.element) {
       this.element.hidden = true;
       this.element.replaceChildren();
@@ -219,10 +219,7 @@ export const OpsTimeline = {
       }
       if (selected?.timeline_provider === 'nws_alerts') {
         if (ms >= this.timeline.currentMs) NwsAlertsOverlay.clearOpsTimelineFrame?.();
-        else {
-          hasDeferredPayload = true;
-          this._scheduleNwsFrame(selected, ms);
-        }
+        else void this._loadNwsFrame(selected, ms);
       } else if (selected?.timeline_provider === 'live_point') {
         const pointOverlay = getLivePointOverlay(selected.overlay_id);
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
@@ -299,16 +296,6 @@ export const OpsTimeline = {
     void NwsAlertsOverlay.setOpsTimelineFrame?.(loaded.geojson);
   },
 
-  _scheduleNwsFrame(frame, selectedMs) {
-    if (this.nwsDebounceTimer) clearTimeout(this.nwsDebounceTimer);
-    // A second overlay can redraw frequently during a scrub. Only request the
-    // settled NWS frame so superseded county joins do not starve its renderer.
-    this.nwsDebounceTimer = setTimeout(() => {
-      this.nwsDebounceTimer = null;
-      void this._loadNwsFrame(frame, selectedMs);
-    }, 70);
-  },
-
   async _loadPointFrame(frame, selectedMs) {
     const overlayId = String(frame?.overlay_id || '');
     const key = `${overlayId}:${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
@@ -380,21 +367,30 @@ export const OpsTimeline = {
   _scheduleBackgroundPrefetch() {
     for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
     this.backgroundPrefetchTimers = [];
-    const hurricaneFrames = Object.entries(this.timeline?.feeds || {})
+    const run = ++this.backgroundPrefetchRun;
+    const timeline = this.timeline;
+    const hurricaneFrames = Object.entries(timeline?.feeds || {})
       .filter(([, frames]) => Array.isArray(frames) && frames.some((frame) => frame?.timeline_provider === 'hurricane_history'))
       .flatMap(([, frames]) => frames.filter((frame) => frame?.timeline_provider === 'hurricane_history'))
-      .slice(-12)
       .reverse();
-    // Twelve nearest historical hurricane frames are small enough to warm in
-    // the background without recreating the old full-window O(n²) hydrate.
-    // NWS frames deliberately remain demand-loaded: a full warning frame can
-    // be multi-megabyte even after county geometry is separated.
-    hurricaneFrames.forEach((frame, index) => {
-      const timer = setTimeout(() => {
+    // Load retained hurricane frames after the live map is usable, stopping
+    // at a real 10 MB browser budget. A future compact delta stream can cover
+    // all 72 hours in that budget; today's cumulative frame format cannot.
+    void (async () => {
+      let loadedBytes = 0;
+      for (const frame of hurricaneFrames) {
+        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
         const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
-        if (key) void this._getHurricaneFrame(key, frame, toMs(frame?.start_at) || this.timeline.currentMs);
-      }, 250 * (index + 1));
-      this.backgroundPrefetchTimers.push(timer);
-    });
+        if (!key) continue;
+        const loaded = await this._getHurricaneFrame(key, frame, toMs(frame?.start_at) || timeline.currentMs);
+        if (!loaded) continue;
+        let estimatedBytes = 0;
+        try { estimatedBytes = JSON.stringify(loaded).length; } catch (_) { estimatedBytes = 0; }
+        if (loadedBytes && loadedBytes + estimatedBytes > BACKGROUND_PREFETCH_BUDGET_BYTES) return;
+        loadedBytes += estimatedBytes;
+        // Yield between requests so interactive cursor requests remain first.
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+    })();
   },
 };
