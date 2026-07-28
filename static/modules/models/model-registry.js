@@ -204,10 +204,26 @@ export const ModelRegistry = {
           const geoType = f.geometry?.type;
           return geoType === 'Polygon' || geoType === 'MultiPolygon';
         });
-        const pointFeatures = features.filter(f => {
+        let pointFeatures = features.filter(f => {
           const geoType = f.geometry?.type;
           return geoType === 'Point';
         });
+
+        // Wildfire perimeter geometry supplements its authoritative incident
+        // point. PolygonModel renders the supplied point as a deliberately
+        // smaller center flame, so keep the normal point renderer only for
+        // incidents without a perimeter; otherwise zooming in would create
+        // two flames or, if points were replaced, hide point-only fires.
+        if (eventType === 'wildfire') {
+          const fireKey = (feature) => String(
+            feature?.properties?.event_id
+            || feature?.properties?.incident_id
+            || feature?.properties?.id
+            || ''
+          ).trim();
+          const shapedFireKeys = new Set(polygonFeatures.map(fireKey).filter(Boolean));
+          pointFeatures = pointFeatures.filter((feature) => !shapedFireKeys.has(fireKey(feature)));
+        }
 
         // Render polygons with polygon model
         if (polygonFeatures.length > 0) {

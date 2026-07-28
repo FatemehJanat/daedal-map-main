@@ -1759,10 +1759,21 @@ export const OverlayController = {
       this.opsWildfirePerimeterSnapshotHash = snapshotHash;
       this.opsWildfirePerimeters.clear();
     }
-    const features = (payload?.geojson?.features || []).map((feature) => {
-      const perimeter = this.opsWildfirePerimeters.get(this._wildfireEventKey(feature));
-      return perimeter || feature;
-    });
+    // Keep every marker feature.  A viewport perimeter is supplemental
+    // geometry, not a replacement for the collector's incident point: fires
+    // without a perimeter must remain visible, and PolygonModel's center-icon
+    // source can then render the original supplied fire location for both
+    // shaped and point-only incidents.
+    const features = [...(payload?.geojson?.features || [])];
+    const represented = new Set();
+    for (const feature of features) {
+      const key = this._wildfireEventKey(feature);
+      if (key) represented.add(`point:${key}`);
+    }
+    for (const [key, perimeter] of this.opsWildfirePerimeters.entries()) {
+      if (!key || !perimeter || !represented.has(`point:${key}`)) continue;
+      features.push(perimeter);
+    }
     return {
       ...payload,
       geojson: { ...payload.geojson, features },
