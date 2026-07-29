@@ -56,7 +56,10 @@ export const OpsTimeline = {
   nwsRequestToken: 0,
   nwsInteractiveRequestedAt: 0,
   pointFrameCache: new Map(),
-  pointRequestToken: 0,
+  // Point feeds are independent overlays. A single global request token would
+  // let an AirNow request cancel an in-flight buoy frame (or the reverse),
+  // leaving one station layer visually stuck on an older cursor value.
+  pointRequestTokens: new Map(),
   pointInteractiveRequestedAt: 0,
   hurricaneFrameCache: new Map(),
   hurricaneFrameInFlight: new Map(),
@@ -79,6 +82,7 @@ export const OpsTimeline = {
     this.selectedMs = null;
     this.nwsFrameCache.clear();
     this.pointFrameCache.clear();
+    this.pointRequestTokens.clear();
     this.hurricaneFrameCache.clear();
     this.hurricaneFrameInFlight.clear();
     this.selectedDisplayPayloads.clear();
@@ -314,7 +318,8 @@ export const OpsTimeline = {
     const overlayId = String(frame?.overlay_id || '');
     const key = `${overlayId}:${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!overlayId || !key) return;
-    const token = ++this.pointRequestToken;
+    const token = (this.pointRequestTokens.get(overlayId) || 0) + 1;
+    this.pointRequestTokens.set(overlayId, token);
     this.pointInteractiveRequestedAt = Date.now();
     let loaded = this.pointFrameCache.get(key);
     if (!loaded) {
@@ -330,7 +335,7 @@ export const OpsTimeline = {
         return;
       }
     }
-    if (token !== this.pointRequestToken || this.selectedMs !== selectedMs || !loaded?.geojson) return;
+    if (token !== this.pointRequestTokens.get(overlayId) || this.selectedMs !== selectedMs || !loaded?.geojson) return;
     void getLivePointOverlay(overlayId)?.setOpsTimelineFrame?.(loaded.geojson);
   },
 

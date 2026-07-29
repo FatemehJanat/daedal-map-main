@@ -10,11 +10,85 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from mapmover.paths import DATA_ROOT
 
 
 REGISTRY_PATH = DATA_ROOT / "ops_feed_registry.json"
+
+VALID_PRESENTATIONS = {"map", "ticker", "metric_values"}
+VALID_TIMELINE_MODES = {
+    "full_snapshot",
+    "additive_history",
+    "raster_frame_stack",
+    "non_temporal",
+}
+VALID_CACHE_POSTURES = {
+    "inline_frame",
+    "background_full",
+    "near_cursor",
+    "viewport_detail",
+    "raster_bundle",
+    "admin_cache",
+    "none",
+}
+
+
+def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str]:
+    """Return structural errors for the logical Ops feed registry.
+
+    Runtime reads stay tolerant of a prior published registry during a
+    code-first deploy, but promotion tooling uses strict validation.  This
+    keeps a malformed control file from silently becoming a new production
+    contract while preserving a safe compatibility path for an older R2 copy.
+    """
+    if not isinstance(payload, dict):
+        return ["registry must be a JSON object"]
+    feeds = payload.get("feeds")
+    if not isinstance(feeds, list):
+        return ["registry.feeds must be a list"]
+    seen: set[str] = set()
+    errors: list[str] = []
+    for index, record in enumerate(feeds):
+        prefix = f"feeds[{index}]"
+        if not isinstance(record, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        feed_id = str(record.get("feed_id") or "").strip()
+        if not feed_id:
+            errors.append(f"{prefix}.feed_id is required")
+            continue
+        if feed_id in seen:
+            errors.append(f"duplicate feed_id '{feed_id}'")
+        seen.add(feed_id)
+        timeline = record.get("timeline")
+        if not isinstance(timeline, dict):
+            errors.append(f"{feed_id}.timeline must be an object")
+            continue
+        if strict:
+            collector_ids = record.get("collector_ids")
+            if not isinstance(collector_ids, list) or not all(str(value).strip() for value in collector_ids):
+                errors.append(f"{feed_id}.collector_ids must be a non-empty list")
+            presentation = record.get("presentation")
+            if not isinstance(presentation, list) or not presentation:
+                errors.append(f"{feed_id}.presentation must be a non-empty list")
+            elif any(str(value) not in VALID_PRESENTATIONS for value in presentation):
+                errors.append(f"{feed_id}.presentation has an unsupported value")
+            mode = str(timeline.get("mode") or "")
+            if mode not in VALID_TIMELINE_MODES:
+                errors.append(f"{feed_id}.timeline.mode must be one of {sorted(VALID_TIMELINE_MODES)}")
+            posture = str(timeline.get("cache_posture") or "")
+            if posture not in VALID_CACHE_POSTURES:
+                errors.append(f"{feed_id}.timeline.cache_posture must be one of {sorted(VALID_CACHE_POSTURES)}")
+            if mode == "raster_frame_stack" and not str(timeline.get("runtime_artifact") or "").strip():
+                errors.append(f"{feed_id}.timeline.runtime_artifact is required for raster replay")
+        provider = str(timeline.get("provider") or "").strip()
+        if not provider:
+            errors.append(f"{feed_id}.timeline.provider is required")
+        if not isinstance(timeline.get("preload_history"), bool):
+            errors.append(f"{feed_id}.timeline.preload_history must be boolean")
+    return errors
 
 
 def load_ops_feed_records(path: Path | None = None) -> list[dict]:
@@ -32,6 +106,12 @@ def load_ops_feed_records(path: Path | None = None) -> list[dict]:
             return []
     records = payload.get("feeds") if isinstance(payload, dict) else []
     if not isinstance(records, list):
+        return []
+    # Keep old already-published registry objects readable during the one
+    # deployment where code arrives before the v2 registry. Strict validation
+    # belongs to the promotion tool, not this compatibility read path.
+    basic_errors = validate_ops_feed_registry(payload, strict=False)
+    if basic_errors:
         return []
     return [
         record for record in records

@@ -1,10 +1,14 @@
 import unittest
+import json
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
 from mapmover.ops_route_runtime import _public_default_ops_feeds
 from mapmover import ops_orchestrator_runtime
+from mapmover.ops_feed_registry import load_ops_feed_records, validate_ops_feed_registry
 from mapmover.routes import ops as ops_routes
 
 
@@ -14,6 +18,40 @@ class DummyCache:
 
 
 class OpsRouteRuntimeTest(unittest.TestCase):
+    def test_strict_registry_requires_runtime_contract_fields(self):
+        payload = {
+            "schema_version": 2,
+            "feeds": [{
+                "feed_id": "example",
+                "runtime_enabled": True,
+                "collector_ids": ["example_collector"],
+                "presentation": ["map"],
+                "timeline": {
+                    "provider": "inline_frame",
+                    "mode": "full_snapshot",
+                    "cache_posture": "inline_frame",
+                    "preload_history": False,
+                },
+            }],
+        }
+        self.assertEqual([], validate_ops_feed_registry(payload, strict=True))
+        del payload["feeds"][0]["timeline"]["mode"]
+        self.assertTrue(validate_ops_feed_registry(payload, strict=True))
+
+    def test_runtime_reads_prior_registry_without_strict_contract_fields(self):
+        payload = {
+            "schema_version": 1,
+            "feeds": [{
+                "feed_id": "older_feed",
+                "runtime_enabled": True,
+                "timeline": {"provider": "inline_frame", "preload_history": False},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ops_feed_registry.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual("older_feed", load_ops_feed_records(path)[0]["feed_id"])
+
     def test_nws_background_batch_returns_compact_selected_frames(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {
