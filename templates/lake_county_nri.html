@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lake County NRI Wildfire Risk (2020 Tracts)</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #111; color: #f5f5f5; }
+    #map { width: 100vw; height: 100vh; }
+    .legend { position: absolute; bottom: 20px; left: 20px; background: rgba(17,17,17,0.9); padding: 10px 12px; border-radius: 8px; border: 1px solid #444; }
+    .legend .title { font-weight: bold; margin-bottom: 8px; }
+    .legend .swatch { display: inline-block; width: 14px; height: 14px; margin-right: 6px; border: 1px solid #fff; vertical-align: middle; }
+    .legend .row { margin: 4px 0; font-size: 13px; }
+    .maplibregl-popup-content { background: #ffffff !important; color: #000000 !important; border: 1px solid #d1d5db; border-radius: 8px; }
+    .maplibregl-popup-content, .maplibregl-popup-content *, .maplibregl-popup-content strong { color: #000000 !important; }
+    .maplibregl-popup-tip { border-top-color: #ffffff !important; }
+    .maplibregl-popup-content a { color: #1d4ed8 !important; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="legend">
+    <div class="title">NRI Wildfire Risk (Lake County)</div>
+    <div class="row"><span class="swatch" style="background:#c7445d"></span> Very High</div>
+    <div class="row"><span class="swatch" style="background:#e07069"></span> Relatively High</div>
+    <div class="row"><span class="swatch" style="background:#f0d55d"></span> Relatively Moderate</div>
+    <div class="row"><span class="swatch" style="background:#509bc7"></span> Relatively Low</div>
+    <div class="row"><span class="swatch" style="background:#4d6dbd"></span> Very Low</div>
+    <div class="row"><span class="swatch" style="background:#9e9e0f"></span> Insufficient Data / No Rating</div>
+    <div class="row"><span class="swatch" style="background:#1a9850"></span> Shelter access 30 min (higher)</div>
+    <div class="row"><span class="swatch" style="background:#fee08b"></span> Shelter access 30 min (medium)</div>
+    <div class="row"><span class="swatch" style="background:#d73027"></span> Shelter access 30 min (lower)</div>
+    <div class="row"><span class="swatch" style="background:#2f6fa3"></span> Water bodies</div>
+    <div class="row"><span class="swatch" style="background:#10b981"></span> NSS shelter facilities</div>
+    <div class="row"><span class="swatch" style="background:#4b5563"></span> Primary roads</div>
+    <div class="row"><span class="swatch" style="background:#4b5563"></span> Secondary roads</div>
+    <div class="row"><span class="swatch" style="background:#ffcc00"></span> County boundary</div>
+    <div class="row"><span class="swatch" style="background:#d1d5db"></span> Census tract boundaries</div>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [-122.78, 39.16],
+      zoom: 10.2,
+      attributionControl: false
+    });
+
+    map.on('load', async () => {
+      let tractsResponse = await fetch('/static/data/tiger2020_lake_county_tracts_nri_access.geojson');
+      if (!tractsResponse.ok) {
+        tractsResponse = await fetch('/static/data/tiger2020_lake_county_tracts_nri.geojson');
+      }
+      const tractsData = await tractsResponse.json();
+      const countyResponse = await fetch('/static/data/tiger2020_lake_county_boundary.geojson');
+      const countyData = await countyResponse.json();
+      const waterResponse = await fetch('/static/data/tiger2020_lake_county_water.geojson');
+      const waterData = await waterResponse.json();
+      const roadsResponse = await fetch('/static/data/tiger2020_lake_county_primary_secondary_roads.geojson');
+      const roadsData = await roadsResponse.json();
+      const sheltersResponse = await fetch('/static/data/nss_lake_county_facilities.geojson');
+      const sheltersData = await sheltersResponse.json();
+
+      map.addSource('lake-tracts', { type: 'geojson', data: tractsData });
+      map.addSource('lake-county-boundary', { type: 'geojson', data: countyData });
+      map.addSource('lake-water', { type: 'geojson', data: waterData });
+      map.addSource('lake-roads', { type: 'geojson', data: roadsData });
+      map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
+
+      map.addLayer({
+        id: 'lake-county-boundary-line',
+        type: 'line',
+        source: 'lake-county-boundary',
+        paint: {
+          'line-color': '#ffcc00',
+          'line-width': 4.5,
+          'line-opacity': 0.95
+        }
+      });
+      map.addLayer({
+        id: 'lake-county-boundary-label',
+        type: 'symbol',
+        source: 'lake-county-boundary',
+        layout: {
+          'text-field': ['coalesce', ['get', 'NAMELSAD10'], ['get', 'NAME10'], 'Lake County'],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-size': 16,
+          'symbol-placement': 'line',
+          'symbol-spacing': 250,
+          'text-letter-spacing': 0.1
+        },
+        paint: {
+          'text-color': '#ffcc00',
+          'text-halo-color': '#111',
+          'text-halo-width': 2
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-tracts-risk-fill',
+        type: 'fill',
+        source: 'lake-tracts',
+        paint: {
+          'fill-color': [
+            'match',
+            ['coalesce', ['get', 'WFIR_RISKR'], 'Insufficient Data'],
+            'Very High', '#c7445d',
+            'Relatively High', '#e07069',
+            'Relatively Moderate', '#f0d55d',
+            'Relatively Low', '#509bc7',
+            'Very Low', '#4d6dbd',
+            'Insufficient Data', '#9e9e0f',
+            'No Rating', '#9e9e0f',
+            '#9e9e0f'
+          ],
+          'fill-opacity': 0.72
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-tracts-access-fill',
+        type: 'fill',
+        source: 'lake-tracts',
+        paint: {
+          'fill-color': [
+            'interpolate',
+            ['linear'],
+            ['coalesce', ['to-number', ['get', 'shelters_within_30min_car']], 0],
+            0, '#d73027',
+            33, '#fee08b',
+            66, '#1a9850'
+          ],
+          'fill-opacity': 0.3
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-water-fill',
+        type: 'fill',
+        source: 'lake-water',
+        paint: {
+          'fill-color': '#2f6fa3',
+          'fill-opacity': 0.95
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-tracts-stroke',
+        type: 'line',
+        source: 'lake-tracts',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#d1d5db',
+          'line-width': 1.6,
+          'line-opacity': 0.9
+        }
+      });
+
+      // Water mask above tract boundaries so no tract lines appear over lakes.
+      map.addLayer({
+        id: 'lake-water-mask',
+        type: 'fill',
+        source: 'lake-water',
+        paint: {
+          'fill-color': '#2f6fa3',
+          'fill-opacity': 0.95
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-roads-secondary',
+        type: 'line',
+        source: 'lake-roads',
+        filter: ['==', ['get', 'road_class'], 'secondary'],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#4b5563',
+          'line-width': 2,
+          'line-opacity': 0.9
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-roads-primary',
+        type: 'line',
+        source: 'lake-roads',
+        filter: ['==', ['get', 'road_class'], 'primary'],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#4b5563',
+          'line-width': 3,
+          'line-opacity': 0.95
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-shelters-circle',
+        type: 'circle',
+        source: 'lake-shelters',
+        paint: {
+          'circle-color': '#10b981',
+          'circle-radius': 4.5,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1,
+          'circle-opacity': 0.95
+        }
+      });
+
+      map.addLayer({
+        id: 'lake-shelters-label',
+        type: 'symbol',
+        source: 'lake-shelters',
+        minzoom: 10.8,
+        layout: {
+          'text-field': ['coalesce', ['get', 'shelter_name'], 'Shelter'],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-size': 11,
+          'text-offset': [0, 1.1],
+          'text-anchor': 'top'
+        },
+        paint: {
+          'text-color': '#e5e7eb',
+          'text-halo-color': '#111111',
+          'text-halo-width': 1
+        }
+      });
+
+      map.on('click', 'lake-tracts-risk-fill', (e) => {
+        const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const geoid = props.GEOID || 'Unknown';
+        const rating = props.WFIR_RISKR || 'No Rating';
+        const score = props.WFIR_RISKS || 'n/a';
+        const value = props.WFIR_RISKV || 'n/a';
+        const eal = props.WFIR_EALT || 'n/a';
+        const access30 = props.shelters_within_30min_car ?? 'n/a';
+        const html = `<div style="color:#000000"><strong>Tract ${geoid}</strong><br/>Wildfire rating: ${rating}<br/>Wildfire score: ${score}<br/>Wildfire value: ${value}<br/>Wildfire expected annual loss total: ${eal}<br/>Shelters reachable by car in 30 min: ${access30}</div>`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+
+      map.on('mouseenter', 'lake-tracts-risk-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+
+      map.on('mouseleave', 'lake-tracts-risk-fill', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      map.on('click', 'lake-shelters-circle', (e) => {
+        const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const name = props.shelter_name || 'Shelter facility';
+        const address = props.address_1 || 'Address not listed';
+        const city = props.city || '';
+        const status = props.shelter_status_code || 'Unknown';
+        const evac = props.evacuation_capacity || 'n/a';
+        const post = props.post_impact_capacity || 'n/a';
+        const usage = props.facility_usage_code || 'n/a';
+        const html = `<div style="color:#000000"><strong>${name}</strong><br/>Address: ${address}${city ? `, ${city}` : ''}<br/>Status: ${status}<br/>Usage: ${usage}<br/>Evacuation capacity: ${evac}<br/>Post-impact capacity: ${post}</div>`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+
+      map.on('mouseenter', 'lake-shelters-circle', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+
+      map.on('mouseleave', 'lake-shelters-circle', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      // Zoom to official Lake County boundary extent on load.
+      const bounds = new maplibregl.LngLatBounds();
+      for (const feature of countyData.features || []) {
+        const geom = feature.geometry || {};
+        const coords = geom.type === 'Polygon'
+          ? [geom.coordinates || []]
+          : (geom.type === 'MultiPolygon' ? (geom.coordinates || []) : []);
+        for (const poly of coords) {
+          for (const ring of poly) {
+            for (const coord of ring) {
+              if (Array.isArray(coord) && coord.length >= 2) {
+                bounds.extend([coord[0], coord[1]]);
+              }
+            }
+          }
+        }
+      }
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 30, duration: 0 });
+      }
+    });
+  </script>
+</body>
+</html>

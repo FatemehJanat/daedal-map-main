@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Road Network Editor</title>
+  <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <link href="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #08111d;
+      --panel: #0f1f35;
+      --panel-2: #142846;
+      --text: #eef3fb;
+      --muted: #9db0cc;
+      --accent: #2a4f84;
+      --accent-2: #385f97;
+      --ok: #0a8a5d;
+      --warn: #b06a12;
+      --danger: #a53b3b;
+      --border: #223a5a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .panel {
+      border-right: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      padding: 16px;
+      overflow: auto;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 20px;
+    }
+
+    .sub {
+      color: var(--muted);
+      margin-bottom: 14px;
+      font-size: 13px;
+    }
+
+    .group {
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: rgba(6, 15, 27, 0.35);
+    }
+
+    .group h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+    }
+
+    .btn-row {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 1fr;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      background: var(--accent);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 10px;
+      cursor: pointer;
+      font-size: 13px;
+      text-align: left;
+    }
+
+    button:hover {
+      background: var(--accent-2);
+    }
+
+    button.secondary {
+      background: transparent;
+    }
+
+    button.ok {
+      background: var(--ok);
+      border-color: #0f9f6d;
+    }
+
+    button.warn {
+      background: var(--warn);
+      border-color: #c07a21;
+    }
+
+    button.danger {
+      background: var(--danger);
+      border-color: #be4a4a;
+    }
+
+    .status {
+      margin-top: 8px;
+      min-height: 40px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    .top-link {
+      display: inline-block;
+      margin-bottom: 10px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .panel { border-right: 0; border-bottom: 1px solid var(--border); max-height: 46vh; }
+      #map { height: 54vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel">
+      <a class="top-link" href="/manager">Back to manager</a>
+      <h1>Road Network Editor</h1>
+      <div class="sub">Edit Lake County roads and save changes back to this project.</div>
+
+      <div class="group">
+        <h2>Load and Save</h2>
+        <div class="btn-row">
+          <button id="loadBtn" class="secondary" type="button">Load roads from project file</button>
+          <button id="saveBtn" class="ok" type="button">Save edits to project file</button>
+        </div>
+        <div id="status" class="status">Ready.</div>
+      </div>
+
+      <div class="group">
+        <h2>Editing Tools</h2>
+        <div class="btn-row">
+          <button id="selectBtn" class="secondary" type="button">Select or move features</button>
+          <button id="drawBtn" class="secondary" type="button">Draw new road segment</button>
+          <button id="deleteBtn" class="danger" type="button">Delete selected features</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Notes</h2>
+        <div class="meta">
+          - Edits are saved to static/data/tiger2020_lake_county_primary_secondary_roads.geojson.
+          - A timestamped backup is created each time you save.
+          - This editor supports LineString and MultiLineString road features.
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <div id="map"></div>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@mapbox/mapbox-gl-draw@1.5.0/dist/mapbox-gl-draw.js"></script>
+  <script src="/static/vendor/msgpack/msgpack.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const msgpack = window.MessagePack || null;
+
+    function setStatus(message) {
+      statusEl.textContent = String(message || '');
+    }
+
+    async function fetchMsgpack(url) {
+      if (!msgpack) {
+        throw new Error('MessagePack client is not available in this browser session.');
+      }
+      const response = await fetch(url, {
+        headers: { 'Accept': 'application/msgpack' }
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const body = msgpack.decode(bytes);
+      if (!response.ok) {
+        throw new Error((body && body.error) || 'Request failed');
+      }
+      return body;
+    }
+
+    async function postMsgpack(url, payload) {
+      if (!msgpack) {
+        throw new Error('MessagePack client is not available in this browser session.');
+      }
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/msgpack',
+          'Content-Type': 'application/msgpack'
+        },
+        body: msgpack.encode(payload)
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const body = msgpack.decode(bytes);
+      if (!response.ok) {
+        throw new Error((body && body.error) || 'Request failed');
+      }
+      return body;
+    }
+
+    window.mapboxgl = maplibregl;
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [-122.78, 39.16],
+      zoom: 10.2,
+      attributionControl: false
+    });
+
+    const draw = new MapboxDraw({
+      displayControlsDefault: false,
+      controls: {
+        line_string: true,
+        trash: true
+      },
+      defaultMode: 'simple_select',
+      styles: [
+        {
+          id: 'gl-draw-line-inactive',
+          type: 'line',
+          filter: ['all', ['==', '$type', 'LineString'], ['==', 'active', 'false']],
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#f59e0b', 'line-width': 3 }
+        },
+        {
+          id: 'gl-draw-line-active',
+          type: 'line',
+          filter: ['all', ['==', '$type', 'LineString'], ['==', 'active', 'true']],
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#fcd34d', 'line-width': 4 }
+        },
+        {
+          id: 'gl-draw-point-midpoint',
+          type: 'circle',
+          filter: ['all', ['==', '$type', 'Point'], ['==', 'meta', 'midpoint']],
+          paint: { 'circle-radius': 4, 'circle-color': '#f59e0b' }
+        },
+        {
+          id: 'gl-draw-point-vertex',
+          type: 'circle',
+          filter: ['all', ['==', '$type', 'Point'], ['==', 'meta', 'vertex']],
+          paint: { 'circle-radius': 5, 'circle-color': '#ffffff', 'circle-stroke-width': 2, 'circle-stroke-color': '#f59e0b' }
+        }
+      ]
+    });
+
+    map.addControl(draw, 'top-left');
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    async function loadRoads() {
+      setStatus('Loading roads...');
+      const payload = await fetchMsgpack('/api/road-network');
+      const geojson = payload.geojson;
+      draw.deleteAll();
+      draw.add(geojson);
+      const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
+      setStatus(`Loaded ${count} road features from ${payload.source}.`);
+
+      const bounds = new maplibregl.LngLatBounds();
+      for (const feature of geojson.features || []) {
+        const g = feature.geometry || {};
+        if (g.type === 'LineString' && Array.isArray(g.coordinates)) {
+          for (const c of g.coordinates) {
+            if (Array.isArray(c) && c.length >= 2) bounds.extend([c[0], c[1]]);
+          }
+        }
+        if (g.type === 'MultiLineString' && Array.isArray(g.coordinates)) {
+          for (const line of g.coordinates) {
+            for (const c of line || []) {
+              if (Array.isArray(c) && c.length >= 2) bounds.extend([c[0], c[1]]);
+            }
+          }
+        }
+      }
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 30, duration: 0 });
+      }
+    }
+
+    async function saveRoads() {
+      const geojson = draw.getAll();
+      setStatus('Saving roads...');
+      const result = await postMsgpack('/api/road-network', { geojson });
+      setStatus(`Saved ${result.saved_features} features to ${result.target}. Backup: ${result.backup}.`);
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', async () => {
+      try {
+        await loadRoads();
+      } catch (error) {
+        setStatus(`Load failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      try {
+        await saveRoads();
+      } catch (error) {
+        setStatus(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('selectBtn').addEventListener('click', () => {
+      draw.changeMode('simple_select');
+      setStatus('Mode: select or move features.');
+    });
+
+    document.getElementById('drawBtn').addEventListener('click', () => {
+      draw.changeMode('draw_line_string');
+      setStatus('Mode: draw line string. Double click to finish a segment.');
+    });
+
+    document.getElementById('deleteBtn').addEventListener('click', () => {
+      draw.trash();
+      setStatus('Deleted selected features.');
+    });
+
+    map.on('load', async () => {
+      try {
+        await loadRoads();
+      } catch (error) {
+        setStatus(`Initial load failed: ${error.message}`);
+      }
+    });
+  </script>
+</body>
+</html>

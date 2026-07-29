@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WildfireEquity Manager</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07101d;
+      --bg-2: #0c1830;
+      --surface: rgba(8, 16, 29, 0.94);
+      --surface-2: rgba(14, 24, 40, 0.96);
+      --border: rgba(255,255,255,0.12);
+      --border-strong: rgba(255,255,255,0.18);
+      --text: #f5f7fb;
+      --muted: #94a3b8;
+      --accent: #5b7cff;
+      --accent-2: #7dd3fc;
+      --success: #10b981;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: radial-gradient(circle at top left, rgba(91,124,255,0.2), transparent 28%), var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    .app-shell {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100vh;
+      width: 100vw;
+    }
+    .app-shell.sidebar-collapsed {
+      grid-template-columns: 76px 1fr;
+    }
+    .sidebar {
+      background: linear-gradient(180deg, rgba(8,14,26,0.98), rgba(10,18,32,0.96));
+      border-right: 1px solid var(--border);
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: inset -1px 0 0 rgba(255,255,255,0.03);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .brand-badge { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; font-weight: 700; box-shadow: 0 6px 20px rgba(91,124,255,0.28); }
+    .brand-title { font-size: 16px; font-weight: 700; }
+    .brand-subtitle { font-size: 12px; color: var(--muted); }
+    .sidebar-collapse {
+      width: 100%; border: 1px solid var(--border);
+      border-radius: 10px; background: rgba(255,255,255,0.04);
+      color: var(--muted); padding: 8px 10px; text-align: left; cursor: pointer;
+      font-size: 12px;
+    }
+    .sidebar.collapsed {
+      padding: 16px 10px;
+    }
+    .sidebar.collapsed .brand > div:not(.brand-badge),
+    .sidebar.collapsed .sidebar-collapse,
+    .sidebar.collapsed .panel-card,
+    .sidebar.collapsed .nav-btn .pill {
+      display: none;
+    }
+    .sidebar.collapsed .brand {
+      justify-content: center;
+      margin-bottom: 10px;
+    }
+    .sidebar.collapsed .nav-btn {
+      justify-content: center;
+      padding: 10px 0;
+    }
+    .nav-group { display: grid; gap: 6px; }
+    .nav-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      transition: background .2s ease, border-color .2s ease;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+    .nav-btn.active { background: rgba(91,124,255,0.16); border-color: rgba(91,124,255,0.34); }
+    .nav-btn .pill { color: var(--muted); font-size: 12px; }
+    .panel-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+    .panel-card h2, .panel-card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+    .segmented { display: flex; gap: 8px; }
+    .segmented button { flex: 1; padding: 8px 10px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: var(--text); cursor: pointer; font-size: 13px; }
+    .segmented button.active { background: rgba(91,124,255,0.22); border-color: rgba(91,124,255,0.55); }
+    .toggle-list { display: grid; gap: 8px; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-row .meta { display: flex; flex-direction: column; gap: 2px; }
+    .toggle-row .meta strong { font-size: 13px; }
+    .toggle-row .meta .caption { color: var(--muted); font-size: 12px; }
+    .switch { position: relative; width: 40px; height: 22px; flex: 0 0 40px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: rgba(255,255,255,0.16); border-radius: 999px; cursor: pointer; transition: .2s; }
+    .slider:before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: .2s; }
+    .switch input:checked + .slider { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+    .switch input:checked + .slider:before { transform: translateX(18px); }
+
+    .layers-panel {
+      background: #f4f6fb;
+      color: #0f2247;
+      border: 1px solid #d6dde8;
+      box-shadow: 0 10px 24px rgba(8, 17, 35, 0.26);
+    }
+    .layers-panel h2 {
+      color: #42526b;
+      margin-bottom: 10px;
+    }
+    .layers-panel h3 {
+      color: #20345e;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .layers-panel .threshold-block {
+      margin-bottom: 10px;
+    }
+    .layers-panel .threshold-label {
+      display: block;
+      font-size: 14px;
+      color: #1f3560;
+      margin-bottom: 8px;
+    }
+    .layers-panel .threshold-track {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: #ebeff6;
+      border: 1px solid #c8d2e3;
+      border-radius: 8px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .layers-panel .threshold-pill {
+      border: 0;
+      background: transparent;
+      color: #31476e;
+      padding: 6px 8px;
+      border-radius: 5px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .layers-panel .threshold-pill.active {
+      background: #1f3b6c;
+      color: #ffffff;
+      border: 0;
+    }
+    .layers-panel #thresholdSummary {
+      margin-top: 8px;
+      color: #53698f !important;
+      font-size: 12px;
+    }
+    .layers-panel .toggle-list {
+      gap: 10px;
+    }
+    .layers-panel .toggle-row {
+      border-bottom: 0;
+      padding: 4px 0;
+    }
+    .layers-panel .toggle-row .meta strong {
+      color: #0f2247;
+      font-size: 16px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+    .layers-panel .toggle-row .meta .caption {
+      color: #5a6f93;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .layers-panel .switch {
+      width: 38px;
+      height: 22px;
+      flex: 0 0 38px;
+    }
+    .layers-panel .slider {
+      background: #dfe5ef;
+    }
+    .layers-panel .slider:before {
+      width: 16px;
+      height: 16px;
+      top: 3px;
+      left: 3px;
+      background: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+    }
+    .layers-panel .switch input:checked + .slider {
+      background: #1f3b6c;
+    }
+    .layers-panel .switch input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+    .thumb-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,0.07); font-size: 12px; color: var(--muted); }
+    .content { display: flex; flex-direction: column; min-width: 0; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); background: rgba(7,12,21,0.94); backdrop-filter: blur(8px); }
+    .topbar .title-wrap h1 { font-size: 18px; margin: 0 0 2px; }
+    .topbar .title-wrap .sub { color: var(--muted); font-size: 13px; }
+    .topbar .controls { display: flex; align-items: center; gap: 10px; }
+    .select-pill { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 8px 12px; font-size: 13px; }
+    .select-pill.ghost { color: var(--muted); }
+    .select-pill.action { cursor: pointer; }
+    .select-pill.action.active { background: rgba(91,124,255,0.22); border-color: rgba(91,124,255,0.55); color: var(--accent-2); }
+    .map-stage { position: relative; flex: 1; min-height: 0; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent); }
+    #map { width: 100%; height: 100%; }
+    .map-stage.editor-open #map { width: calc(100% - min(46vw, 620px)); }
+    .road-editor-panel {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: min(46vw, 620px);
+      border-left: 1px solid var(--border);
+      background: #0a1527;
+      transform: translateX(100%);
+      transition: transform .25s ease;
+      z-index: 9;
+      display: flex;
+      flex-direction: column;
+      pointer-events: none;
+    }
+    .map-stage.editor-open .road-editor-panel { transform: translateX(0); pointer-events: auto; }
+    .road-editor-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #0f1f35;
+    }
+    .road-editor-title { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .road-editor-actions { display: flex; align-items: center; gap: 6px; }
+    .road-editor-btn {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .road-editor-frame {
+      border: 0;
+      width: 100%;
+      height: 100%;
+      background: #08111d;
+    }
+    .legend { position: absolute; left: 18px; bottom: 18px; width: 292px; background: #edf1f7; border: 1px solid #c8d2e3; border-radius: 12px; padding: 12px; box-shadow: 0 12px 28px rgba(8, 17, 35, 0.24); color: #2a3850; }
+    .legend.hidden { display: none; }
+    .legend-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .legend h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6a778f; }
+    .legend-toggle { border: 0; background: transparent; color: #6a778f; cursor: pointer; font-size: 12px; }
+    .legend-subtitle { margin: 0 0 6px; font-size: 24px; color: #1f2f49; font-weight: 600; }
+    .legend-access-list { display: grid; gap: 4px; margin-bottom: 8px; }
+    .legend-range-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4f5f79; }
+    .legend-range-swatch { width: 18px; height: 11px; border-radius: 999px; border: 1px solid rgba(20, 43, 72, 0.14); }
+    .legend-note { font-size: 10px; color: #5f6f89; line-height: 1.3; }
+    .legend-note.italic { font-style: italic; margin-top: 2px; }
+    .legend-section-title { margin: 12px 0 6px; font-size: 13px; color: #2c3b55; font-weight: 700; }
+    .legend-type-list { display: grid; gap: 5px; }
+    .legend-type-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4f5f79; }
+    .legend-type-dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(20, 43, 72, 0.2); }
+    .tooltip-box { position: absolute; top: 16px; right: 16px; background: rgba(8,15,25,0.95); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; font-size: 13px; max-width: 320px; box-shadow: var(--shadow); }
+    .pill-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .pill { padding: 4px 8px; border-radius: 999px; background: rgba(91,124,255,0.18); color: var(--accent-2); font-size: 12px; }
+    .threshold-pill { border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); padding: 6px 10px; border-radius: 999px; cursor: pointer; font-size: 12px; }
+    .threshold-pill.active { background: rgba(91,124,255,0.22); border-color: rgba(91,124,255,0.55); color: var(--accent-2); }
+    .maplibregl-popup-content { background: #fff !important; color: #111 !important; border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.25); }
+    .maplibregl-popup-content strong { color: #111 !important; }
+    .maplibregl-popup-tip { border-top-color: #fff !important; }
+    @media (max-width: 620px) { .app-shell { grid-template-columns: 1fr; } .sidebar { display:none; } }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">WE</div>
+        <div>
+          <div class="brand-title">WildfireEquity</div>
+          <div class="brand-subtitle">Planning workspace</div>
+        </div>
+      </div>
+      <button class="sidebar-collapse" type="button">Collapse sidebar</button>
+      <div class="nav-group">
+        <button class="nav-btn active"><span>Overview</span><span class="pill">Key metrics</span></button>
+        <button class="nav-btn active"><span>Map</span><span class="pill">Risk & access</span></button>
+        <button class="nav-btn"><span>Scenarios</span><span class="pill">What-if planning</span></button>
+        <button class="nav-btn"><span>Shelters</span><span class="pill">Capacity & list</span></button>
+      </div>
+      <div class="panel-card">
+        <h2>Perspective</h2>
+        <div class="segmented" id="perspectiveToggle">
+          <button class="active" data-view="planner">Planner view</button>
+          <button data-view="resident">Resident view</button>
+        </div>
+      </div>
+      <div class="panel-card layers-panel">
+        <h2>Layers</h2>
+        <h3>Map Layers</h3>
+        <div class="threshold-block">
+          <label class="threshold-label">Travel-time threshold</label>
+          <div class="threshold-track" id="thresholdButtons">
+            <button type="button" class="threshold-pill active" data-threshold="30">30 min</button>
+            <button type="button" class="threshold-pill" data-threshold="45">45 min</button>
+            <button type="button" class="threshold-pill" data-threshold="60">60 min</button>
+          </div>
+          <div id="thresholdSummary">Nearby · moderate · distant access bands recompute per threshold.</div>
+        </div>
+        <div class="toggle-list">
+          <div class="toggle-row">
+            <div class="meta"><strong id="accessLayerLabel">Accessibility (30-min)</strong><span class="caption">Shelter count choropleth · primary layer</span></div>
+            <label class="switch" aria-label="Toggle Accessibility layer"><input type="checkbox" data-layer="accessibility" checked /><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="meta"><strong>WAIR Index Clusters</strong><span class="caption">Risk × access overlay</span></div>
+            <label class="switch" aria-label="Toggle WAIR layer"><input type="checkbox" data-layer="wair" /><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="meta"><strong>Wildfire Risk</strong><span class="caption">FEMA NRI</span></div>
+            <label class="switch" aria-label="Toggle Wildfire Risk layer"><input type="checkbox" data-layer="risk" /><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="meta"><strong>Social Vulnerability</strong><span class="caption">Composite exposure proxy</span></div>
+            <label class="switch" aria-label="Toggle Social Vulnerability layer"><input type="checkbox" data-layer="social" /><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="meta"><strong>Shelters</strong><span class="caption">Facilities</span></div>
+            <label class="switch" aria-label="Toggle Shelters layer"><input type="checkbox" data-layer="shelters" checked /><span class="slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="meta"><strong>Roads</strong><span class="caption">Primary / secondary</span></div>
+            <label class="switch" aria-label="Toggle Roads layer"><input type="checkbox" data-layer="roads" checked /><span class="slider"></span></label>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <main class="content">
+      <header class="topbar">
+        <div class="title-wrap">
+          <h1>California · Wildfire planning</h1>
+          <div class="sub">Risk & access map</div>
+        </div>
+        <div class="controls">
+          <div class="thumb-chip">Lake County</div>
+          <div class="select-pill">County</div>
+          <button type="button" class="select-pill action" id="roadEditorToggle">Road editor</button>
+          <a class="select-pill ghost" href="/">Home</a>
+        </div>
+      </header>
+      <div class="map-stage">
+        <div id="map"></div>
+        <div class="legend" id="legendPanel">
+          <div class="legend-header">
+            <h3>Legend</h3>
+            <button id="legendToggle" class="legend-toggle" type="button">Hide legend</button>
+          </div>
+          <div class="legend-subtitle" id="legendAccessLabel">Shelters reachable (30-min drive)</div>
+          <div id="legendAccessRanges" class="legend-access-list"></div>
+          <div class="legend-note">Source: rfs (Ermagun & Janatabadi 2024)</div>
+          <div class="legend-note italic">Bins computed via Jenks natural breaks</div>
+
+          <div class="legend-section-title">Shelters</div>
+          <div class="legend-type-list">
+            <div class="legend-type-row"><span class="legend-type-dot" style="background:#3b82f6"></span>School</div>
+            <div class="legend-type-row"><span class="legend-type-dot" style="background:#8b5cf6"></span>Church</div>
+            <div class="legend-type-row"><span class="legend-type-dot" style="background:#3cbf5a"></span>Community</div>
+            <div class="legend-type-row"><span class="legend-type-dot" style="background:#e74c3c"></span>Health</div>
+            <div class="legend-type-row"><span class="legend-type-dot" style="background:#e7b91f"></span>Civic</div>
+          </div>
+        </div>
+        <aside class="road-editor-panel" id="roadEditorPanel" aria-hidden="true">
+          <div class="road-editor-head">
+            <div class="road-editor-title">Road Network Editor</div>
+            <div class="road-editor-actions">
+              <a class="road-editor-btn" href="/road-network-editor" target="_blank" rel="noopener">Open standalone</a>
+              <button type="button" class="road-editor-btn" id="roadEditorClose">Close</button>
+            </div>
+          </div>
+          <iframe id="roadEditorFrame" class="road-editor-frame" title="Road network editor"></iframe>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [-122.78, 39.16],
+      zoom: 10.2,
+      attributionControl: false
+    });
+
+    let activeThreshold = 30;
+    let baseTractsGeojson = null;
+    let currentAccessBreaks = [0, 1, 2, 3, 4, 5, 6];
+    const ACCESS_COLORS = ['#e7eef8', '#c9dcf1', '#a9c8ea', '#7faede', '#4e8ecc', '#2d6fb3'];
+    const SHELTER_TYPE_COLORS = {
+      school: '#3b82f6',
+      church: '#8b5cf6',
+      community: '#3cbf5a',
+      health: '#e74c3c',
+      civic: '#e7b91f'
+    };
+    const layerToggleMap = {
+      accessibility: ['access-fill'],
+      wair: ['wair-fill'],
+      risk: ['risk-fill'],
+      social: ['social-fill'],
+      shelters: ['shelters-circle'],
+      roads: ['roads-line']
+    };
+    const tractMetricsByGeoid = new Map();
+    const tractEvacByGeoid = new Map();
+    const nearestShelterCache = new Map();
+    let sheltersForRouting = [];
+
+    function getThresholdPropertyName(threshold) {
+      return threshold === 45 ? 'shelters_within_45min_car' : threshold === 60 ? 'shelters_within_60min_car' : 'shelters_within_30min_car';
+    }
+
+    function buildAccessExpression(threshold) {
+      const propName = getThresholdPropertyName(threshold);
+      const b = currentAccessBreaks;
+      return [
+        'step',
+        ['coalesce', ['to-number', ['get', propName]], 0],
+        ACCESS_COLORS[0],
+        b[1], ACCESS_COLORS[1],
+        b[2], ACCESS_COLORS[2],
+        b[3], ACCESS_COLORS[3],
+        b[4], ACCESS_COLORS[4],
+        b[5], ACCESS_COLORS[5]
+      ];
+    }
+
+    function classifyShelterType(properties) {
+      const text = String(
+        properties?.shelter_type ||
+        properties?.facility_type ||
+        properties?.type ||
+        properties?.shelter_name || ''
+      ).toLowerCase();
+
+      if (text.includes('school') || text.includes('college') || text.includes('university')) return 'school';
+      if (text.includes('church') || text.includes('faith') || text.includes('temple')) return 'church';
+      if (text.includes('hospital') || text.includes('health') || text.includes('clinic') || text.includes('medical')) return 'health';
+      if (text.includes('civic') || text.includes('city') || text.includes('county') || text.includes('government') || text.includes('court')) return 'civic';
+      return 'community';
+    }
+
+    function toNum(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function fallbackBreaks(values, classesCount) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const min = sorted[0] ?? 0;
+      const max = sorted[sorted.length - 1] ?? 0;
+      if (min === max) {
+        return Array.from({ length: classesCount + 1 }, (_, i) => min + i);
+      }
+      const step = (max - min) / classesCount;
+      return Array.from({ length: classesCount + 1 }, (_, i) => min + step * i);
+    }
+
+    function computeJenksBreaks(values, classesCount) {
+      if (!values.length) return fallbackBreaks(values, classesCount);
+      const sorted = [...values].sort((a, b) => a - b);
+      if (sorted.length <= classesCount) return fallbackBreaks(sorted, classesCount);
+
+      const lowerClassLimits = Array.from({ length: sorted.length + 1 }, () => Array(classesCount + 1).fill(0));
+      const varianceCombinations = Array.from({ length: sorted.length + 1 }, () => Array(classesCount + 1).fill(Infinity));
+
+      for (let i = 1; i <= classesCount; i += 1) {
+        lowerClassLimits[0][i] = 1;
+        varianceCombinations[0][i] = 0;
+      }
+
+      for (let l = 1; l <= sorted.length; l += 1) {
+        let sum = 0;
+        let sumSquares = 0;
+        let w = 0;
+
+        for (let m = 1; m <= l; m += 1) {
+          const i3 = l - m + 1;
+          const val = sorted[i3 - 1];
+          w += 1;
+          sum += val;
+          sumSquares += val * val;
+          const variance = sumSquares - (sum * sum) / w;
+
+          if (i3 > 1) {
+            for (let j = 2; j <= classesCount; j += 1) {
+              const candidate = variance + varianceCombinations[i3 - 1][j - 1];
+              if (varianceCombinations[l][j] >= candidate) {
+                lowerClassLimits[l][j] = i3;
+                varianceCombinations[l][j] = candidate;
+              }
+            }
+          }
+        }
+
+        lowerClassLimits[l][1] = 1;
+        varianceCombinations[l][1] = sumSquares - (sum * sum) / w;
+      }
+
+      const breaks = Array(classesCount + 1).fill(0);
+      breaks[classesCount] = sorted[sorted.length - 1];
+      breaks[0] = sorted[0];
+
+      let k = sorted.length;
+      for (let j = classesCount; j > 1; j -= 1) {
+        const idx = lowerClassLimits[k][j] - 1;
+        breaks[j - 1] = sorted[Math.max(0, idx)];
+        k = lowerClassLimits[k][j] - 1;
+      }
+
+      for (let i = 1; i < breaks.length; i += 1) {
+        if (breaks[i] <= breaks[i - 1]) {
+          breaks[i] = breaks[i - 1] + 1;
+        }
+      }
+      return breaks;
+    }
+
+    function computeAccessBreaksGlobal() {
+      const thresholdProps = [
+        'shelters_within_30min_car',
+        'shelters_within_45min_car',
+        'shelters_within_60min_car'
+      ];
+      const values = [];
+      for (const feature of (baseTractsGeojson?.features || [])) {
+        for (const propName of thresholdProps) {
+          values.push(toNum(feature?.properties?.[propName]));
+        }
+      }
+      currentAccessBreaks = computeJenksBreaks(values, 6);
+    }
+
+    function renderAccessLegend(threshold) {
+      const titleEl = document.getElementById('legendAccessLabel');
+      const listEl = document.getElementById('legendAccessRanges');
+      if (!titleEl || !listEl) return;
+
+      titleEl.textContent = `Shelters reachable (${threshold}-min drive)`;
+      listEl.innerHTML = '';
+
+      for (let i = 0; i < ACCESS_COLORS.length; i += 1) {
+        const from = Math.round(currentAccessBreaks[i]);
+        const to = Math.round(currentAccessBreaks[i + 1]);
+        const label = i === ACCESS_COLORS.length - 1 ? `${from}+` : `${from}-${to}`;
+
+        const row = document.createElement('div');
+        row.className = 'legend-range-row';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-range-swatch';
+        swatch.style.background = ACCESS_COLORS[i];
+
+        const text = document.createElement('span');
+        text.textContent = label;
+
+        row.appendChild(swatch);
+        row.appendChild(text);
+        listEl.appendChild(row);
+      }
+    }
+
+    function parseSimpleCsv(text) {
+      const lines = String(text || '').trim().split(/\r?\n/).filter(Boolean);
+      if (lines.length < 2) return [];
+      const headers = lines[0].split(',').map((h) => h.trim());
+      return lines.slice(1).map((line) => {
+        const cols = line.split(',');
+        const row = {};
+        headers.forEach((header, index) => {
+          row[header] = String(cols[index] ?? '').trim();
+        });
+        return row;
+      });
+    }
+
+    function toPercent(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      if (n > 1 && n <= 100) return n;
+      if (n >= 0 && n <= 1) return n * 100;
+      return null;
+    }
+
+    function firstFiniteNumber(source, keys) {
+      for (const key of keys) {
+        if (!source || source[key] == null || source[key] === '') continue;
+        const n = Number(source[key]);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+
+    function safeGeoid(value) {
+      return String(value || '').trim();
+    }
+
+    function getTractMetricRow(geoid) {
+      return tractMetricsByGeoid.get(safeGeoid(geoid)) || null;
+    }
+
+    function getPopulationValue(props, geoid) {
+      const row = getTractMetricRow(geoid);
+      return firstFiniteNumber(props, ['POPULATION', 'POPULATION_1', 'POP', 'TOTAL_POP', 'TOT_POP'])
+        ?? firstFiniteNumber(row, ['POPULATION']);
+    }
+
+    function getCompositionValues(props, geoid) {
+      const row = getTractMetricRow(geoid);
+      const carless = toPercent(
+        firstFiniteNumber(props, ['CARLESS_PCT', 'NO_VEHICLE_PCT', 'PCT_NO_VEHICLE', 'CARLESS'])
+        ?? firstFiniteNumber(row, ['CARLESS_PCT', 'NO_VEHICLE_PCT'])
+      );
+      const elderly = toPercent(
+        firstFiniteNumber(props, ['ELDERLY_PCT', 'PCT_65_PLUS', 'SENIOR_PCT', 'ELDERLY'])
+        ?? firstFiniteNumber(row, ['ELDERLY_PCT', 'PCT_65_PLUS'])
+      );
+      return { carless, elderly };
+    }
+
+    function getEvacuationZoneCode(props, geoid) {
+      const row = getTractMetricRow(geoid);
+      return (
+        tractEvacByGeoid.get(safeGeoid(geoid)) ||
+        props?.EVAC_ZONE_CODE ||
+        props?.EVAC_ZONE ||
+        props?.ZONE_CODE ||
+        props?.ZONE ||
+        props?.zone_code ||
+        row?.EVAC_ZONE_CODE ||
+        row?.EVAC_ZONE ||
+        'n/a'
+      );
+    }
+
+    function normalizeEvacZoneCode(properties) {
+      const p = properties || {};
+      return (
+        p.EVAC_ZONE_CODE ||
+        p.EVAC_ZONE ||
+        p.ZONE_CODE ||
+        p.ZONE ||
+        p.zone_code ||
+        p.zone ||
+        p.code ||
+        p.id ||
+        null
+      );
+    }
+
+    function pointInRing(point, ring) {
+      if (!Array.isArray(ring) || ring.length < 3) return false;
+      const x = point[0];
+      const y = point[1];
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const intersects = ((yi > y) !== (yj > y)) &&
+          (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-12) + xi);
+        if (intersects) inside = !inside;
+      }
+      return inside;
+    }
+
+    function pointInPolygonGeom(point, geometry) {
+      if (!geometry || !Array.isArray(point)) return false;
+      if (geometry.type === 'Polygon') {
+        const rings = geometry.coordinates || [];
+        if (!rings.length || !pointInRing(point, rings[0])) return false;
+        for (let i = 1; i < rings.length; i += 1) {
+          if (pointInRing(point, rings[i])) return false;
+        }
+        return true;
+      }
+      if (geometry.type === 'MultiPolygon') {
+        return (geometry.coordinates || []).some((poly) => pointInPolygonGeom(point, { type: 'Polygon', coordinates: poly }));
+      }
+      return false;
+    }
+
+    async function fetchOptionalGeojson(paths) {
+      for (const path of paths) {
+        try {
+          const response = await fetch(path);
+          if (!response.ok) continue;
+          return await response.json();
+        } catch {
+          // Ignore and continue trying the next candidate path.
+        }
+      }
+      return null;
+    }
+
+    function applyEvacuationZoneJoin(tractsGeojson, evacGeojson) {
+      tractEvacByGeoid.clear();
+      if (!evacGeojson?.features?.length) return;
+
+      const zoneFeatures = evacGeojson.features
+        .map((feature) => ({
+          code: normalizeEvacZoneCode(feature?.properties),
+          geometry: feature?.geometry
+        }))
+        .filter((row) => row.code && row.geometry && (row.geometry.type === 'Polygon' || row.geometry.type === 'MultiPolygon'));
+
+      if (!zoneFeatures.length) return;
+
+      for (const feature of tractsGeojson?.features || []) {
+        const props = feature?.properties || {};
+        const geoid = safeGeoid(props.GEOID || props.TRACTFIPS || props.NRI_ID);
+        if (!geoid) continue;
+        const center = tractCenter(feature, props);
+        if (!center) continue;
+
+        const match = zoneFeatures.find((zone) => pointInPolygonGeom(center, zone.geometry));
+        if (match) tractEvacByGeoid.set(geoid, String(match.code));
+      }
+    }
+
+    function classifyAccessBand(count) {
+      const numeric = Number(count) || 0;
+      const high = currentAccessBreaks[4] ?? 0;
+      const medium = currentAccessBreaks[2] ?? 0;
+      if (numeric >= high) return { label: 'Nearby access', color: '#16a34a' };
+      if (numeric >= medium) return { label: 'Moderate access', color: '#ca8a04' };
+      return { label: 'Distant access', color: '#b45309' };
+    }
+
+    function classifyWairLabel(props) {
+      const val = Number(props?.[`wair_index_${activeThreshold}`] ?? props?.wair_index ?? 0);
+      if (val < 0.2) return 'LL';
+      if (val < 0.4) return 'L';
+      if (val < 0.6) return 'M';
+      if (val < 0.8) return 'H';
+      return 'VH';
+    }
+
+    function tractCenter(feature, fallbackProps) {
+      const lon = Number(fallbackProps?.INTPTLON);
+      const lat = Number(fallbackProps?.INTPTLAT);
+      if (Number.isFinite(lon) && Number.isFinite(lat)) return [lon, lat];
+
+      const geometry = feature?.geometry;
+      if (!geometry) return null;
+      if (geometry.type === 'Point') return geometry.coordinates;
+      if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates?.[0])) {
+        const ring = geometry.coordinates[0];
+        const sum = ring.reduce((acc, c) => [acc[0] + c[0], acc[1] + c[1]], [0, 0]);
+        return [sum[0] / ring.length, sum[1] / ring.length];
+      }
+      if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates?.[0]?.[0])) {
+        const ring = geometry.coordinates[0][0];
+        const sum = ring.reduce((acc, c) => [acc[0] + c[0], acc[1] + c[1]], [0, 0]);
+        return [sum[0] / ring.length, sum[1] / ring.length];
+      }
+      return null;
+    }
+
+    function haversineKm(lon1, lat1, lon2, lat2) {
+      const toRad = (d) => d * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    async function routeDurationMinutes(fromLon, fromLat, toLon, toLat) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+      try {
+        const url = `https://router.project-osrm.org/route/v1/car/${fromLon},${fromLat};${toLon},${toLat}?overview=false&alternatives=false`;
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) return null;
+        const payload = await response.json();
+        const durationSec = payload?.routes?.[0]?.duration;
+        return Number.isFinite(durationSec) ? (durationSec / 60) : null;
+      } catch {
+        return null;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }
+
+    async function getNearestShelterTravelInfo(feature, props, geoid) {
+      if (nearestShelterCache.has(geoid)) return nearestShelterCache.get(geoid);
+      const center = tractCenter(feature, props);
+      if (!center || !sheltersForRouting.length) return null;
+
+      const [lon, lat] = center;
+      const shortlist = sheltersForRouting
+        .map((s) => ({ ...s, distKm: haversineKm(lon, lat, s.lon, s.lat) }))
+        .sort((a, b) => a.distKm - b.distKm)
+        .slice(0, 6);
+
+      let best = null;
+      for (const candidate of shortlist) {
+        const min = await routeDurationMinutes(lon, lat, candidate.lon, candidate.lat);
+        if (!Number.isFinite(min)) continue;
+        if (!best || min < best.minutes) {
+          best = { minutes: min, shelterName: candidate.name };
+        }
+      }
+
+      nearestShelterCache.set(geoid, best);
+      return best;
+    }
+
+    function formatPopupHtml({ geoid, population, risk, accessCount, nearestInfo, wairLabel, composition, evacCode }) {
+      const accessBand = classifyAccessBand(accessCount);
+      const popText = Number.isFinite(population) ? Number(population).toLocaleString('en-US') : 'n/a';
+      const nearestText = nearestInfo && Number.isFinite(nearestInfo.minutes)
+        ? `${Math.round(nearestInfo.minutes)} min${nearestInfo.shelterName ? ` (${nearestInfo.shelterName})` : ''}`
+        : 'n/a';
+      const carlessText = composition.carless != null ? `${composition.carless.toFixed(1)}%` : 'n/a';
+      const elderlyText = composition.elderly != null ? `${composition.elderly.toFixed(1)}%` : 'n/a';
+
+      return [
+        `<div><strong>${geoid || 'Unknown tract'}</strong></div>`,
+        `<div>Pop ${popText}</div>`,
+        `<div>Risk: ${risk || 'No Rating'}</div>`,
+        `<div>${accessCount} shelters reachable within ${activeThreshold} min</div>`,
+        `<div><em>r5r ground truth</em></div>`,
+        `<div>Nearest shelter: ${nearestText}</div>`,
+        `<div style="color:${accessBand.color};">${accessBand.label}</div>`,
+        `<div>WAIR: ${wairLabel}</div>`,
+        `<div>Carless ${carlessText} · Elderly ${elderlyText}</div>`,
+        `<div>Evacuation zone: ${evacCode}</div>`
+      ].join('');
+    }
+
+    function updateThresholdUI() {
+      document.querySelectorAll('#thresholdButtons .threshold-pill').forEach((btn) => {
+        btn.classList.toggle('active', Number(btn.dataset.threshold) === activeThreshold);
+      });
+      const summaryEl = document.getElementById('thresholdSummary');
+      const accessLayerLabelEl = document.getElementById('accessLayerLabel');
+      const titleEl = document.querySelector('.topbar .title-wrap .sub');
+      if (summaryEl) summaryEl.textContent = 'Nearby · moderate · distant access bands recompute per threshold.';
+      if (accessLayerLabelEl) accessLayerLabelEl.textContent = `Accessibility (${activeThreshold}-min)`;
+      if (titleEl) titleEl.textContent = `Travel-time threshold: ${activeThreshold} min`;
+    }
+
+    function setLayerVisibility(layerId, visible) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+      }
+    }
+
+    function setToggleLayersVisibility(toggleKey, visible) {
+      const mappedLayers = layerToggleMap[toggleKey] || [];
+      mappedLayers.forEach((layerId) => setLayerVisibility(layerId, visible));
+    }
+
+    function syncToggleLayers() {
+      document.querySelectorAll('[data-layer]').forEach((input) => {
+        setToggleLayersVisibility(input.dataset.layer, input.checked);
+      });
+    }
+
+    function updateAccessLayer() {
+      if (map.getLayer('access-fill')) {
+        map.setPaintProperty('access-fill', 'fill-color', buildAccessExpression(activeThreshold));
+      }
+      if (map.getLayer('wair-fill')) {
+        map.setPaintProperty('wair-fill', 'fill-color', buildWairExpression(activeThreshold));
+      }
+      if (map.getLayer('social-fill')) {
+        map.setPaintProperty('social-fill', 'fill-color', buildSocialExpression(activeThreshold));
+      }
+    }
+
+    function buildWairExpression(threshold) {
+      return [
+        'interpolate',
+        ['linear'],
+        ['coalesce', ['to-number', ['get', `wair_index_${threshold}`]], 0],
+        0, '#1f77b4',
+        0.5, '#f1c40f',
+        1, '#c0392b'
+      ];
+    }
+
+    function buildSocialExpression(threshold) {
+      return [
+        'interpolate',
+        ['linear'],
+        ['coalesce', ['to-number', ['get', `social_vulnerability_${threshold}`]], 0],
+        0, '#8e44ad',
+        0.5, '#f39c12',
+        1, '#d35400'
+      ];
+    }
+
+    function getColorForRisk(rating) {
+      switch (rating) {
+        case 'Very High': return '#c7445d';
+        case 'Relatively High': return '#e07069';
+        case 'Relatively Moderate': return '#f0d55d';
+        case 'Relatively Low': return '#509bc7';
+        case 'Very Low': return '#4d6dbd';
+        default: return '#9e9e0f';
+      }
+    }
+
+    function deriveIndexProperties(feature, threshold) {
+      const props = feature.properties || {};
+      const accessProp = getThresholdPropertyName(threshold);
+      const access = Number(props[accessProp] || props.shelters_within_30min_car || 0);
+      const riskRaw = Number(props.WFIR_RISKV || props.WFIR_RISKS || 0);
+      const normalizedRisk = Math.min(1, Math.max(0, riskRaw / 1000));
+      const normalizedAccess = Math.min(1, Math.max(0, access / 60));
+      const wair = Math.max(0, Math.min(1, normalizedRisk * 0.7 + (1 - normalizedAccess) * 0.3));
+      const social = Math.max(0, Math.min(1, normalizedRisk * 0.6 + (1 - normalizedAccess) * 0.4));
+      return {
+        ...props,
+        wair_index: wair,
+        social_vulnerability: social,
+        [`wair_index_${threshold}`]: wair,
+        [`social_vulnerability_${threshold}`]: social,
+        risk_rating: props.WFIR_RISKR || 'No Rating'
+      };
+    }
+
+    function buildDerivedGeojson(geojson, threshold) {
+      return {
+        type: 'FeatureCollection',
+        features: (geojson.features || []).map((feature) => ({
+          ...feature,
+          properties: deriveIndexProperties(feature, threshold)
+        }))
+      };
+    }
+
+    function refreshTractsLayer(threshold = activeThreshold) {
+      if (!baseTractsGeojson) return;
+      const derived = buildDerivedGeojson(baseTractsGeojson, threshold);
+      if (map.getSource('tracts')) {
+        map.getSource('tracts').setData(derived);
+      }
+      updateAccessLayer();
+      renderAccessLegend(threshold);
+    }
+
+    async function init() {
+      const [tractsResponse, countyResponse, roadsResponse, sheltersResponse, nriCsvResponse] = await Promise.all([
+        fetch('/static/data/tiger2020_lake_county_tracts_nri_access.geojson'),
+        fetch('/static/data/tiger2020_lake_county_boundary.geojson'),
+        fetch('/static/data/tiger2020_lake_county_primary_secondary_roads.geojson'),
+        fetch('/static/data/nss_lake_county_facilities.geojson'),
+        fetch('/static/data/california_nri_wildfire_eal.csv')
+      ]);
+
+      baseTractsGeojson = await tractsResponse.json();
+      computeAccessBreaksGlobal();
+      const tractsGeojson = buildDerivedGeojson(baseTractsGeojson, activeThreshold);
+      const countyGeojson = await countyResponse.json();
+      const roadsGeojson = await roadsResponse.json();
+      const rawSheltersGeojson = await sheltersResponse.json();
+      const nriCsvText = await nriCsvResponse.text();
+      parseSimpleCsv(nriCsvText)
+        .filter((row) => String(row.COUNTYFIPS || '').padStart(3, '0') === '033' || safeGeoid(row.TRACTFIPS || '').startsWith('06033'))
+        .forEach((row) => {
+          const geoid = safeGeoid(row.TRACTFIPS || row.GEOID);
+          if (geoid) tractMetricsByGeoid.set(geoid, row);
+        });
+      const sheltersGeojson = {
+        ...rawSheltersGeojson,
+        features: (rawSheltersGeojson.features || []).map((feature) => ({
+          ...feature,
+          properties: {
+            ...(feature.properties || {}),
+            shelter_category: classifyShelterType(feature.properties || {})
+          }
+        }))
+      };
+      sheltersForRouting = (sheltersGeojson.features || [])
+        .map((feature) => {
+          const coords = feature?.geometry?.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) return null;
+          return {
+            lon: Number(coords[0]),
+            lat: Number(coords[1]),
+            name: feature?.properties?.shelter_name || 'Shelter'
+          };
+        })
+        .filter((entry) => entry && Number.isFinite(entry.lon) && Number.isFinite(entry.lat));
+
+      const evacuationZonesGeojson = await fetchOptionalGeojson([
+        '/static/data/lake_county_evacuation_zones.geojson',
+        '/static/data/evacuation_zones_lake_county.geojson',
+        '/static/data/evacuation_zones.geojson'
+      ]);
+      applyEvacuationZoneJoin(baseTractsGeojson, evacuationZonesGeojson);
+
+      map.addSource('tracts', { type: 'geojson', data: tractsGeojson });
+      map.addSource('county', { type: 'geojson', data: countyGeojson });
+      map.addSource('roads', { type: 'geojson', data: roadsGeojson });
+      map.addSource('shelters', { type: 'geojson', data: sheltersGeojson });
+
+      map.addLayer({
+        id: 'county-border',
+        type: 'line',
+        source: 'county',
+        paint: { 'line-color': '#ffcc00', 'line-width': 3.5, 'line-opacity': 0.95 }
+      });
+
+      map.addLayer({
+        id: 'risk-fill',
+        type: 'fill',
+        source: 'tracts',
+        paint: {
+          'fill-color': [
+            'match',
+            ['coalesce', ['get', 'WFIR_RISKR'], 'Insufficient Data'],
+            'Very High', '#c7445d',
+            'Relatively High', '#e07069',
+            'Relatively Moderate', '#f0d55d',
+            'Relatively Low', '#509bc7',
+            'Very Low', '#4d6dbd',
+            'Insufficient Data', '#9e9e0f',
+            'No Rating', '#9e9e0f',
+            '#9e9e0f'
+          ],
+          'fill-opacity': 0.62
+        }
+      });
+
+      map.addLayer({
+        id: 'access-fill',
+        type: 'fill',
+        source: 'tracts',
+        paint: {
+          'fill-color': buildAccessExpression(activeThreshold),
+          'fill-opacity': 0.3
+        }
+      });
+
+      map.addLayer({
+        id: 'wair-fill',
+        type: 'fill',
+        source: 'tracts',
+        paint: {
+          'fill-color': buildWairExpression(activeThreshold),
+          'fill-opacity': 0.38
+        }
+      });
+
+      map.addLayer({
+        id: 'social-fill',
+        type: 'fill',
+        source: 'tracts',
+        paint: {
+          'fill-color': buildSocialExpression(activeThreshold),
+          'fill-opacity': 0.24
+        }
+      });
+
+      map.addLayer({
+        id: 'tract-stroke',
+        type: 'line',
+        source: 'tracts',
+        paint: { 'line-color': '#d1d5db', 'line-width': 0.8, 'line-opacity': 0.75 }
+      });
+
+      map.addLayer({
+        id: 'roads-line',
+        type: 'line',
+        source: 'roads',
+        filter: ['match', ['get', 'road_class'], ['primary', 'secondary'], true, false],
+        paint: { 'line-color': '#4b5563', 'line-width': 2.2, 'line-opacity': 0.9 }
+      });
+
+      map.addLayer({
+        id: 'shelters-circle',
+        type: 'circle',
+        source: 'shelters',
+        paint: {
+          'circle-color': [
+            'match',
+            ['coalesce', ['get', 'shelter_category'], 'community'],
+            'school', SHELTER_TYPE_COLORS.school,
+            'church', SHELTER_TYPE_COLORS.church,
+            'community', SHELTER_TYPE_COLORS.community,
+            'health', SHELTER_TYPE_COLORS.health,
+            'civic', SHELTER_TYPE_COLORS.civic,
+            SHELTER_TYPE_COLORS.community
+          ],
+          'circle-radius': 4.5,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1,
+          'circle-opacity': 0.95
+        }
+      });
+
+      const layerOrder = ['county-border', 'risk-fill', 'access-fill', 'wair-fill', 'social-fill', 'tract-stroke', 'roads-line', 'shelters-circle'];
+      layerOrder.forEach((id) => {
+        setLayerVisibility(id, true);
+      });
+
+      document.querySelectorAll('[data-layer]').forEach((input) => {
+        input.addEventListener('change', () => {
+          setToggleLayersVisibility(input.dataset.layer, input.checked);
+        });
+      });
+      syncToggleLayers();
+
+      document.querySelectorAll('#perspectiveToggle button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('#perspectiveToggle button').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          const subtitleEl = document.querySelector('.topbar .title-wrap .sub');
+          if (subtitleEl) {
+            subtitleEl.textContent = btn.dataset.view === 'resident'
+              ? 'Resident perspective: local shelter access'
+              : 'Planner perspective: risk and access map';
+          }
+        });
+      });
+
+      document.querySelectorAll('#thresholdButtons .threshold-pill').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          activeThreshold = Number(btn.dataset.threshold);
+          updateThresholdUI();
+          refreshTractsLayer(activeThreshold);
+        });
+      });
+      const legendToggle = document.getElementById('legendToggle');
+      const legendPanel = document.getElementById('legendPanel');
+      if (legendToggle && legendPanel) {
+        legendToggle.addEventListener('click', () => {
+          const hidden = legendPanel.classList.toggle('hidden');
+          legendToggle.textContent = hidden ? 'Show legend' : 'Hide legend';
+        });
+      }
+      const sidebarCollapse = document.querySelector('.sidebar-collapse');
+      const sidebar = document.querySelector('.sidebar');
+      const shell = document.querySelector('.app-shell');
+      const mapStage = document.querySelector('.map-stage');
+      const roadEditorToggle = document.getElementById('roadEditorToggle');
+      const roadEditorPanel = document.getElementById('roadEditorPanel');
+      const roadEditorClose = document.getElementById('roadEditorClose');
+      const roadEditorFrame = document.getElementById('roadEditorFrame');
+      if (sidebarCollapse && sidebar && shell) {
+        sidebarCollapse.addEventListener('click', () => {
+          const collapsed = shell.classList.toggle('sidebar-collapsed');
+          sidebar.classList.toggle('collapsed', collapsed);
+          sidebarCollapse.textContent = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        });
+      }
+
+      function setRoadEditorOpen(open) {
+        if (!mapStage || !roadEditorPanel || !roadEditorToggle) return;
+        if (!open && roadEditorPanel.contains(document.activeElement)) {
+          roadEditorToggle.focus();
+        }
+        mapStage.classList.toggle('editor-open', open);
+        roadEditorPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        roadEditorPanel.inert = !open;
+        roadEditorToggle.classList.toggle('active', open);
+        roadEditorToggle.textContent = open ? 'Close road editor' : 'Road editor';
+        if (open && roadEditorFrame && !roadEditorFrame.getAttribute('src')) {
+          roadEditorFrame.setAttribute('src', '/road-network-editor');
+        }
+        window.setTimeout(() => map.resize(), 280);
+      }
+
+      if (roadEditorToggle) {
+        roadEditorToggle.addEventListener('click', () => {
+          const open = !mapStage.classList.contains('editor-open');
+          setRoadEditorOpen(open);
+        });
+      }
+      if (roadEditorClose) {
+        roadEditorClose.addEventListener('click', () => setRoadEditorOpen(false));
+      }
+      renderAccessLegend(activeThreshold);
+      updateThresholdUI();
+
+      async function showTractPopup(feature, lngLat) {
+        if (!feature) return;
+        const props = feature?.properties || {};
+        const geoid = safeGeoid(props.GEOID || props.TRACTFIPS || props.NRI_ID) || 'Unknown';
+        const rating = props.WFIR_RISKR || 'No Rating';
+        const propName = getThresholdPropertyName(activeThreshold);
+        const access = Number(props[propName] ?? 0);
+        const population = getPopulationValue(props, geoid);
+        const composition = getCompositionValues(props, geoid);
+        const evacCode = getEvacuationZoneCode(props, geoid);
+        const wairLabel = classifyWairLabel(props);
+
+        const loadingHtml = formatPopupHtml({
+          geoid,
+          population,
+          risk: rating,
+          accessCount: Number.isFinite(access) ? access : 0,
+          nearestInfo: null,
+          wairLabel,
+          composition,
+          evacCode
+        }).replace('Nearest shelter: n/a', 'Nearest shelter: calculating...');
+
+        const popup = new maplibregl.Popup().setLngLat(lngLat).setHTML(loadingHtml).addTo(map);
+        const nearestInfo = await getNearestShelterTravelInfo(feature, props, geoid);
+        if (!popup.isOpen()) return;
+
+        const finalHtml = formatPopupHtml({
+          geoid,
+          population,
+          risk: rating,
+          accessCount: Number.isFinite(access) ? access : 0,
+          nearestInfo,
+          wairLabel,
+          composition,
+          evacCode
+        });
+        popup.setHTML(finalHtml);
+      }
+
+      const tractClickLayers = ['access-fill', 'wair-fill', 'risk-fill', 'social-fill', 'tract-stroke'];
+      map.on('click', async (e) => {
+        if (map.queryRenderedFeatures(e.point, { layers: ['shelters-circle'] }).length) {
+          return;
+        }
+        const tractFeature = map.queryRenderedFeatures(e.point, { layers: tractClickLayers })[0];
+        if (!tractFeature) return;
+        await showTractPopup(tractFeature, e.lngLat);
+      });
+
+      map.on('click', 'shelters-circle', (e) => {
+        const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const name = props.shelter_name || 'Shelter';
+        const address = props.address_1 || 'Address not listed';
+        const type = props.shelter_category || classifyShelterType(props);
+        const label = type ? `${type.charAt(0).toUpperCase()}${type.slice(1)}` : 'Community';
+        const html = `<div><strong>${name}</strong><br/>Type: ${label}<br/>${address}</div>`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+
+      const bounds = new maplibregl.LngLatBounds();
+      for (const feature of countyGeojson.features || []) {
+        const coords = feature.geometry && feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] : (feature.geometry && feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates[0][0] : []);
+        for (const ring of Array.isArray(coords) ? [coords] : []) {
+          for (const coord of ring) {
+            if (Array.isArray(coord) && coord.length >= 2) bounds.extend([coord[0], coord[1]]);
+          }
+        }
+      }
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 30, duration: 0 });
+    }
+
+    map.on('load', init);
+  </script>
+</body>
+</html>

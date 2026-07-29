@@ -9,12 +9,15 @@ This file is intentionally thin:
 """
 
 import io
+import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+import msgpack
 from mapmover.runtime_env_files import runtime_env_file_candidates
 
 
@@ -70,8 +73,10 @@ from mapmover.routes.private_mcp import router as private_mcp_router
 from mapmover.routes.research import router as research_router
 from mapmover.prewarm_status import begin_prewarm, run_prewarm_task
 from mapmover.routes.system import prewarm_public_pack_catalog, router as system_router
+from mapmover.routes.system import _require_local_or_admin
 from mapmover.routes.weather import router as weather_router
 from mapmover.runtime_build_info import runtime_build_info
+from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 
 
 if sys.stdout.encoding != "utf-8":
@@ -81,6 +86,8 @@ if sys.stderr.encoding != "utf-8":
 
 BASE_DIR = Path(__file__).resolve().parent
 SECURITY_TXT_PATH = BASE_DIR / "static" / "security.txt"
+ROAD_NETWORK_PATH = BASE_DIR / "static" / "data" / "tiger2020_lake_county_primary_secondary_roads.geojson"
+ROAD_NETWORK_BACKUP_DIR = BASE_DIR / "static" / "data" / "road_network_backups"
 
 
 def _get_request_ip(request: Request) -> str | None:
@@ -319,15 +326,18 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 def _apply_common_security_headers(response, request: Request, path: str) -> None:
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if path == "/static/browser-corpus-bridge.html":
+    if path == "/static/browser-corpus-bridge.html" or path == "/road-network-editor":
         try:
             if "X-Frame-Options" in response.headers:
                 del response.headers["X-Frame-Options"]
         except Exception:
             pass
-        response.headers["Content-Security-Policy"] = (
-            "frame-ancestors 'self' http://localhost:8080 https://www.daedalmap.com https://daedalmap.com"
-        )
+        if path == "/road-network-editor":
+            response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "frame-ancestors 'self' http://localhost:8080 https://www.daedalmap.com https://daedalmap.com"
+            )
     else:
         response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -468,6 +478,87 @@ async def maps_key_config():
 @app.get("/security.txt", include_in_schema=False)
 async def security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/prototype/lake-county-nri", include_in_schema=False)
+async def lake_county_nri_prototype():
+    return FileResponse(BASE_DIR / "templates" / "lake_county_nri.html", media_type="text/html; charset=utf-8")
+
+
+@app.get("/manager", include_in_schema=False)
+async def wildfire_equity_manager():
+    return FileResponse(BASE_DIR / "templates" / "wildfire_equity_manager.html", media_type="text/html; charset=utf-8")
+
+
+@app.get("/road-network-editor", include_in_schema=False)
+async def road_network_editor():
+    return FileResponse(BASE_DIR / "templates" / "road_network_editor.html", media_type="text/html; charset=utf-8")
+
+
+@app.get("/api/road-network", include_in_schema=False)
+async def get_road_network_geojson():
+    try:
+        if not ROAD_NETWORK_PATH.exists():
+            return msgpack_error("Road network file not found", 404)
+        data = json.loads(ROAD_NETWORK_PATH.read_text(encoding="utf-8"))
+        return msgpack_response({"geojson": data, "source": str(ROAD_NETWORK_PATH.name)})
+    except Exception as exc:
+        logger.error("Failed to load road network geojson: %s", exc)
+        return msgpack_error("Failed to load road network geojson", 500)
+
+
+@app.post("/api/road-network", include_in_schema=False)
+async def save_road_network_geojson(req: Request):
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+
+    try:
+        payload = msgpack.unpackb(await req.body(), raw=False)
+    except Exception:
+        return msgpack_error("Invalid MessagePack payload", 400)
+
+    geojson = payload.get("geojson") if isinstance(payload, dict) else None
+    if not isinstance(geojson, dict):
+        return msgpack_error("Missing geojson object", 400)
+    if geojson.get("type") != "FeatureCollection":
+        return msgpack_error("geojson must be a FeatureCollection", 400)
+
+    features = geojson.get("features")
+    if not isinstance(features, list):
+        return msgpack_error("geojson.features must be an array", 400)
+
+    allowed_geom_types = {"LineString", "MultiLineString"}
+    for feature in features:
+        if not isinstance(feature, dict):
+            return msgpack_error("Each feature must be an object", 400)
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, dict):
+            return msgpack_error("Each feature must include a geometry object", 400)
+        geom_type = geometry.get("type")
+        if geom_type not in allowed_geom_types:
+            return msgpack_error("Road features must be LineString or MultiLineString", 400)
+
+    try:
+        ROAD_NETWORK_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_path = ROAD_NETWORK_BACKUP_DIR / f"roads_{timestamp}.geojson"
+
+        if ROAD_NETWORK_PATH.exists():
+            backup_path.write_text(ROAD_NETWORK_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+        ROAD_NETWORK_PATH.write_text(json.dumps(geojson, indent=2), encoding="utf-8")
+        return msgpack_response(
+            {
+                "ok": True,
+                "saved_features": len(features),
+                "target": str(ROAD_NETWORK_PATH.name),
+                "backup": str(backup_path.name),
+            }
+        )
+    except Exception as exc:
+        logger.error("Failed to save road network geojson: %s", exc)
+        return msgpack_error("Failed to save road network geojson", 500)
 
 
 @app.get("/.well-known/security.txt", include_in_schema=False)
