@@ -3108,6 +3108,16 @@ export const ChatManager = {
   },
 
   getEffectiveCatalogSurface() {
+    // Read the local per-lane switch when constructing every request instead
+    // of trusting the value cached during chat initialization. An overlay can
+    // survive a catalog refresh while that cached state is stale; the request
+    // must still describe the same WIP surface the local map is showing.
+    // Server-side wrapper/admin authorization remains the security boundary.
+    const isLocalHost = typeof window !== 'undefined'
+      && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+    if (isLocalHost && window.localStorage.getItem(`useWipCatalog:${normalizeChatMode(this.mode)}`) === '1') {
+      return 'wip';
+    }
     if (!this.canUseWipCatalog) return 'published';
     return this.normalizeCatalogSurface(this.catalogSurface);
   },
