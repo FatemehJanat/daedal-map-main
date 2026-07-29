@@ -124,6 +124,14 @@ present.
 Explore, Research, Ops, and machine queries should resolve the same requested
 period to the same effective range.
 
+An authored source default is a starting view, not an override of user intent.
+When a user supplies explicit time bounds, every applicable map surface must
+use those bounds for both retrieval and timeline display. When an executable
+request omits optional filters such as event type or sub-geography, the shared
+meaning is the full compatible scope. A display cap, size warning, or coverage
+warning may require confirmation or disclose a limit; a mode must not ask a
+clarification merely to select an otherwise optional filter.
+
 ### Aggregation
 
 Aggregation is source meaning, not mode behavior. Every mode must honor the

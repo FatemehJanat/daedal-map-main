@@ -453,13 +453,22 @@ body.map-ui-fullscreen #overlaySelectorRegion {
   transition-delay: 0s, 0s, 220ms;
 }
 
-body.map-ui-fullscreen #statsOverlay,
-body.map-ui-fullscreen #tutorialTimelineRegion {
+body.map-ui-fullscreen #statsOverlay {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transform: translateY(28px);
   transition-delay: 0s, 0s, 220ms;
+}
+
+/* The timeline is a playback control, not decorative chrome: preserve it in
+   fullscreen so time ranges and animation remain controllable. */
+body.map-ui-fullscreen #tutorialTimelineRegion {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  /* Keep the viewport-centered placement from the base rule. */
+  transform: translateX(-50%);
 }
 
 body.map-ui-fullscreen #ocean-raster-panel {

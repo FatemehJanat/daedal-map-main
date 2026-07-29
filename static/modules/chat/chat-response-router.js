@@ -102,6 +102,32 @@ export function handleResponse(ctx, response, deps = {}) {
     return ctx.addMessage(text, type, { ...options, mode: targetMode });
   };
   switch (response.type) {
+    case 'overlay_range_load': {
+      const action = {
+        type: 'overlay_range_load',
+        overlayId: response.overlay_id,
+        startMs: response.start_ms,
+        endMs: response.end_ms,
+      };
+      add(response.message || 'Loading the requested map range.', 'assistant');
+      Promise.resolve(ctx.executeDefaultLoadAction?.(action, {
+        mode: targetMode,
+        suppressResultMessage: true,
+      })).then((loaded) => {
+        if (!loaded) add('That map range could not be loaded. Try a smaller time window.', 'assistant');
+      }).catch((error) => {
+        console.error('Overlay range load failed:', error);
+        const detail = String(error?.message || '').trim();
+        add(
+          detail
+            ? `That map range could not be loaded: ${detail}`
+            : 'That map range could not be loaded. Try a smaller time window.',
+          'assistant'
+        );
+      });
+      break;
+    }
+
     case 'order':
       ctx.pendingMetricOrder = null;
       if (targetMode === 'explore' && !ctx.isExploreOrderTakerEnabled?.()) {

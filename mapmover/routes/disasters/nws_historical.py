@@ -22,7 +22,7 @@ _PRODUCT_ID_RE = re.compile(r"^(?P<year>\d{4})\d{8}-[A-Z0-9-]+$")
 
 
 def _available_years() -> list[int]:
-    """Discover hydrated yearly artifacts without a manually maintained cap."""
+    """Discover years whose optional on-click bulletin text is hydrated."""
     if not YEARLY_TEXT_ROOT.exists():
         return []
     years = []
@@ -30,6 +30,16 @@ def _available_years() -> list[int]:
         match = re.fullmatch(r"(\d{4})_finished\.parquet", path.name)
         if match:
             years.append(int(match.group(1)))
+    return sorted(set(years))
+
+
+def _playback_years() -> list[int]:
+    """Return continuous event-playback coverage, independent of detail text."""
+    events = _load_events()
+    timestamps = events.get("_start_at")
+    if timestamps is None:
+        return []
+    years = timestamps.dropna().dt.year.astype(int).unique().tolist()
     return sorted(set(years))
 
 
@@ -91,13 +101,20 @@ def _load_yearly_text(product_id: str) -> dict:
 
 @router.get("/api/wip/nws-alerts/availability")
 async def historical_nws_alert_availability(req: Request):
-    """Return years whose completed text artifacts are ready for local playback."""
+    """Return event playback coverage and optional hydrated-detail coverage."""
     if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
-    years = _available_years()
-    if not years:
-        return msgpack_error("No completed historical NWS yearly artifacts are installed.", 404)
-    return msgpack_response({"available_years": years, "newest_year": years[-1]})
+    if not EVENTS.exists():
+        return msgpack_error("Historical NWS WIP data is not installed.", 404)
+    playback_years = _playback_years()
+    if not playback_years:
+        return msgpack_error("No historical NWS alert events are installed.", 404)
+    text_years = _available_years()
+    return msgpack_response({
+        "available_years": playback_years,
+        "newest_year": playback_years[-1],
+        "hydrated_text_years": text_years,
+    })
 
 
 @router.get("/api/wip/nws-alerts")
@@ -133,25 +150,48 @@ async def active_historical_nws_alerts(req: Request, at: str):
 
 
 @router.get("/api/wip/nws-alerts/history")
-async def historical_nws_alerts(req: Request, start_year: int = 2025, end_year: int = 2025):
+async def historical_nws_alerts(
+    req: Request,
+    start_year: int = 2025,
+    end_year: int = 2025,
+    summary_only: bool = False,
+):
     """Return one selected local playback range, with shared counties deduplicated."""
     if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
     if not EVENTS.exists():
         return msgpack_error("Historical NWS WIP data is not installed.", 404)
-    available_years = _available_years()
+    available_years = _playback_years()
     if not available_years:
-        return msgpack_error("No completed historical NWS yearly artifacts are installed.", 404)
+        return msgpack_error("No historical NWS alert events are installed.", 404)
     start_year, end_year = sorted((start_year, end_year))
-    requested_years = set(range(start_year, end_year + 1))
-    if not requested_years.issubset(available_years):
-        return msgpack_error("Requested NWS history includes a year that is not materialized yet.", 404)
+    # The timeline is a continuous requested domain. Sparse archive years are
+    # valid empty spans, not a reason to reject the whole request.
+    if start_year < available_years[0] or end_year > available_years[-1]:
+        return msgpack_error("Requested NWS history is outside the installed 1986-2025 event coverage.", 404)
     cache_key = (start_year, end_year)
     if cache_key not in _history_payloads:
         df = _load_events()
         range_start = pd.Timestamp(f"{start_year}-01-01T00:00:00Z")
         range_end = pd.Timestamp(f"{end_year + 1}-01-01T00:00:00Z")
-        frame = df[(df["_start_at"] < range_end) & (df["_end_at"] >= range_start)]
+        # The archive contains a small number of cancelled/partial products
+        # whose recorded end is at or before their start.  They are naturally
+        # absent from the one-frame query (end must be after the playhead), but
+        # an incremental playback index would otherwise process their end
+        # before their start and leave them permanently active.  Exclude them
+        # at the source boundary so summary counts, geometry, and animation
+        # all describe the same valid event set.
+        frame = df[
+            (df["_start_at"] < range_end)
+            & (df["_end_at"] >= range_start)
+            & (df["_end_at"] > df["_start_at"])
+        ]
+        if summary_only:
+            return msgpack_response({
+                "event_count": int(len(frame)),
+                "start": int(range_start.timestamp() * 1000),
+                "end": int((range_end - pd.Timedelta(milliseconds=1)).timestamp() * 1000),
+            })
         needed = sorted({
             loc
             for value in frame.get("affected_loc_ids", [])
@@ -186,7 +226,15 @@ async def historical_nws_alerts(req: Request, start_year: int = 2025, end_year: 
             "start": int(range_start.timestamp() * 1000),
             "end": int((range_end - pd.Timedelta(milliseconds=1)).timestamp() * 1000),
             "available_years": available_years,
+            "hydrated_text_years": _available_years(),
         }
+    if summary_only:
+        history = _history_payloads[cache_key]
+        return msgpack_response({
+            "event_count": int(len(history.get("events") or [])),
+            "start": history["start"],
+            "end": history["end"],
+        })
     return msgpack_response(_history_payloads[cache_key])
 
 

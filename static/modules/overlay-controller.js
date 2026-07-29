@@ -3162,8 +3162,40 @@ export const OverlayController = {
     // default-load executor show the authored question + response for
     // ?source= deep-links and catalog presets.
     if (overlayId === 'nws_alerts_historical') {
+      const requestedStart = Number(startMs);
+      const requestedEnd = Number(endMs);
+      const requestedStartYear = Number.isFinite(requestedStart)
+        ? new Date(requestedStart).getUTCFullYear()
+        : null;
+      const requestedEndYear = Number.isFinite(requestedEnd)
+        ? new Date(requestedEnd).getUTCFullYear()
+        : null;
+      // This frame-backed source does not pass through normal confirmed-order
+      // execution, so ask the same broad-display question before downloading a
+      // large archive. The count is archive records (not the simultaneous
+      // frame count) because the browser would otherwise have to retain every
+      // event in the requested playback span.
+      if (!options.forceLargeDisplay && requestedStartYear && requestedEndYear) {
+        const summary = await fetchMsgpack(
+          `/api/wip/nws-alerts/history?start_year=${requestedStartYear}&end_year=${requestedEndYear}&summary_only=true`
+        );
+        const eventCount = Number(summary?.event_count) || 0;
+        if (eventCount > 10000) {
+          const approved = window.confirm(
+            `This range contains ${eventCount.toLocaleString()} historical NWS alert records. `
+            + 'Loading the full playback archive may make the map slow. Continue?'
+          );
+          if (!approved) return false;
+        }
+      }
       await this.handleOverlayChange(overlayId, true, {
         ...options,
+        // An explicit chat, URL, or share-state range is source truth. The
+        // authored default below is only the first view when no time was
+        // requested. Keep this at the shared controller seam so every lane
+        // reaches the same NWS time/display contract.
+        startYear: requestedStartYear,
+        endYear: requestedEndYear,
         suppressStatusMessage: true,
       });
       return true;
@@ -3229,31 +3261,62 @@ export const OverlayController = {
       return;
     }
     if (overlayId === 'nws_alerts_historical') {
-      // The source owns its Explore default contract.  The current WIP source
-      // deliberately loads 2025 from a 2024-2025 archive, leaving the second
-      // year available for a later explicit filter/default change.
+      // The source owns its authored first-view contract. Explicit time bounds
+      // supplied by chat, a URL, or a shared workspace always win; otherwise
+      // use the compact 2024-2025 starting view.
       const sourceDefault = getSourceDefaultOverride('nws_alerts_historical')?.default_load || {};
-      const startYear = Number(sourceDefault.year_start) || 2025;
-      const endYear = Number(sourceDefault.year_end) || startYear;
-      // Apr 1 is an active initial frame; midnight Jan 1 is often validly empty.
-      const start = Date.UTC(startYear, 3, 1, 12);
+      let startYear = Number(options.startYear) || Number(sourceDefault.year_start) || 2025;
+      let endYear = Number(options.endYear) || Number(sourceDefault.year_end) || startYear;
+      if (endYear < startYear) {
+        [startYear, endYear] = [endYear, startYear];
+      }
+      const hasExplicitRange = Number(options.startYear) || Number(options.endYear);
+      // Apr 1 is an active first frame for the authored default. Explicit
+      // ranges instead begin at their actual lower bound, so the timeline and
+      // loaded event history make the same time claim.
+      const start = hasExplicitRange
+        ? Date.UTC(startYear, 0, 1, 0, 0, 0, 0)
+        : Date.UTC(startYear, 3, 1, 12);
       const end = Date.UTC(endYear, 11, 31, 23, 0, 0);
+      const history = await NwsAlertsOverlay.setHistoricalEnabled(
+        isActive,
+        isActive ? start : (TimeSlider?.currentTime || start),
+        { startYear, endYear }
+      );
+      if (isActive && history) {
+        // This is one held slice, not the merged slider span. Recording the
+        // requested interval separately preserves an honest coverage ledger:
+        // two disjoint requests leave their intervening timeline gap
+        // unclaimed even though the slider shows their outer bounds.
+        recordFullyLoadedRangeClaim(
+          overlayId,
+          Date.UTC(startYear, 0, 1),
+          Date.UTC(endYear, 11, 31, 23, 59, 59, 999),
+          'nws_historical_archive',
+          resolveSourceVersion(overlayId)
+        );
+      }
       if (isActive) {
         // A warning archive has meaningful frames at arbitrary timestamps.
         // Keep this slider linear instead of pretending that the two range
-        // endpoints are the only available frames.
-        TimeSlider?.setTimeRange?.({ min: Date.UTC(startYear, 0, 1), max: end, granularity: 'timestamp', available: [], replace: true });
+        // endpoints are the only available frames. The map keeps previously
+        // loaded historical slices, so its domain is their outer union and
+        // naturally shows empty gaps between sparse requested periods.
+        const timelineStart = Number(history?.start);
+        const timelineEnd = Number(history?.end);
+        TimeSlider?.setTimeRange?.({
+          min: Number.isFinite(timelineStart) ? timelineStart : Date.UTC(startYear, 0, 1),
+          max: Number.isFinite(timelineEnd) ? timelineEnd : end,
+          granularity: 'timestamp',
+          available: [],
+          replace: true
+        });
         TimeSlider?.resetTrimBounds?.();
         // Source/pack defaults own their initial playback pace too.  Apply it
         // after range setup, which otherwise selects a generic overview speed.
         TimeSlider?.setSourceAnimationSpeed?.(sourceDefault.animation_speed);
         TimeSlider?.setTime?.(start, 'api');
       }
-      await NwsAlertsOverlay.setHistoricalEnabled(
-        isActive,
-        isActive ? start : (TimeSlider?.currentTime || start),
-        { startYear, endYear }
-      );
       refreshTickerForOverlayState();
       emitSourceDefaultStatusMessage('nws_alerts_historical', isActive, options);
       return;

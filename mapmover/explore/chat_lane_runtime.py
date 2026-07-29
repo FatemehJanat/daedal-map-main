@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 
 from mapmover.routes.disasters.related import search_named_event_candidates
@@ -137,6 +138,50 @@ def maybe_build_orientation_payload(
     )
 
 
+def maybe_build_explicit_overlay_range_payload(
+    *,
+    hints: dict,
+    load_source_metadata_func,
+) -> dict | None:
+    """Turn an explicit source time range into its authored overlay action.
+
+    This is intentionally metadata-driven: a source that declares an
+    ``overlay_range_load`` default uses the same map action whether the range
+    arrived from chat, a share URL, or a catalog entry. The default range is
+    only a starting view; it never replaces an explicit user range.
+    """
+    detected = hints.get("detected_source") if isinstance(hints, dict) else None
+    time_hints = hints.get("time_hints") if isinstance(hints, dict) else None
+    if not isinstance(detected, dict) or not isinstance(time_hints, dict):
+        return None
+    source_id = str(detected.get("source_id") or "").strip()
+    start_year = time_hints.get("year_start")
+    end_year = time_hints.get("year_end")
+    if not source_id or not isinstance(start_year, int) or not isinstance(end_year, int):
+        return None
+
+    metadata = load_source_metadata_func(source_id) or {}
+    default_load = metadata.get("default_load") if isinstance(metadata, dict) else None
+    if not isinstance(default_load, dict):
+        return None
+    if str(default_load.get("kind") or default_load.get("type") or "").strip() != "overlay_range_load":
+        return None
+    overlay_id = str(default_load.get("overlay_id") or "").strip()
+    if not overlay_id:
+        return None
+
+    start_year, end_year = sorted((start_year, end_year))
+    source_name = str(metadata.get("source_name") or detected.get("source_name") or source_id).strip()
+    return {
+        "type": "overlay_range_load",
+        "overlay_id": overlay_id,
+        "start_ms": int(datetime(start_year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        "end_ms": int(datetime(end_year, 12, 31, 23, 59, 59, 999000, tzinfo=timezone.utc).timestamp() * 1000),
+        "message": f"Showing all compatible {source_name} records for {start_year}-{end_year}.",
+        "source_id": source_id,
+    }
+
+
 def maybe_build_shortcut_payload(
     *,
     hints: dict,
@@ -152,6 +197,12 @@ def maybe_build_shortcut_payload(
     build_chat_response_func=None,
 ):
     if all((load_source_metadata_func, load_source_reference_func, build_chat_response_func)):
+        explicit_overlay_range = maybe_build_explicit_overlay_range_payload(
+            hints=hints,
+            load_source_metadata_func=load_source_metadata_func,
+        )
+        if explicit_overlay_range is not None:
+            return explicit_overlay_range
         orientation = maybe_build_orientation_payload(
             hints=hints,
             request_context=request_context,

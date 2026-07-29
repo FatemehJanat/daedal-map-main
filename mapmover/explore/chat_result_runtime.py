@@ -2,12 +2,68 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.explore.chat_lane_runtime import (
     build_chat_payload,
     build_clarify_payload,
     build_navigate_payload,
 )
+
+
+def _valid_year(value) -> int | None:
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        return None
+    return year if 1900 <= year <= 2100 else None
+
+
+def _maybe_build_overlay_range_order_response(
+    *,
+    finalized_order: dict,
+    hints: dict,
+    load_source_metadata_func,
+) -> dict | None:
+    """Adapt a validated one-source order to an authored range-overlay action.
+
+    Some event registries render through a source-owned timeline controller
+    rather than generic GeoJSON event ingestion. Keep the interpretation and
+    validation shared, then make the final display choice from metadata.
+    """
+    items = finalized_order.get("items") if isinstance(finalized_order, dict) else None
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        return None
+    item = items[0]
+    source_id = str(item.get("source_id") or "").strip()
+    if not source_id:
+        return None
+    metadata = load_source_metadata_func(source_id) or {}
+    default_load = metadata.get("default_load") if isinstance(metadata, dict) else None
+    if not isinstance(default_load, dict):
+        return None
+    if str(default_load.get("kind") or default_load.get("type") or "").strip() != "overlay_range_load":
+        return None
+    overlay_id = str(default_load.get("overlay_id") or "").strip()
+    if not overlay_id:
+        return None
+
+    time_hints = hints.get("time_hints") if isinstance(hints, dict) else {}
+    start_year = _valid_year(item.get("year_start")) or _valid_year(item.get("year")) or _valid_year(time_hints.get("year_start"))
+    end_year = _valid_year(item.get("year_end")) or _valid_year(item.get("year")) or _valid_year(time_hints.get("year_end"))
+    if start_year is None or end_year is None:
+        return None
+    start_year, end_year = sorted((start_year, end_year))
+    source_name = str(metadata.get("source_name") or source_id).strip()
+    return {
+        "type": "overlay_range_load",
+        "overlay_id": overlay_id,
+        "start_ms": int(datetime(start_year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        "end_ms": int(datetime(end_year, 12, 31, 23, 59, 59, 999000, tzinfo=timezone.utc).timestamp() * 1000),
+        "message": f"Showing all compatible {source_name} records for {start_year}-{end_year}.",
+        "source_id": source_id,
+    }
 
 
 def build_explore_final_result(
@@ -42,6 +98,14 @@ def build_explore_final_result(
                 build_metric_warning_response_func=build_metric_warning_response_func,
                 build_order_response_func=build_order_response_func,
             )
+            if response_tag == "order":
+                overlay_range = _maybe_build_overlay_range_order_response(
+                    finalized_order=final_result.get("order") or {},
+                    hints=hints,
+                    load_source_metadata_func=load_source_metadata_func,
+                )
+                if overlay_range is not None:
+                    return "overlay_range_load", overlay_range, None
         return response_tag, final_result, None
 
     if result_type == "navigate":

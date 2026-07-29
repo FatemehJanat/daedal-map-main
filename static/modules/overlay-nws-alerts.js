@@ -231,7 +231,9 @@ export const NwsAlertsOverlay = {
   _historicalLoadPromise: null,
   _historicalHistory: null,
   _historicalHistories: new Map(),
+  _historicalActiveKeys: new Set(),
   _historicalTimelineIndex: null,
+  _historicalRenderToken: 0,
   _historicalPopupToken: 0,
   _legendEl: null,
   _legendClickHandler: null,
@@ -270,29 +272,98 @@ export const NwsAlertsOverlay = {
   },
 
   async setHistoricalEnabled(on, timestamp = Date.UTC(2025, 0, 1), range = {}) {
+    // A default range and a chat-requested range can be started close together.
+    // Serialize their state changes so a slower first response cannot overwrite
+    // the active-slice union created by the later request.
     this.historical = Boolean(on);
     this.enabled = Boolean(on);
     this._stopPolling();
+    const previousLoad = this._historicalLoadPromise || Promise.resolve();
+    const load = previousLoad
+      .catch(() => undefined)
+      .then(() => this._applyHistoricalEnabled(on, timestamp, range));
+    this._historicalLoadPromise = load;
+    try {
+      return await load;
+    } finally {
+      if (this._historicalLoadPromise === load) this._historicalLoadPromise = null;
+    }
+  },
+
+  async _applyHistoricalEnabled(on, timestamp = Date.UTC(2025, 0, 1), range = {}) {
     if (!on) {
       this._historicalPendingTimestamp = null;
+      this._historicalRenderToken += 1;
       this._historicalPopupToken += 1;
+      this._historicalActiveKeys.clear();
+      this._historicalHistory = null;
+      this._historicalTimelineIndex = null;
       this._removeLayers();
       return;
     }
     const startYear = Number(range.startYear) || new Date(timestamp).getUTCFullYear();
     const endYear = Number(range.endYear) || startYear;
-    this._historicalTimelineIndex = null;
     const historyKey = `${startYear}-${endYear}`;
     if (!this._historicalHistories.has(historyKey)) {
       try {
         this._historicalHistories.set(historyKey, await fetchMsgpack(`/api/wip/nws-alerts/history?start_year=${startYear}&end_year=${endYear}`));
       } catch (err) {
-        console.warn('NwsAlertsOverlay: historical bootstrap failed', err);
-        return;
+        // A yearly history payload is deliberately substantial. One automatic
+        // retry covers a transient local-server/browser interruption without
+        // turning a real failure into a misleading successful range load.
+        console.warn('NwsAlertsOverlay: historical history fetch failed; retrying once', err);
+        try {
+          this._historicalHistories.set(historyKey, await fetchMsgpack(`/api/wip/nws-alerts/history?start_year=${startYear}&end_year=${endYear}`));
+        } catch (retryErr) {
+          console.error('NwsAlertsOverlay: historical history fetch failed after retry', retryErr);
+          throw retryErr;
+        }
       }
     }
-    this._historicalHistory = this._historicalHistories.get(historyKey);
+    // An enabled historical overlay accumulates fetched slices for this tab.
+    // The caller may request a replacement deliberately, but an ordinary
+    // default load and a subsequent chat load must both remain represented,
+    // even if their fetches began or finished in a different order.
+    if (range.replace) {
+      this._historicalActiveKeys.clear();
+    }
+    this._historicalActiveKeys.add(historyKey);
+    this._historicalHistory = this._composeHistoricalHistory();
+    this._historicalTimelineIndex = null;
+    this._historicalRenderToken += 1;
     await this.setHistoricalTime(timestamp);
+    return this._historicalHistory;
+  },
+
+  _composeHistoricalHistory() {
+    const eventsById = new Map();
+    const counties = {};
+    const availableYears = new Set();
+    let start = Infinity;
+    let end = -Infinity;
+
+    for (const historyKey of this._historicalActiveKeys) {
+      const history = this._historicalHistories.get(historyKey);
+      if (!history) continue;
+      for (const event of history.events || []) {
+        const eventId = String(event?.id || '');
+        // Adjacent requested ranges can share alerts that cross New Year.
+        // Keep one stable event record in the merged timeline.
+        if (eventId && !eventsById.has(eventId)) eventsById.set(eventId, event);
+      }
+      Object.assign(counties, history.counties || {});
+      for (const year of history.available_years || []) availableYears.add(year);
+      start = Math.min(start, Number(history.start));
+      end = Math.max(end, Number(history.end));
+    }
+
+    return {
+      events: [...eventsById.values()],
+      counties,
+      start: Number.isFinite(start) ? start : null,
+      end: Number.isFinite(end) ? end : null,
+      available_years: [...availableYears].sort((a, b) => a - b),
+    };
   },
 
   _activeHistoricalAlerts(history, timestamp) {
@@ -365,7 +436,12 @@ export const NwsAlertsOverlay = {
     }
     const fc = decorateAlertFeatures({ type: 'FeatureCollection', features });
     this.lastData = fc;
-    await this._render(fc);
+    // Pin-image setup is asynchronous.  While it is pending, the slider can
+    // cross more alert boundaries; only the newest requested historical frame
+    // may paint the map.
+    const historicalRenderToken = this._historicalRenderToken + 1;
+    this._historicalRenderToken = historicalRenderToken;
+    await this._render(fc, { historicalRenderToken });
   },
 
   getActiveAlertCount() {
@@ -468,14 +544,17 @@ export const NwsAlertsOverlay = {
     }
   },
 
-  async _render(fc) {
+  async _render(fc, options = {}) {
     const map = MapAdapter?.map;
     if (!map) return;
     if (!map.isStyleLoaded()) {
-      map.once('load', () => this._render(fc));
+      map.once('load', () => this._render(fc, options));
       return;
     }
     await this._ensurePinImages(map);
+    if (options.historicalRenderToken && options.historicalRenderToken !== this._historicalRenderToken) {
+      return;
+    }
     const source = map.getSource(SRC_ID);
     if (source) {
       source.setData(fc);

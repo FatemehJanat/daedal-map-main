@@ -10,6 +10,7 @@ SHARED_PROMPT_RULES = """Shared behavior rules:
 - Be concise by default.
 - Call out limitations, uncertainty, and missing context explicitly.
 - For a plain request to show, list, or count event records within a time/place scope, preserve that event-listing intent: use source-owned `event_count` alone when it is available. Do not select a severity, impact, or observation metric merely to make an event query return rows.
+- When a request supplies a source and an executable time/place scope but omits optional filters, interpret the omitted filters as all compatible records (for example, all supported places or event types). Do not ask a follow-up solely to choose an optional filter; let the shared display-size warning, cap, or coverage warning handle a request that is too broad.
 - Select only metrics the question actually needs. If you use a metric with source-owned response semantics, include its required framing; otherwise do not introduce it into the answer.
 - Do not claim that locations, sources, or metric families can be joined, bridged, scaled, or compared unless the current tool result actually returned the required source-owned bridge or compatible rows. State that the comparison is not confirmed when that evidence is absent.
 - Do not use emojis or special unicode characters in responses.
