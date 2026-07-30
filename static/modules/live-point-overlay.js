@@ -13,6 +13,7 @@
  */
 
 import { fetchMsgpack } from './utils/fetch.js';
+import { formatOpsTime } from './ops-time-display.js';
 
 const POLL_INTERVAL_MS = 5 * 60_000;
 const POLLUTANT_LABELS = { pm25: 'PM2.5', pm10: 'PM10', o3: 'O₃', no2: 'NO₂', so2: 'SO₂', co: 'CO' };
@@ -267,10 +268,7 @@ export function createLivePointOverlay(config) {
       if (field?.format === 'datetime') {
         const parsed = new Date(value);
         if (!Number.isNaN(parsed.getTime())) {
-          return new Intl.DateTimeFormat(undefined, {
-            year: 'numeric', month: 'short', day: 'numeric',
-            hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-          }).format(parsed);
+          return formatOpsTime(parsed, { includeYear: true });
         }
       }
       if (field?.format === 'measurements' && Array.isArray(value)) {

@@ -13,6 +13,7 @@
 
 import { GeometryCache } from './cache.js';
 import { fetchMsgpack, postMsgpack } from './utils/fetch.js';
+import { formatOpsTime } from './ops-time-display.js';
 
 const POLL_INTERVAL_MS = 5 * 60_000;
 const SRC_ID = 'nws-alerts-src';
@@ -164,15 +165,7 @@ function formatAlertTime(value) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat(undefined, {
-    timeZone: 'UTC',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  }).format(date);
+  return formatOpsTime(date, { includeYear: true });
 }
 
 function escapePopupHtml(value) {

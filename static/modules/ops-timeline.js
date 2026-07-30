@@ -10,6 +10,7 @@
 import { postMsgpack } from './utils/fetch.js';
 import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 import { getLivePointOverlay } from './live-point-overlay.js';
+import { formatOpsTime } from './ops-time-display.js';
 
 const CURSOR_STEP_MS = 5 * 60 * 1000;
 // The shared Ops cursor is an operational replay, not each source's complete
@@ -38,9 +39,7 @@ function floorToCursor(ms) {
 }
 
 function formatCursor(ms) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  }).format(new Date(ms));
+  return formatOpsTime(ms);
 }
 
 export const OpsTimeline = {
