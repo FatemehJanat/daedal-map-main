@@ -474,4 +474,4 @@ The shared layer is the frontend overlay/runtime framework, not the display cont
 
 ---
 
-*Updated: 2026-03-10*
+*Updated: 2026-07-31*
