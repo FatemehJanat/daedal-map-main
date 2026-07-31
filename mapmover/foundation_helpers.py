@@ -192,6 +192,110 @@ def load_runtime_explainer_helpers() -> dict[str, Any]:
     }
 
 
+def _reference_country_codes() -> set[str]:
+    data = load_reference_dict("iso_codes.json") or {}
+    codes: set[str] = set()
+    for section in ("common_countries", "commonly_missing"):
+        values = (data.get(section) or {}).get("codes") or []
+        codes.update(str(value).strip().upper() for value in values if str(value).strip())
+    return codes
+
+
+def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_ids: set[str]) -> pd.DataFrame:
+    """Load approved supplemental Admin0 geometry rows missing from global.csv."""
+    path = GEOMETRY_DIR / "supplemental" / "admin0_territories.parquet"
+    index_path = GEOMETRY_DIR / "supplemental" / "admin0_territories_index.json"
+    if not path.exists() or not index_path.exists():
+        return pd.DataFrame(columns=existing_columns)
+
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Failed to load supplemental Admin0 index: %s", e)
+        return pd.DataFrame(columns=existing_columns)
+
+    if str(index.get("license_review_status") or "").strip().lower() != "approved" or not index.get("usable_for_derivation"):
+        return pd.DataFrame(columns=existing_columns)
+
+    reference_codes = _reference_country_codes()
+    try:
+        supplemental = pd.read_parquet(path)
+    except Exception as e:
+        logger.warning("Failed to load supplemental Admin0 geometry: %s", e)
+        return pd.DataFrame(columns=existing_columns)
+
+    if supplemental.empty or "loc_id" not in supplemental.columns:
+        return pd.DataFrame(columns=existing_columns)
+
+    supplemental = supplemental.copy()
+    supplemental["loc_id"] = supplemental["loc_id"].astype(str).str.strip().str.upper()
+    supplemental = supplemental[
+        supplemental["loc_id"].isin(reference_codes)
+        & ~supplemental["loc_id"].isin(existing_loc_ids)
+    ]
+    if supplemental.empty:
+        return pd.DataFrame(columns=existing_columns)
+
+    rows: list[dict[str, Any]] = []
+    for record in supplemental.to_dict(orient="records"):
+        loc_id = str(record.get("loc_id") or "").strip().upper()
+        geometry = record.get("geometry")
+        row = {
+            "loc_id": loc_id,
+            "parent_id": "WORLD",
+            "admin_level": 0,
+            "type": "admin",
+            "name": record.get("name") or loc_id,
+            "name_local": "",
+            "code": loc_id,
+            "iso_3166_2": "",
+            "centroid_lon": None,
+            "centroid_lat": None,
+            "has_polygon": True,
+            "geometry": geometry,
+            "timezone": "",
+            "iso_a3": loc_id,
+            "land_area": None,
+            "water_area": None,
+            "bbox_min_lon": None,
+            "bbox_min_lat": None,
+            "bbox_max_lon": None,
+            "bbox_max_lat": None,
+            "children_count": 0,
+            "children_by_level": "{}",
+            "descendants_count": 0,
+            "descendants_by_level": "{}",
+            "source_system": record.get("source_system") or "supplemental_admin0",
+            "source_shape_id": "",
+            "source_shape_type": "SUPPLEMENTAL_ADM0",
+            "direct_children_count": 0,
+            "direct_children_by_level": "{}",
+        }
+        try:
+            from shapely.geometry import shape
+
+            geom_data = json.loads(geometry) if isinstance(geometry, str) else geometry
+            geom = shape(geom_data)
+            centroid = geom.centroid
+            row.update({
+                "centroid_lon": centroid.x,
+                "centroid_lat": centroid.y,
+                "bbox_min_lon": geom.bounds[0],
+                "bbox_min_lat": geom.bounds[1],
+                "bbox_max_lon": geom.bounds[2],
+                "bbox_max_lat": geom.bounds[3],
+            })
+        except Exception:
+            pass
+        rows.append(row)
+
+    frame = pd.DataFrame(rows)
+    for column in existing_columns:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame[existing_columns]
+
+
 def load_country_crosswalk(iso3: str) -> dict | None:
     """Load a country crosswalk from the shared runtime helper layer."""
     iso3 = (iso3 or "").upper()
@@ -287,8 +391,15 @@ def load_global_countries_frame():
     global_file = GEOMETRY_DIR / "global.csv"
     if global_file.exists():
         try:
-            _GLOBAL_COUNTRIES_CACHE = pd.read_csv(global_file)
-            logger.info(f"Loaded {len(_GLOBAL_COUNTRIES_CACHE)} countries from global.csv")
+            base = pd.read_csv(global_file)
+            existing_loc_ids = set(base["loc_id"].dropna().astype(str).str.strip().str.upper()) if "loc_id" in base.columns else set()
+            supplemental = _load_supplemental_admin0_frame(list(base.columns), existing_loc_ids)
+            _GLOBAL_COUNTRIES_CACHE = pd.concat([base, supplemental], ignore_index=True) if not supplemental.empty else base
+            logger.info(
+                "Loaded %d countries from global.csv plus %d supplemental Admin0 rows",
+                len(_GLOBAL_COUNTRIES_CACHE),
+                len(supplemental),
+            )
             return _GLOBAL_COUNTRIES_CACHE
         except Exception as e:
             logger.error(f"Error loading global.csv: {e}")
