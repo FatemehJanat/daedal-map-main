@@ -50,14 +50,6 @@ LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
-# Compatibility floor while an older published ops_feed_registry.json is still
-# in object storage. The registry is authoritative once its `timeline` record
-# arrives; these preserve the already-released NWS/hurricane behavior during a
-# code-first deploy and may be removed after that registry version is universal.
-_BUILTIN_TIMELINE_PRELOAD_COMPAT = {
-    "usa_nws_alerts": {"preload_history": True, "provider": "nws_alerts", "batch_size": 24, "max_window_bytes": 115 * 1024 * 1024},
-    "hurricanes_live": {"preload_history": True, "provider": "hurricane_history", "batch_size": 24, "max_window_bytes": 24 * 1024 * 1024},
-}
 HURRICANE_LIVE_FEED = "hurricanes_live"
 WILDFIRE_LIVE_FEED = "wildfires"
 WILDFIRE_OPS_COLLECTORS = ("wildfires_us_nifc", "wildfires_can_cwfis")
@@ -2031,8 +2023,7 @@ def ops_timeline_preload_history_contract(feed: str) -> dict | None:
     contract = record.get("timeline") if isinstance(record, dict) else None
     if isinstance(contract, dict):
         return dict(contract)
-    fallback = _BUILTIN_TIMELINE_PRELOAD_COMPAT.get(str(feed or "").strip())
-    return dict(fallback) if isinstance(fallback, dict) else None
+    return None
 
 
 def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int = DEFAULT_OPS_HISTORY_RETENTION_HOURS) -> dict:
@@ -3770,17 +3761,19 @@ def _query_explicitly_requests_current_snapshot(query: str) -> bool:
 
 
 def _feed_prefers_history_by_default(feed: str) -> bool:
-    return feed in {
-        "earthquakes",
-        "tsunamis",
-        "volcanoes",
-        WILDFIRE_LIVE_FEED,
-        HURRICANE_LIVE_FEED,
-        "usa_nws_alerts",
-        "noaa_swpc",
-        "noaa_aurora",
-        "currency",
+    record = ops_feed_record(feed)
+    timeline = record.get("timeline") if isinstance(record, dict) else {}
+    if not isinstance(timeline, dict):
+        return False
+    if bool(timeline.get("preload_history")):
+        return True
+    mode = str(timeline.get("mode") or "").strip()
+    presentation = {
+        str(value).strip()
+        for value in (record.get("presentation") or [])
+        if str(value).strip()
     }
+    return mode in {"full_snapshot", "additive_history"} or bool(presentation & {"ticker", "metric_values"})
 
 
 def _feed_display_name(feed: str) -> str:
