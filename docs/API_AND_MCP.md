@@ -77,6 +77,13 @@ Public geometry helpers include:
 - `POST /api/v1/resolve/point`.
 
 Inspect `mapmover/routes/geometry.py` for the current route and request models.
+New geometry API or MCP tools must use reviewed runtime seams backed by
+`geometry/geometry_catalog.json`, not private builder scripts or candidate
+banks. A geometry family is public-tool eligible only after its catalog bank
+records source licensing/attribution, approval status, loc_id namespace,
+assignment semantics, and deterministic request/rejection tests. This applies
+to future lake, river-network, watershed, marine, overlay, or crosswalk tools
+the same way it applies to administrative boundaries.
 
 ## Mode routes
 
@@ -124,6 +131,10 @@ Do not parse human prose when a structured error or warning field is available.
 5. Add route/tool-specific envelope behavior.
 6. Test a valid request and each important rejection path.
 7. Update discovery metadata and this document if the surface is public.
+
+For geometry tools, also confirm the backing bank is approved in
+`geometry_catalog.json` and the response exposes enough provenance/citation
+context for the source license.
 
 Do not embed credentials in browser code or examples.
 
