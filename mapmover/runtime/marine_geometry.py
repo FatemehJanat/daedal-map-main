@@ -32,9 +32,8 @@ MARINE_DIR = GEOMETRY_DIR / "marine"
 EEZ_PATH = MARINE_DIR / "eez.parquet"
 WATER_BODIES_PATH = MARINE_DIR / "water_bodies.parquet"
 IHO1953_NAMED_WATER_PATH = MARINE_DIR / "iho1953_sea_areas.parquet"
-IHO1953_NAMED_WATER_INDEX_PATH = MARINE_DIR / "iho1953_sea_areas_index.json"
 LEGACY_NAMED_WATER_PATH = MARINE_DIR / "iho_sea_areas.parquet"
-LEGACY_NAMED_WATER_INDEX_PATH = MARINE_DIR / "iho_sea_areas_index.json"
+GEOMETRY_CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
 
 _MARINE_COLUMNS = ["loc_id", "name", "geometry", "centroid_lon", "centroid_lat"]
 
@@ -44,23 +43,36 @@ def is_marine_loc_id(loc_id: str | None) -> bool:
     return is_eez_loc_id(loc_id) or is_water_body_loc_id(loc_id) or is_named_water_loc_id(loc_id)
 
 
-def _bank_approved(index_path: Path) -> bool:
-    """Do not expose candidate sea geometry until its source review is explicit."""
+def _catalog_approves_geometry(path: Path) -> bool:
+    """Do not expose candidate sea geometry until catalog review is explicit."""
     try:
-        data = json.loads(index_path.read_text(encoding="utf-8"))
+        catalog = json.loads(GEOMETRY_CATALOG_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return isinstance(data, dict) and data.get("license_review_status") == "approved"
+    try:
+        rel_path = path.relative_to(GEOMETRY_DIR).as_posix()
+    except ValueError:
+        rel_path = path.as_posix()
+    for bank in catalog.get("geometry_banks") or []:
+        if not isinstance(bank, dict):
+            continue
+        if str(bank.get("geometry_path") or "").replace("\\", "/") != rel_path:
+            continue
+        return (
+            bank.get("license_review_status") == "approved"
+            and bank.get("usable_for_derivation") is True
+        )
+    return False
 
 
 def named_water_bank_approved(loc_id: str | None = None) -> bool:
     """True if the bank owning this named-water namespace is reviewed."""
     value = str(loc_id or "").strip().upper()
     if value.startswith("IHO1953-"):
-        return _bank_approved(IHO1953_NAMED_WATER_INDEX_PATH)
+        return _catalog_approves_geometry(IHO1953_NAMED_WATER_PATH)
     if value.startswith("MRGID-"):
-        return _bank_approved(LEGACY_NAMED_WATER_INDEX_PATH)
-    return _bank_approved(IHO1953_NAMED_WATER_INDEX_PATH) or _bank_approved(LEGACY_NAMED_WATER_INDEX_PATH)
+        return _catalog_approves_geometry(LEGACY_NAMED_WATER_PATH)
+    return _catalog_approves_geometry(IHO1953_NAMED_WATER_PATH) or _catalog_approves_geometry(LEGACY_NAMED_WATER_PATH)
 
 
 def marine_bank_for_loc_id(loc_id: str | None) -> Optional[Path]:
