@@ -240,6 +240,9 @@ FEED_ALIASES = {
         "land temperature", "land-air temperature", "air temperature",
         "temperature anomaly", "temperature anomalies", "2m temperature",
     ),
+    "cams_air_quality": ("air quality", "air pollution", "cams air quality", "particulate matter"),
+    "noaa_ndbc": ("buoy", "buoys", "ocean buoy", "marine buoy", "ndbc"),
+    "ocean_sst": ("sea surface temperature", "ocean temperature", "ocean sst", "sst"),
 }
 
 COUNT_QUERY_PATTERNS = (
