@@ -114,15 +114,19 @@ The working worst-case chain for validating that split is:
 The shared disaster identity contract should be read as four distinct things:
 
 1. `event_id`
-- the native or agency-facing exact event identifier
-- used for exact lookup, URLs, source traceability, and external references
+- the canonical source-table-unique event identifier
+- used for exact lookup, URLs, source traceability, external references, and
+  joins from `events` to companion/support tables inside that source lane
 
-2. `event_loc_id`
-- the canonical County Map event key
-- used to join event tables to `event_areas.event_loc_id`
-- should be stable across runtime, QA, and aggregate builders
+`source_event_id`, when present, retains a raw agency identifier that is not
+unique enough to be the canonical event key by itself.
 
-3. `event_loc_id -> affected_loc_id`
+2. `loc_id`
+- the canonical geometry-spine location of the unchanged event coordinate
+- is a country/admin/water-body/etc. geometry id, never an event identity
+- may be null when no reviewed geometry honestly contains the source point
+
+3. `event_id -> affected_loc_id`
 - the relationship layer
 - this is how disasters connect to the shared geography spine for aggregates,
   risk questions, and affected-place analysis
@@ -131,15 +135,13 @@ The shared disaster identity contract should be read as four distinct things:
 - the impacted geography id on the admin spine or another explicitly declared
   target family
 
-Compatibility rule:
+Migration rule:
 
-- many current disaster event tables still store the canonical event key in
-  `loc_id`
-- that is acceptable as a compatibility shape only if shared runtime/QA code
-  treats it as the source for `event_loc_id`
-- preferred long-term shape is:
-  - `event_id` = native/source key
-  - `event_loc_id` = County Map canonical event key
+- older event tables and sidecars used `loc_id` / `event_loc_id` as an event
+  key. That naming is retired because it conflicts with the geometry spine.
+- migrate those keys to `event_id` before a source passes its strict API gate.
+- source-local companion tables may join on `event_id`; cross-source links must
+  carry explicit source/hazard context instead of inventing a geographic id.
 
 Anchor rule:
 
@@ -171,7 +173,7 @@ Use model-specific classes instead of pretending every hazard is the same:
 - possible future flood progression if a true day-by-day shape product is added
 
 4. `event_areas`
-- `event_loc_id` to `affected_loc_id` relationships
+- `event_id` to `affected_loc_id` relationships
 
 5. `disaster_links`
 - parent/child disaster relationships with `link_type`
@@ -391,14 +393,14 @@ presence.
 
 | Hazard | Schema class | Primary source | Timeline covered | Gap to now | Live source status | Layers present | Notes |
 |---|---|---|---|---|---|---|---|
-| earthquakes | `event_point` | USGS | `2150 BC-2026` | days | deployed | events, event_areas, links; aggregates partial | Strongest operational disaster package. |
-| floods | `event_point` | DFO/GFD | `1985-2019` | 6+ years | none | events, event_areas; aggregates/links partial | Freshness is the biggest gap. |
-| hurricanes | `event_track` | IBTrACS | `1842-2026` | weeks | found, not deployed | storm/position events, event_areas; aggregates/links partial | Track-style source; initial API/MCP can be free while commercial review stays separate. |
+| earthquakes | `event_point` | USGS | `2150 BC-2026` | days | deployed | events, event_areas, links, annual/rolling aggregates | Strongest operational disaster package. |
+| floods | `event_point` | DFO/GFD | `1985-2019` | 6+ years | none | events, event_areas, shared links, annual/rolling aggregates | Freshness is the biggest gap; strict local seam now validates the maintained archive. |
+| hurricanes | `event_track` | IBTrACS | `1842-2026` | weeks | found, not deployed | storm/position events, event_areas, annual/rolling aggregates, selected links | Track-style source; commercial review remains separate from the structural seam. |
 | landslides | `event_point` | merged sources | `1760-2025` | about 1 year | batch only | events present; supporting layers incomplete | Keep sparse/local until confidence improves. |
-| tornadoes | `event_point` | NOAA | `1950-2025` | weeks | batch only | events, event_areas; aggregates/links partial | Audit row count and sequence/path expectations before expansion. |
-| tsunamis | `event_point` | NOAA | `2000 BC-2025` | about 1 year | deployed | events, event_areas; aggregates/links partial | Strong historical event layer with live collector path. |
-| volcanoes | `event_point` | Smithsonian | Holocene-2025 | about 1 year | deployed | events, event_areas; aggregates/links partial | Good event base; aggregate/link standardization remains. |
-| wildfires | `event_polygon_progression` | NASA FIRMS + Global Fire Atlas | `2002-2024` | about 1 year | found, not deployed | events, event_areas, progression; aggregates/links partial | Progression is canonical; Canada source still needs staging/hosted cleanup. |
+| tornadoes | `event_point` | NOAA | `1950-2025` | weeks | batch only | events, event_areas, annual/rolling aggregates, selected links | Audit row count and sequence/path expectations before expansion. |
+| tsunamis | `event_point` | NOAA | `2000 BC-2025` | about 1 year | deployed | events, event_areas, annual/rolling aggregates, shared links | Strong historical event layer with live collector path. |
+| volcanoes | `event_point` | Smithsonian | Holocene-2025 | about 1 year | deployed | events, event_areas, annual/rolling aggregates, shared links | Good event base; shared seam gate owns aggregate/link integrity. |
+| wildfires | `event_polygon_progression` | NASA FIRMS + Global Fire Atlas | `2002-2024` | about 1 year | found, not deployed | events, event_areas, progression, annual/rolling aggregates, shared links | Progression is canonical; progression snapshots are separate from Admin2 affected-area aggregation. |
 
 Non-canonical support sources such as `desinventar`, `reliefweb`, `event_areas`,
 and `links` should not be promoted as standalone public disaster families unless
