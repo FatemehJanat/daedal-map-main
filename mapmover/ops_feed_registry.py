@@ -33,6 +33,45 @@ VALID_CACHE_POSTURES = {
     "admin_cache",
     "none",
 }
+VALID_DISPLAY_FAMILIES = {
+    "event_overlay",
+    "live_point_overlay",
+    "raster_grid",
+    "raster_scene",
+    "admin_choropleth",
+    "geometry_overlay",
+}
+VALID_POPUP_FAMILIES = {
+    "disaster_popup",
+    "live_point_popup",
+    "metric_popup",
+    "raster_inspector",
+    "geometry_basics_popup",
+}
+OPS_DISPLAY_CONTRACT_SCHEMA_VERSION = 3
+
+
+def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str]:
+    contract = record.get("display_contract")
+    presentation = {str(value) for value in record.get("presentation") or []}
+    errors: list[str] = []
+    if "map" in presentation and not isinstance(contract, dict):
+        return [f"{feed_id}.display_contract is required for map presentation"]
+    if contract is None:
+        return []
+    if not isinstance(contract, dict):
+        return [f"{feed_id}.display_contract must be an object"]
+    family = str(contract.get("family") or "")
+    popup = str(contract.get("popup_family") or "")
+    if family not in VALID_DISPLAY_FAMILIES:
+        errors.append(f"{feed_id}.display_contract.family is invalid")
+    if popup not in VALID_POPUP_FAMILIES:
+        errors.append(f"{feed_id}.display_contract.popup_family is invalid")
+    if contract.get("style") is not None and not isinstance(contract.get("style"), dict):
+        errors.append(f"{feed_id}.display_contract.style must be an object when present")
+    if contract.get("data_binding") is not None and not isinstance(contract.get("data_binding"), dict):
+        errors.append(f"{feed_id}.display_contract.data_binding must be an object when present")
+    return errors
 
 
 def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str]:
@@ -50,6 +89,11 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
         return ["registry.feeds must be a list"]
     seen: set[str] = set()
     errors: list[str] = []
+    try:
+        schema_version = int(payload.get("schema_version") or 1)
+    except (TypeError, ValueError):
+        schema_version = 0
+        errors.append("registry.schema_version must be an integer")
     for index, record in enumerate(feeds):
         prefix = f"feeds[{index}]"
         if not isinstance(record, dict):
@@ -83,6 +127,8 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
                 errors.append(f"{feed_id}.timeline.cache_posture must be one of {sorted(VALID_CACHE_POSTURES)}")
             if mode == "raster_frame_stack" and not str(timeline.get("runtime_artifact") or "").strip():
                 errors.append(f"{feed_id}.timeline.runtime_artifact is required for raster replay")
+            if schema_version >= OPS_DISPLAY_CONTRACT_SCHEMA_VERSION:
+                errors.extend(_validate_display_contract(feed_id, record))
         provider = str(timeline.get("provider") or "").strip()
         if not provider:
             errors.append(f"{feed_id}.timeline.provider is required")
