@@ -130,9 +130,8 @@ Restart the app after structural catalog changes.
 - [`scripts/simplify_geometry.py`](../scripts/simplify_geometry.py) simplifies
   geometry.
 - [`converters/setup_gadm.py`](../converters/setup_gadm.py) is a public geometry
-  setup example.
+  compatibility example, not the production geometry-spine build path.
 
 You may use pandas, Polars, DuckDB, GeoPandas, R, or another reproducible tool
 for conversion. Compatibility is defined by the resulting files, not by a
 private converter framework.
-
