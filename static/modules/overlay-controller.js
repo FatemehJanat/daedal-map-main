@@ -1623,7 +1623,12 @@ export const OverlayController = {
         const sliderText = frameCount < 2
           ? 'The time slider will appear once at least two real snapshots are published.'
           : 'Use the time slider to inspect the available dates.';
-        return `Air temperature grid active. ${availability} ${sliderText} Ask chat to compare regions.`;
+        const latest = Math.max(...OceanRasterModel.getTimestamps(primaryOverlayId).map(Number).filter(Number.isFinite));
+        const ageDays = Number.isFinite(latest) ? Math.floor((Date.now() - latest) / 86_400_000) : 0;
+        const delayNote = ageDays >= 2
+          ? ` ERA5 daily reanalysis is currently about ${ageDays} days behind live Ops, so the shared live cursor holds its newest available frame after ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(latest))}.`
+          : '';
+        return `Air temperature grid active. ${availability} ${sliderText}${delayNote} Ask chat to compare regions.`;
       }
       case 'cams-air-quality-grid': {
         const availability = formatOpsRasterFrameAvailability(primaryOverlayId, '12-hourly');
@@ -2699,6 +2704,17 @@ export const OverlayController = {
     const forceRerender = source === 'bounds';
 
     if (useLifecycleFiltering && isTimestamp) {
+      // Raster frame swaps are local canvas updates and dedupe by frame index
+      // inside OceanRasterModel. Do not hold them behind the broad six-hour
+      // event lifecycle throttle below: a user can land directly on a new
+      // daily/12-hourly frame while no event renderer is otherwise due yet.
+      const activeRasterOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+      for (const overlayId of activeRasterOverlays) {
+        const config = OverlaySelector?.getOverlayConfig?.(overlayId);
+        if (config?.model === 'ocean-raster' && OceanRasterModel.hasInstance(overlayId)) {
+          OceanRasterModel.renderAtTimestamp(overlayId, time);
+        }
+      }
       // Historical NWS owns a compact, local five-minute display frame index.
       // Feed it every slider tick; the overlay itself discards duplicate
       // buckets and incrementally updates active alerts. Other timestamp
