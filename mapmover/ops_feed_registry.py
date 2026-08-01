@@ -49,6 +49,7 @@ VALID_POPUP_FAMILIES = {
     "geometry_basics_popup",
 }
 OPS_DISPLAY_CONTRACT_SCHEMA_VERSION = 3
+OPS_SITE_PROFILE_SCHEMA_VERSION = 4
 
 
 def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str]:
@@ -74,6 +75,31 @@ def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str
     return errors
 
 
+def _validate_site_profile(feed_id: str, record: dict[str, Any], profiles: dict[str, Any]) -> list[str]:
+    """Validate registry-owned content for public `/feeds/<feed_id>` pages."""
+    if str(record.get("release_state") or "").strip().lower() != "public":
+        return []
+    profile = profiles.get(feed_id)
+    if not isinstance(profile, dict):
+        return [f"site_profiles.{feed_id} is required for a public Ops feed"]
+    errors: list[str] = []
+    for field in ("title", "description", "scope", "coverage", "license", "service_label"):
+        if not str(profile.get(field) or "").strip():
+            errors.append(f"site_profiles.{feed_id}.{field} is required")
+    agencies = profile.get("source_agencies")
+    if not isinstance(agencies, list) or not agencies:
+        errors.append(f"site_profiles.{feed_id}.source_agencies must be a non-empty list")
+    else:
+        for index, agency in enumerate(agencies):
+            if not isinstance(agency, dict) or not str(agency.get("name") or "").strip():
+                errors.append(f"site_profiles.{feed_id}.source_agencies[{index}].name is required")
+            elif agency.get("url") is not None and not str(agency.get("url") or "").strip():
+                errors.append(f"site_profiles.{feed_id}.source_agencies[{index}].url must be non-empty when present")
+    if profile.get("related_pack_id") is not None and not str(profile.get("related_pack_id") or "").strip():
+        errors.append(f"site_profiles.{feed_id}.related_pack_id must be non-empty when present")
+    return errors
+
+
 def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str]:
     """Return structural errors for the logical Ops feed registry.
 
@@ -89,6 +115,7 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
         return ["registry.feeds must be a list"]
     seen: set[str] = set()
     errors: list[str] = []
+    profiles = payload.get("site_profiles") if isinstance(payload.get("site_profiles"), dict) else {}
     try:
         schema_version = int(payload.get("schema_version") or 1)
     except (TypeError, ValueError):
@@ -140,6 +167,8 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
                 errors.append(f"{feed_id}.timeline.runtime_artifact is required for raster replay")
             if schema_version >= OPS_DISPLAY_CONTRACT_SCHEMA_VERSION:
                 errors.extend(_validate_display_contract(feed_id, record))
+            if schema_version >= OPS_SITE_PROFILE_SCHEMA_VERSION:
+                errors.extend(_validate_site_profile(feed_id, record, profiles))
         provider = str(timeline.get("provider") or "").strip()
         if not provider:
             errors.append(f"{feed_id}.timeline.provider is required")
