@@ -712,6 +712,20 @@ export const TimeSlider = {
       return year.toString();
     }
 
+    // Indexed live/raster timelines often contain just a few adjacent daily
+    // frames. The normal playback-speed formatter would call every one of
+    // those points "Jul 2026", leaving no visual evidence that the map moved
+    // to a different authoritative frame. Preserve the exact UTC day whenever
+    // the selected indexed window is short enough to represent daily data.
+    const indexedSpanMs = this.useIndexedScale && this.sortedTimes.length > 1
+      ? this.sortedTimes[this.sortedTimes.length - 1] - this.sortedTimes[0]
+      : null;
+    if (Number.isFinite(indexedSpanMs) && indexedSpanMs <= 45 * 24 * 60 * 60 * 1000) {
+      return date.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+      });
+    }
+
     // Get current speed to determine display granularity
     const hoursPerSecond = this.stepsPerFrame * 6 * TIME_SYSTEM.MAX_FPS;
 
