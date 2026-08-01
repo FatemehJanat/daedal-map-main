@@ -726,6 +726,11 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual([-151.7, 21.9], current["geometry"]["coordinates"])
         self.assertEqual(-151.7, current["properties"]["longitude"])
         self.assertEqual([[-151.7, 21.9], [-153.5, 23.1]], forecast["geometry"]["coordinates"])
+        self.assertEqual(
+            [now.isoformat(), (now + timedelta(hours=12)).isoformat()],
+            forecast["properties"]["forecast_timestamps"],
+        )
+        self.assertEqual((now + timedelta(hours=12)).isoformat(), payload["forecast_end_at"])
 
     def test_hurricane_timeline_carries_the_last_fix_until_a_newer_fix_arrives(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)

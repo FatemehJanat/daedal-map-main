@@ -21,7 +21,7 @@ const NWS_BACKGROUND_BATCH_SIZE = 24;
 // Hurricane replay frames are presently cumulative display payloads.  The
 // bounded 72-hour window is still only about 22 MB, which is small enough to
 // hydrate once per Ops session and avoids a request on every scrub position.
-const HURRICANE_BACKGROUND_BATCH_SIZE = 24;
+const HURRICANE_BACKGROUND_BATCH_SIZE = 96;
 const INTERACTIVE_GRACE_MS = 250;
 const HISTORY_PRELOAD_METHODS = {
   nws_alerts: '_preloadNwsFrames',
@@ -65,6 +65,7 @@ export const OpsTimeline = {
   hurricaneRequestToken: 0,
   hurricaneInteractiveRequestedAt: 0,
   hurricaneDebounceTimer: null,
+  hurricaneRenderedKey: null,
   backgroundPrefetchTimers: [],
   backgroundPrefetchRun: 0,
   selectedDisplayPayloads: new Map(),
@@ -84,6 +85,7 @@ export const OpsTimeline = {
     this.pointRequestTokens.clear();
     this.hurricaneFrameCache.clear();
     this.hurricaneFrameInFlight.clear();
+    this.hurricaneRenderedKey = null;
     this.selectedDisplayPayloads.clear();
     if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
     this.hurricaneDebounceTimer = null;
@@ -121,8 +123,10 @@ export const OpsTimeline = {
       Object.entries(this.timeline.feeds || {}).filter(([id]) => !id.startsWith('external:'))
     );
     for (const [id, provider] of this.externalProviders) feeds[`external:${id}`] = provider.frames;
+    const forecastEnd = toMs(this.timeline.forecast_end);
     const providerRangeEnd = Math.max(
       this.timeline.currentMs,
+      Number.isFinite(forecastEnd) ? forecastEnd : 0,
       ...Object.values(feeds).flatMap((frames) => (Array.isArray(frames) ? frames : []))
         .map((frame) => toMs(frame?.start_at)).filter(Number.isFinite)
     );
@@ -172,8 +176,10 @@ export const OpsTimeline = {
     }
     const mergedFeeds = { ...feedFrames };
     for (const [id, provider] of this.externalProviders) mergedFeeds[`external:${id}`] = provider.frames;
+    const forecastEnd = toMs(timeline.forecast_end);
     const rangeEnd = Math.max(
       currentMs,
+      Number.isFinite(forecastEnd) ? forecastEnd : 0,
       ...Object.values(mergedFeeds).flatMap((frames) => (Array.isArray(frames) ? frames : []))
         .map((frame) => toMs(frame?.start_at)).filter(Number.isFinite)
     );
@@ -255,8 +261,16 @@ export const OpsTimeline = {
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
       } else if (selected?.display_payload) {
-        displayPayloads.push(selected.display_payload);
-        this.selectedDisplayPayloads.set(feedId, selected.display_payload);
+        const displayPayload = feedId === 'hurricanes_live'
+          ? this._hurricanePayloadAt(selected.display_payload, ms)
+          : selected.display_payload;
+        // Returning to the inline current/forecast payload replaces the
+        // retained advisory frame. A later scrub back into that retained
+        // frame must therefore paint it again rather than treating an old
+        // cache key as still visible.
+        if (feedId === 'hurricanes_live') this.hurricaneRenderedKey = null;
+        displayPayloads.push(displayPayload);
+        this.selectedDisplayPayloads.set(feedId, displayPayload);
       } else if (!feedId.startsWith('external:')) {
         this.selectedDisplayPayloads.delete(feedId);
       }
@@ -341,12 +355,18 @@ export const OpsTimeline = {
   async _loadHurricaneFrame(feedId, frame, selectedMs) {
     const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
+    // Five-minute cursor ticks frequently remain inside the same advisory
+    // frame. It already holds the last observed position and cumulative
+    // trail, so repainting it only causes a visible flash without new data.
+    if (key === this.hurricaneRenderedKey) return;
     const token = ++this.hurricaneRequestToken;
     this.hurricaneInteractiveRequestedAt = Date.now();
     const loaded = await this._getHurricaneFrame(key, frame, selectedMs);
     if (!loaded) return;
     if (token !== this.hurricaneRequestToken || this.selectedMs !== selectedMs || !loaded?.display_payload) return;
-    this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
+    const displayPayload = this._hurricanePayloadAt(loaded.display_payload, selectedMs);
+    this.selectedDisplayPayloads.set(feedId, displayPayload);
+    this.hurricaneRenderedKey = key;
     this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
       at: new Date(selectedMs).toISOString(),
       preserveMissing: true,
@@ -354,6 +374,11 @@ export const OpsTimeline = {
   },
 
   _scheduleHurricaneFrame(feedId, frame, selectedMs) {
+    const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+    if (key && this.hurricaneFrameCache.has(key)) {
+      void this._loadHurricaneFrame(feedId, frame, selectedMs);
+      return;
+    }
     if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
     // Slider input can emit dozens of intermediate cursor positions. Keep the
     // last coherent track visible and only materialize the settled position.
@@ -439,7 +464,7 @@ export const OpsTimeline = {
   },
 
   async _preloadHurricaneFrames(frames, timeline, run, declaredBatchSize = HURRICANE_BACKGROUND_BATCH_SIZE) {
-    const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || HURRICANE_BACKGROUND_BATCH_SIZE));
+    const batchSize = Math.max(1, Math.min(96, Number(declaredBatchSize) || HURRICANE_BACKGROUND_BATCH_SIZE));
     for (let index = 0; index < frames.length; index += batchSize) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
       while (Date.now() - this.hurricaneInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
@@ -500,5 +525,25 @@ export const OpsTimeline = {
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+  },
+
+  _hurricanePayloadAt(payload, selectedMs) {
+    if (!payload?.geojson?.features?.length || !Number.isFinite(selectedMs)) return payload;
+    const features = payload.geojson.features.map((feature) => {
+      if (feature?.properties?.track_kind !== 'forecast' || feature?.geometry?.type !== 'LineString') return feature;
+      const coordinates = Array.isArray(feature.geometry.coordinates) ? feature.geometry.coordinates : [];
+      const times = Array.isArray(feature.properties?.forecast_timestamps) ? feature.properties.forecast_timestamps : [];
+      if (coordinates.length < 2 || times.length !== coordinates.length) return feature;
+      const revealed = coordinates.filter((coordinate, index) => {
+        const at = toMs(times[index]);
+        // The first coordinate is the current observed fix: keep it as the
+        // anchor, but do not draw a dotted segment until a later source-valid
+        // forecast point has entered the future cursor.
+        return index === 0 || (Number.isFinite(at) && at <= selectedMs);
+      });
+      if (revealed.length < 2) return null;
+      return { ...feature, geometry: { ...feature.geometry, coordinates: revealed } };
+    }).filter(Boolean);
+    return { ...payload, geojson: { ...payload.geojson, features } };
   },
 };

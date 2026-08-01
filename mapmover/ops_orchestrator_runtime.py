@@ -1466,7 +1466,13 @@ def _build_live_hurricane_display_payload(
             "advisory_ended_at": advisory_ended_at.isoformat() if advisory_ended_at else None,
             "source_priority": _hurricane_source_priority_for_storm(storm),
         })
-        forecast_coords = [coord for coord in (point_coord(storm, point) for point in forecast_points) if coord]
+        forecast_pairs = [
+            (coord, forecast_at)
+            for point in forecast_points
+            if (coord := point_coord(storm, point)) is not None
+            and (forecast_at := point_time(point, storm.get("issued_at"))) is not None
+        ]
+        forecast_coords = [coord for coord, _ in forecast_pairs]
         if not forecast_coords:
             raw_track = storm.get("forecast_track") if isinstance(storm.get("forecast_track"), dict) else {}
             raw_coords = raw_track.get("coordinates") if raw_track.get("type") == "LineString" else []
@@ -1499,8 +1505,13 @@ def _build_live_hurricane_display_payload(
             })
         if is_active and forecast_coords:
             coords = forecast_coords
+            forecast_times = [stamp for _, stamp in forecast_pairs]
             if current_coord and (not coords or coords[0] != current_coord):
                 coords = [current_coord, *coords]
+                # The source current fix is the honest first forecast anchor.
+                # Preserve its time so the browser can reveal only the
+                # source-issued dotted segments that are valid at its cursor.
+                forecast_times = [current_time, *forecast_times]
             if len(coords) >= 2:
                 features.append({
                     "type": "Feature",
@@ -1509,6 +1520,10 @@ def _build_live_hurricane_display_payload(
                         **base_props,
                         "track_kind": "forecast",
                         "line_style": "dotted",
+                        "forecast_timestamps": [
+                            stamp.isoformat() if stamp is not None else None
+                            for stamp in forecast_times
+                        ],
                     },
                 })
         uncertainty = storm.get("uncertainty_geometry")
@@ -1523,6 +1538,15 @@ def _build_live_hurricane_display_payload(
             })
     if not features:
         return None
+    forecast_times = [
+        _parse_iso_datetime(stamp)
+        for feature in features
+        if isinstance(feature, dict)
+        and isinstance(feature.get("properties"), dict)
+        and feature["properties"].get("track_kind") == "forecast"
+        for stamp in (feature["properties"].get("forecast_timestamps") or [])
+    ]
+    forecast_times = [stamp for stamp in forecast_times if stamp is not None]
     return {
         "type": "data",
         "data_type": "events",
@@ -1534,6 +1558,7 @@ def _build_live_hurricane_display_payload(
         "summary": f"Showing {len(storm_ids)} active storms from advisory sources.",
         "count": len(storm_ids),
         "fit": False,
+        "forecast_end_at": max(forecast_times).isoformat() if forecast_times else None,
         "geojson": {"type": "FeatureCollection", "features": features},
     }
 
@@ -2112,10 +2137,24 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             })
         if frames:
             feeds[feed] = frames
+    forecast_end = max(
+        (
+            parsed
+            for frames in feeds.values()
+            for frame in frames
+            if isinstance(frame, dict)
+            and isinstance(frame.get("display_payload"), dict)
+            and (parsed := _parse_iso_datetime(frame["display_payload"].get("forecast_end_at"))) is not None
+        ),
+        default=None,
+    )
     return {
         "range_start": range_start.isoformat(),
         "range_end": now.isoformat(),
         "history_hours": requested_hours,
+        # Forecast is a separate source-timed extension of the shared cursor.
+        # Its display remains bounded by the advisory's own valid points.
+        "forecast_end": forecast_end.isoformat() if forecast_end is not None else None,
         "cursor_step_seconds": 300,
         "feeds": feeds,
         # Transport this declarative switch with the frame index.  The client
@@ -2310,6 +2349,9 @@ def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: li
         "changed_since_previous": snapshot.get("changed_since_previous"),
         "history_entry_count": len(history_entries),
         "history_available": bool(history_entries),
+        # Chat and public copy describe the bounded replay window, never the
+        # longer operator/archive retention period.
+        "display_history_hours": _ops_history_display_hours_for_snapshot(snapshot),
         "live_state_status": {
             "snapshot": _get_live_state_status(feed, "snapshot") or "unknown",
             "history": _get_live_state_status(feed, "history") or "unknown",
