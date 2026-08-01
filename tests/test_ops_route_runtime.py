@@ -193,13 +193,15 @@ class OpsRouteRuntimeTest(unittest.TestCase):
     def test_nws_timeline_reconstructs_full_alert_state_from_deltas(self):
         original_history = ops_routes.load_current_state_history
         original_snapshot = ops_routes.load_current_state_snapshot
+        first_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        second_at = first_at + timedelta(minutes=5)
         first = {
-            "published_at": "2026-07-27T00:00:00+00:00",
+            "published_at": first_at.isoformat(),
             "summary": {"alert_count": 1},
             "delta": {"added": [{"alert_id": "a-1", "event": "Tornado Warning", "geometry": {"type": "Point", "coordinates": [-90, 35]}}], "updated": [], "removed": []},
         }
         second = {
-            "published_at": "2026-07-27T00:05:00+00:00",
+            "published_at": second_at.isoformat(),
             "summary": {"alert_count": 1},
             # Geometry is deliberately omitted from an unchanged-geometry update.
             "delta": {"added": [], "updated": [{"alert_id": "a-1", "headline": "Updated warning"}], "removed": []},
@@ -221,20 +223,22 @@ class OpsRouteRuntimeTest(unittest.TestCase):
     def test_retained_point_frame_uses_snapshot_at_cursor_time(self):
         original_history = ops_routes.load_current_state_history
         original_snapshot = ops_routes.load_current_state_snapshot
+        first_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        second_at = first_at + timedelta(minutes=5)
         first = {
-            "published_at": "2026-07-27T00:00:00+00:00",
+            "published_at": first_at.isoformat(),
             "payload_hash": "first",
             "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 11.0}]},
         }
         second = {
-            "published_at": "2026-07-27T00:05:00+00:00",
+            "published_at": second_at.isoformat(),
             "payload_hash": "second",
             "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 12.5}]},
         }
         try:
             ops_routes.load_current_state_history = lambda _feed: [first, second]
             ops_routes.load_current_state_snapshot = lambda _feed: second
-            frame = ops_routes._local_point_timeline_frame_at("buoys", "2026-07-27T00:03:00Z")
+            frame = ops_routes._local_point_timeline_frame_at("buoys", (first_at + timedelta(minutes=3)).isoformat())
         finally:
             ops_routes.load_current_state_history = original_history
             ops_routes.load_current_state_snapshot = original_snapshot
@@ -245,13 +249,15 @@ class OpsRouteRuntimeTest(unittest.TestCase):
     def test_retained_point_frames_batch_uses_each_requested_snapshot(self):
         original_history = ops_routes.load_current_state_history
         original_snapshot = ops_routes.load_current_state_snapshot
+        first_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        second_at = first_at + timedelta(minutes=5)
         first = {
-            "published_at": "2026-07-27T00:00:00+00:00",
+            "published_at": first_at.isoformat(),
             "payload_hash": "first",
             "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 11.0}]},
         }
         second = {
-            "published_at": "2026-07-27T00:05:00+00:00",
+            "published_at": second_at.isoformat(),
             "payload_hash": "second",
             "payload_summary": {"buoys": [{"station_id": "A", "lat": 10, "lon": 20, "sst_c": 12.5}]},
         }
@@ -259,7 +265,7 @@ class OpsRouteRuntimeTest(unittest.TestCase):
             ops_routes.load_current_state_history = lambda _feed: [first, second]
             ops_routes.load_current_state_snapshot = lambda _feed: second
             frames = ops_routes._local_point_timeline_frames_at(
-                "buoys", ["2026-07-27T00:03:00Z", "2026-07-27T00:06:00Z"]
+                "buoys", [(first_at + timedelta(minutes=3)).isoformat(), (first_at + timedelta(minutes=6)).isoformat()]
             )
         finally:
             ops_routes.load_current_state_history = original_history

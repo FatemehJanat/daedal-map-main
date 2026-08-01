@@ -125,6 +125,17 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
             posture = str(timeline.get("cache_posture") or "")
             if posture not in VALID_CACHE_POSTURES:
                 errors.append(f"{feed_id}.timeline.cache_posture must be one of {sorted(VALID_CACHE_POSTURES)}")
+            if "display_history_hours" in timeline:
+                try:
+                    display_hours = int(timeline.get("display_history_hours"))
+                except (TypeError, ValueError):
+                    display_hours = 0
+                if mode == "non_temporal" or display_hours < 72:
+                    errors.append(f"{feed_id}.timeline.display_history_hours must be an integer >= 72 for temporal feeds")
+            if "extended_retention" in timeline and not isinstance(timeline.get("extended_retention"), bool):
+                errors.append(f"{feed_id}.timeline.extended_retention must be boolean when present")
+            if timeline.get("extended_retention") and mode == "non_temporal":
+                errors.append(f"{feed_id}.timeline.extended_retention is only valid for temporal feeds")
             if mode == "raster_frame_stack" and not str(timeline.get("runtime_artifact") or "").strip():
                 errors.append(f"{feed_id}.timeline.runtime_artifact is required for raster replay")
             if schema_version >= OPS_DISPLAY_CONTRACT_SCHEMA_VERSION:
