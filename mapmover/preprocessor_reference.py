@@ -177,17 +177,24 @@ def detect_reference_lookup(
                             }
                     break
 
-    country_result = extract_country_from_query(query)
-    if country_result.get("match"):
-        matched_term, iso3, _is_subregion = country_result["match"]
-        iso_data = load_reference_file(reference_dir / "iso_codes.json") or {}
-        country_name = iso_data.get("iso3_to_name", {}).get(iso3, matched_term.title())
-    else:
-        iso3 = None
-        country_name = None
+    iso3 = None
+    country_name = None
+
+    def ensure_country_context() -> tuple[str | None, str | None]:
+        nonlocal iso3, country_name
+        if iso3 is not None or country_name is not None:
+            return iso3, country_name
+        country_result = extract_country_from_query(query)
+        if country_result.get("match"):
+            matched_term, resolved_iso3, _is_subregion = country_result["match"]
+            iso_data = load_reference_file(reference_dir / "iso_codes.json") or {}
+            country_name = iso_data.get("iso3_to_name", {}).get(resolved_iso3, matched_term.title())
+            iso3 = resolved_iso3
+        return iso3, country_name
 
     if any(kw in query_lower for kw in ["capital of", "capital city"]):
         result = {"type": "capital", "file": str(reference_dir / "country_metadata.json")}
+        iso3, country_name = ensure_country_context()
         if iso3:
             specific = lookup_country_specific_data(
                 "capital",
@@ -202,6 +209,7 @@ def detect_reference_lookup(
 
     if any(kw in query_lower for kw in ["currency", "money in", "monetary unit"]) and not is_currency_analytics:
         result = {"type": "currency", "file": str(reference_dir / "currencies_scraped.json")}
+        iso3, country_name = ensure_country_context()
         if iso3:
             specific = lookup_country_specific_data(
                 "currency",
@@ -216,6 +224,7 @@ def detect_reference_lookup(
 
     if any(kw in query_lower for kw in ["language", "speak", "spoken", "official language"]):
         result = {"type": "language", "file": str(reference_dir / "languages_scraped.json")}
+        iso3, country_name = ensure_country_context()
         if iso3:
             specific = lookup_country_specific_data(
                 "language",
@@ -230,6 +239,7 @@ def detect_reference_lookup(
 
     if any(kw in query_lower for kw in ["timezone", "time zone", "what time"]):
         result = {"type": "timezone", "file": str(reference_dir / "timezones_scraped.json")}
+        iso3, country_name = ensure_country_context()
         if iso3:
             specific = lookup_country_specific_data(
                 "timezone",
@@ -243,6 +253,8 @@ def detect_reference_lookup(
         return result
 
     background_keywords = ["background", "history of", "tell me about", "overview of", "about the country"]
+    if any(kw in query_lower for kw in background_keywords):
+        iso3, country_name = ensure_country_context()
     if iso3 and any(kw in query_lower for kw in background_keywords):
         ref_path = reference_dir / "world_factbook_text.json"
         if ref_path.exists():
@@ -264,7 +276,10 @@ def detect_reference_lookup(
                         },
                     }
 
-    if iso3 and any(kw in query_lower for kw in ["economy", "economic", "industries", "gdp"]):
+    economy_keywords = ["economy", "economic", "industries", "gdp"]
+    if any(kw in query_lower for kw in economy_keywords):
+        iso3, country_name = ensure_country_context()
+    if iso3 and any(kw in query_lower for kw in economy_keywords):
         ref_path = reference_dir / "world_factbook_text.json"
         if ref_path.exists():
             data = load_reference_file(ref_path) or {}
@@ -308,6 +323,8 @@ def detect_reference_lookup(
         "who export",
         "who import",
     ]
+    if any(kw in query_lower for kw in trade_keywords):
+        iso3, country_name = ensure_country_context()
     if iso3 and any(kw in query_lower for kw in trade_keywords):
         ref_path = reference_dir / "world_factbook_text.json"
         if ref_path.exists():
@@ -343,7 +360,10 @@ def detect_reference_lookup(
                         },
                     }
 
-    if iso3 and any(kw in query_lower for kw in ["government", "political", "constitution", "president", "parliament", "legislature"]):
+    government_keywords = ["government", "political", "constitution", "president", "parliament", "legislature"]
+    if any(kw in query_lower for kw in government_keywords):
+        iso3, country_name = ensure_country_context()
+    if iso3 and any(kw in query_lower for kw in government_keywords):
         ref_path = reference_dir / "world_factbook_text.json"
         if ref_path.exists():
             data = load_reference_file(ref_path) or {}

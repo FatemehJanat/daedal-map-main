@@ -168,6 +168,14 @@ class NameStandardizer:
             "britain": "United Kingdom",
             "england": "United Kingdom",  # Often used interchangeably in datasets
 
+            # United Arab Emirates variants
+            # "uae" is what people actually write; the bare ISO3 code "are" is
+            # deliberately not a natural-language match (see _SPAN_STOP_WORDS
+            # in preprocessor_locations.py).
+            "uae": "United Arab Emirates",
+            "u.a.e.": "United Arab Emirates",
+            "emirates": "United Arab Emirates",
+
             # Russia variants
             "russian federation": "Russia",
 

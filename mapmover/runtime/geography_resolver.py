@@ -52,7 +52,7 @@ def resolve_geography(
 
     A success can intentionally contain many loc_ids for a documented land
     regional group. Named water bodies are different: they resolve to exactly
-    one polygon-backed marine id (for example, ``Mediterranean Sea`` →
+    one polygon-backed marine id (for example, ``Mediterranean Sea`` ->
     ``XSM``), never to bordering countries.
     """
     if longitude is not None or latitude is not None:
@@ -102,9 +102,24 @@ def resolve_geography(
             },
         }
 
-    # Named shared geometries win over land-region aliases. In particular,
-    # "Mediterranean" must resolve to its IHO geometry, never a coastal-country
-    # group; whole-ocean names may expand to multiple IHO polygons.
+    admin_result = resolve_admin_text_to_loc_id(text, country_hint=country_hint)
+    direct_loc_id = str(admin_result.get("deepest_resolved_loc_id") or "").strip()
+    if direct_loc_id:
+        return {
+            "outcome": "ok",
+            "resolution_kind": str(admin_result.get("match_type") or "admin_name"),
+            "query": text,
+            "country_hint": country_hint,
+            "loc_ids": [direct_loc_id],
+            "locations": _as_location_rows([direct_loc_id]),
+            "deepest_loc_id": direct_loc_id,
+            "provenance": admin_result,
+        }
+
+    # Named shared geometries win over land-region aliases, but not over a
+    # direct admin-spine match. "Japan" is the country; "Sea of Japan" or
+    # "Japan Sea" is the named-water geometry. "Mediterranean" still resolves
+    # to its IHO geometry rather than a coastal-country group.
     geometry_entry = resolve_geometry_name(text)
     if geometry_entry:
         loc_ids = [str(value) for value in geometry_entry.get("loc_ids") or []]
@@ -134,20 +149,6 @@ def resolve_geography(
                 "geometry_path": geometry_entry.get("geometry_path"),
                 "provenance": geometry_entry.get("provenance"),
             },
-        }
-
-    admin_result = resolve_admin_text_to_loc_id(text, country_hint=country_hint)
-    direct_loc_id = str(admin_result.get("deepest_resolved_loc_id") or "").strip()
-    if direct_loc_id:
-        return {
-            "outcome": "ok",
-            "resolution_kind": str(admin_result.get("match_type") or "admin_name"),
-            "query": text,
-            "country_hint": country_hint,
-            "loc_ids": [direct_loc_id],
-            "locations": _as_location_rows([direct_loc_id]),
-            "deepest_loc_id": direct_loc_id,
-            "provenance": admin_result,
         }
 
     errors: list[str] = []

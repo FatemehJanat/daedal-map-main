@@ -98,6 +98,18 @@ def build_tier3_context(
                     penalty = " [LIKELY FALSE POSITIVE - term appears in source name]"
                 candidate_lines.append(f"  - '{term}' -> {loc_id}: {conf:.2f} ({mtype}){penalty}")
 
+        ignored_locations = candidates.get("locations", {}).get("ignored_locations", [])
+        if ignored_locations:
+            candidate_lines.append("\nIgnored location-like tokens:")
+            for item in ignored_locations[:5]:
+                term = item.get("term", "?")
+                iso3 = item.get("iso3", "?")
+                country_name = item.get("country_name", iso3)
+                reason = item.get("reason", "ignored")
+                candidate_lines.append(
+                    f"  - '{term}' was not treated as {country_name} ({iso3}): {reason}"
+                )
+
         if len(candidate_lines) > 1:
             candidate_lines.append("\nBased on the full query context, determine which interpretation is correct.")
             candidate_lines.append("If the query is about data/statistics, prefer data_request intent even if it starts with 'show me'.")
