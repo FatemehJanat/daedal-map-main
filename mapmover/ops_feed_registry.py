@@ -49,6 +49,7 @@ VALID_POPUP_FAMILIES = {
     "geometry_basics_popup",
 }
 OPS_DISPLAY_CONTRACT_SCHEMA_VERSION = 3
+OPS_CHAT_DEFAULT_SCHEMA_VERSION = 5
 OPS_SITE_PROFILE_SCHEMA_VERSION = 4
 
 
@@ -72,6 +73,21 @@ def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str
         errors.append(f"{feed_id}.display_contract.style must be an object when present")
     if contract.get("data_binding") is not None and not isinstance(contract.get("data_binding"), dict):
         errors.append(f"{feed_id}.display_contract.data_binding must be an object when present")
+    return errors
+
+
+def _validate_chat_default(feed_id: str, record: dict[str, Any], chat_defaults: Any) -> list[str]:
+    """Validate the authored chat contract for one public logical Ops feed."""
+    if str(record.get("release_state") or "").strip().lower() != "public":
+        return []
+    contract = record.get("chat_default")
+    if not isinstance(contract, dict) and isinstance(chat_defaults, dict):
+        contract = chat_defaults.get(feed_id)
+    if not isinstance(contract, dict):
+        return [f"{feed_id}.chat_default is required for public feeds"]
+    errors: list[str] = []
+    if not str(contract.get("message") or "").strip():
+        errors.append(f"{feed_id}.chat_default.message must be non-empty")
     return errors
 
 
@@ -121,6 +137,9 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
     except (TypeError, ValueError):
         schema_version = 0
         errors.append("registry.schema_version must be an integer")
+    chat_defaults = payload.get("chat_defaults")
+    if schema_version >= OPS_CHAT_DEFAULT_SCHEMA_VERSION and not isinstance(chat_defaults, dict):
+        errors.append("registry.chat_defaults must be an object")
     for index, record in enumerate(feeds):
         prefix = f"feeds[{index}]"
         if not isinstance(record, dict):
@@ -167,6 +186,8 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
                 errors.append(f"{feed_id}.timeline.runtime_artifact is required for raster replay")
             if schema_version >= OPS_DISPLAY_CONTRACT_SCHEMA_VERSION:
                 errors.extend(_validate_display_contract(feed_id, record))
+            if schema_version >= OPS_CHAT_DEFAULT_SCHEMA_VERSION:
+                errors.extend(_validate_chat_default(feed_id, record, chat_defaults))
             if schema_version >= OPS_SITE_PROFILE_SCHEMA_VERSION:
                 errors.extend(_validate_site_profile(feed_id, record, profiles))
         provider = str(timeline.get("provider") or "").strip()
@@ -199,8 +220,16 @@ def load_ops_feed_records(path: Path | None = None) -> list[dict]:
     basic_errors = validate_ops_feed_registry(payload, strict=False)
     if basic_errors:
         return []
+    chat_defaults = payload.get("chat_defaults") if isinstance(payload.get("chat_defaults"), dict) else {}
     return [
-        record for record in records
+        {
+            **record,
+            **({"chat_default": chat_defaults[str(record.get("feed_id") or "").strip()]}
+               if not isinstance(record.get("chat_default"), dict)
+               and isinstance(chat_defaults.get(str(record.get("feed_id") or "").strip()), dict)
+               else {}),
+        }
+        for record in records
         if isinstance(record, dict) and str(record.get("feed_id") or "").strip()
     ]
 

@@ -2266,6 +2266,13 @@ def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int
 
 
 def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: list[dict]) -> dict:
+    record = ops_feed_record(feed)
+    raw_chat_default = record.get("chat_default") if isinstance(record, dict) else None
+    chat_default = {
+        field: str(raw_chat_default.get(field) or "").strip()
+        for field in ("message",)
+    } if isinstance(raw_chat_default, dict) else {}
+    chat_default = {field: value for field, value in chat_default.items() if value}
     if not isinstance(snapshot, dict):
         snapshot_status = _get_live_state_status(feed, "snapshot")
         history_status = _get_live_state_status(feed, "history")
@@ -2278,6 +2285,7 @@ def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: li
                 "snapshot": snapshot_status or "missing",
                 "history": history_status or "missing",
             },
+            "chat_default": chat_default,
             "summary": {},
         }
     summary = snapshot.get("payload_summary") if isinstance(snapshot.get("payload_summary"), dict) else {}
@@ -2297,6 +2305,7 @@ def _compact_feed_snapshot(feed: str, snapshot: dict | None, history_entries: li
             "snapshot": _get_live_state_status(feed, "snapshot") or "unknown",
             "history": _get_live_state_status(feed, "history") or "unknown",
         },
+        "chat_default": chat_default,
         "summary": _compact_payload_summary(feed, summary),
     }
 

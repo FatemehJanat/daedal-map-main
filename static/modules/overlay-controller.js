@@ -1472,7 +1472,7 @@ export const OverlayController = {
     }
   },
 
-  buildOpsFeedSummaryMessage(feedId, overlayIds = []) {
+  _buildOpsFeedSummaryMessage(feedId, overlayIds = []) {
     const normalizedFeedId = String(feedId || '').trim();
     const normalizedOverlayIds = (Array.isArray(overlayIds) ? overlayIds : [])
       .map((value) => String(value || '').trim())
@@ -1497,11 +1497,19 @@ export const OverlayController = {
     const visibleCount = Number.isFinite(preparedPayload?.visibleCount)
       ? preparedPayload.visibleCount
       : snapshotCount;
-    const chatHint = String(preparedPayload?.chatHint || '').trim();
+    const authoredChatDefault = feedSnapshot?.chat_default && typeof feedSnapshot.chat_default === 'object'
+      ? feedSnapshot.chat_default
+      : {};
+    const activationMessage = String(authoredChatDefault.message || '').trim();
+    const chatHint = String(activationMessage || preparedPayload?.chatHint || '').trim();
     const windowLabel = String(preparedPayload?.windowLabel || 'the retained Ops window').trim();
     const countText = (singular, plural = '') => formatCountText(snapshotCount, singular, plural);
     const currentCountText = (singular, plural = '') => formatCountText(currentSnapshotCount, singular, plural);
-    const withHint = (message) => chatHint ? `${message}\n\n${chatHint}` : message;
+    const withHint = (message) => {
+      const additions = [chatHint]
+        .filter((value, index, values) => value && values.indexOf(value) === index && !message.includes(value));
+      return additions.length ? message + '\n\n' + additions.join(' ') : message;
+    };
     const historyAndActiveStatus = (historySingular, activeSingular = historySingular, activePlural = '') => {
       const historyVerb = snapshotCount === 1 ? 'was' : 'were';
       const activeVerb = currentSnapshotCount === 1 ? 'is' : 'are';
@@ -1586,7 +1594,7 @@ export const OverlayController = {
         if (!Number.isFinite(stats?.snapshotCount) || stats.snapshotCount <= 0) {
           return 'There are 0 active NWS alerts right now. Ask chat to focus on one state, explain the alert mix, or summarize what changed recently.';
         }
-        return `There ${stats.snapshotCount === 1 ? 'is' : 'are'} ${formatCountText(stats.snapshotCount, 'active NWS alert')} in the live snapshot. Showing all current Extreme and Severe alerts now. Ask chat to focus on one state, explain the alert mix, or summarize what changed recently.`;
+        return withHint(`There ${stats.snapshotCount === 1 ? 'is' : 'are'} ${formatCountText(stats.snapshotCount, 'active NWS alert')} in the live snapshot. Showing all current Extreme and Severe alerts now.`);
       }
       case 'currency': {
         if (!Number.isFinite(snapshotCount) || snapshotCount <= 0) {
@@ -1629,6 +1637,19 @@ export const OverlayController = {
           : `${label} feed active now. Current snapshot is on the map.`;
       }
     }
+  },
+
+  buildOpsFeedSummaryMessage(feedId, overlayIds = []) {
+    const message = this._buildOpsFeedSummaryMessage(feedId, overlayIds);
+    const primaryOverlayId = (Array.isArray(overlayIds) ? overlayIds : [])
+      .map((value) => String(value || '').trim())
+      .find(Boolean) || String(feedId || '').trim();
+    const feedSnapshot = this._getOpsReportFeedSnapshot(primaryOverlayId);
+    const activationMessage = String(feedSnapshot?.chat_default?.message || '').trim();
+    if (!message || !activationMessage || message.includes(activationMessage)) {
+      return message;
+    }
+    return message + '\n\n' + activationMessage;
   },
 
   setOpsSnapshotPayloads(displayPayloads = [], options = {}) {
