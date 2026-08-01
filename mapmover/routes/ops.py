@@ -749,12 +749,18 @@ async def local_ops_timeline_hurricane_frame_endpoint(req: Request):
 
 @router.post("/api/local/ops/timeline/hurricane-frames")
 async def local_ops_timeline_hurricane_frames_endpoint(req: Request):
-    """Return up to 24 retained hurricane frames for silent cache hydration."""
+    """Return up to 96 retained hurricane frames for silent cache hydration.
+
+    The browser's declared hurricane preload contract is 96 frames.  Keeping
+    this route at the old 24-frame NWS cap made every background batch fail
+    with HTTP 413, which in turn forced interactive scrubs back onto one
+    request and a full track repaint at a time.
+    """
     try:
         body = await decode_request_body(req)
         values = body.get("at")
-        if not isinstance(values, list) or len(values) > 24:
-            return msgpack_error("at must be a list of at most 24 retained frame timestamps", 413)
+        if not isinstance(values, list) or len(values) > 96:
+            return msgpack_error("at must be a list of at most 96 retained frame timestamps", 413)
         return msgpack_response({
             "type": "local_ops_hurricane_frames",
             "frames": _local_hurricane_timeline_frames_at(values),
