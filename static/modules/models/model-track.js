@@ -79,6 +79,15 @@ export const TrackModel = {
     ];
   },
 
+  /**
+   * Live Ops storms carry a server-assigned identity colour.  Historical
+   * catalog tracks do not need that field and retain category colouring as a
+   * fallback, so the shared TrackModel remains safe for both map lanes.
+   */
+  _buildStormColorExpr(categoryColorExpr) {
+    return ['coalesce', ['get', 'storm_color'], categoryColorExpr];
+  },
+
   _hasWindRadiiProps(props = {}) {
     return ['r34_ne', 'r34_se', 'r34_sw', 'r34_nw', 'r50_ne', 'r50_se', 'r50_sw', 'r50_nw', 'r64_ne', 'r64_se', 'r64_sw', 'r64_nw']
       .some((key) => Number(props?.[key]) > 0);
@@ -304,6 +313,7 @@ export const TrackModel = {
 
     // First time render - create source and layers
     const categoryColorExpr = this._buildCategoryColorExpr();
+    const stormColorExpr = this._buildStormColorExpr(categoryColorExpr);
 
     // Add hurricane source
     map.addSource(CONFIG.layers.hurricaneSource, {
@@ -313,10 +323,10 @@ export const TrackModel = {
 
     if (hasLineString) {
       // Render track lines for yearly overview
-      this._renderTrackLines(map, categoryColorExpr, options);
+      this._renderTrackLines(map, stormColorExpr, options);
     } else {
       // Render point markers (legacy behavior)
-      this._renderPointMarkers(map, categoryColorExpr, options);
+      this._renderPointMarkers(map, stormColorExpr, options);
     }
 
     // Set up popup event listeners for sequence button

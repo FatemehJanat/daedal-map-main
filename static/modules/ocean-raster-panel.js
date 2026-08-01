@@ -220,9 +220,11 @@ function _formatFrameStamp(stampMs) {
   if (stampMs === null || stampMs === undefined || !Number.isFinite(stampMs)) {
     return 'No data at this time';
   }
-  return new Date(stampMs).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
-  });
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: 'UTC', timeZoneName: 'short'
+  }).format(new Date(stampMs));
 }
 
 function _updateFrameStamp(stampMs) {
@@ -262,6 +264,10 @@ export const OceanRasterPanel = {
     _renderLegend(panel);
     // Live displayed-frame readout (fires immediately with current state)
     _model.setFrameCallback?.(overlayId, _updateFrameStamp);
+    // Re-read after the panel becomes visible.  This avoids a stale panel
+    // label when the shared Ops cursor already rendered a newer held frame
+    // while the panel was hidden during overlay setup.
+    _updateFrameStamp(_model.getDisplayedFrameStamp?.(overlayId));
     panel.style.display = 'block';
   },
 

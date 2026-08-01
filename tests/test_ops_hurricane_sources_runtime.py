@@ -147,6 +147,37 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         self.assertEqual(-151.7, points[0]["longitude"])
 
+    def test_one_live_storm_keeps_one_display_color_across_track_features(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        snapshot = {
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "EP062026",
+                    "name": "FAUSTO",
+                    "basin": "EP",
+                    "source": "NHC",
+                    "current_position": {
+                        "timestamp": now.isoformat(), "latitude": 14.0,
+                        "longitude": -150.0, "wind_kt": 75,
+                    },
+                    "observed_track": [
+                        {"timestamp": (now - timedelta(hours=6)).isoformat(), "latitude": 13.5, "longitude": -149.0, "wind_kt": 65},
+                        {"timestamp": now.isoformat(), "latitude": 14.0, "longitude": -150.0, "wind_kt": 75},
+                    ],
+                    "forecast_points": [
+                        {"timestamp": (now + timedelta(hours=12)).isoformat(), "latitude": 14.4, "longitude": -151.0},
+                    ],
+                }],
+            },
+        }
+
+        payload = ops._build_live_hurricane_display_payload(snapshot, as_of=now)
+        features = payload["geojson"]["features"]
+        colors = {feature["properties"].get("storm_color") for feature in features}
+
+        self.assertEqual(1, len(colors))
+        self.assertEqual(ops._hurricane_storm_color("EP062026"), colors.pop())
+
     def test_retired_ibtracs_display_payload_is_not_a_live_hurricane_feed(self):
         payloads = ops._report_display_payload_by_feed({
             "display_payloads": [

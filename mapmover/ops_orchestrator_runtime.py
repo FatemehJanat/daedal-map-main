@@ -103,6 +103,16 @@ HURRICANE_SOURCE_LABELS = {
     "JTWC": "Joint Typhoon Warning Center",
     "JMA": "Japan Meteorological Agency",
 }
+# Live-track colour is an identity property, not an advisory property.  A
+# warning centre can revise intensity/category between retained snapshots;
+# changing the visual identity of the same storm while an operator scrubs the
+# timeline makes a continuous track look like a different event.  Keep a
+# small, high-contrast deterministic palette so every feature for one storm
+# (observed line, current fix, forecast, and hover geometry) has one colour.
+HURRICANE_STORM_COLORS = (
+    "#35d0ff", "#ffcf5c", "#ff6f91", "#a78bfa",
+    "#44d7a8", "#ff9f5c", "#60a5fa", "#f472b6",
+)
 USGS_FDSN_EVENT_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 _LIVE_STATE_CACHE: dict[tuple[str, str], tuple[float, object]] = {}
 _LIVE_STATE_CACHE_LOCK = threading.Lock()
@@ -119,6 +129,13 @@ def _normalize_ops_feed_id(feed: object) -> str:
 
 def _is_hurricane_live_feed(feed: object) -> bool:
     return _normalize_ops_feed_id(feed) == HURRICANE_LIVE_FEED
+
+
+def _hurricane_storm_color(storm_id: object) -> str:
+    """Return one stable display colour for a canonical live storm ID."""
+    encoded = str(storm_id or "").strip().upper().encode("utf-8")
+    digest = hashlib.sha256(encoded).digest()
+    return HURRICANE_STORM_COLORS[digest[0] % len(HURRICANE_STORM_COLORS)]
 
 
 def _hurricane_source_priority_for_storm(storm: dict, source: object | None = None) -> int:
@@ -1382,6 +1399,7 @@ def _build_live_hurricane_display_payload(
         page_url = source_page_url(storm)
         base_props = {
             "storm_id": storm_id,
+            "storm_color": _hurricane_storm_color(storm_id),
             "name": storm.get("name"),
             "basin": storm.get("basin"),
             "source": storm.get("source"),
