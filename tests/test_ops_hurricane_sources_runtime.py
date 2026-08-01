@@ -104,6 +104,49 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         self.assertEqual([[132.0, 18.0], [131.0, 19.0], [130.0, 20.0]], [[point["longitude"], point["latitude"]] for point in points])
 
+    def test_retained_nhc_west_longitude_is_repaired_at_point_provenance(self):
+        """A fallback-owned composed storm must not lose an NHC W-sign repair."""
+        snapshot = {
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "EP062026",
+                    "identity": {"canonical_id": "EP062026"},
+                    "name": "FAUSTO",
+                    "year": 2026,
+                    "basin": "EP",
+                    "source": "JTWC",
+                    "current_position": {
+                        "timestamp": "2026-07-28T06:00:00+00:00",
+                        "latitude": 14.0,
+                        "longitude": -150.0,
+                    },
+                }],
+            },
+        }
+        history = [{
+            "payload_summary": {
+                "storms": [{
+                    "storm_id": "EP062026",
+                    "identity": {"canonical_id": "EP062026"},
+                    "name": "FAUSTO",
+                    "year": 2026,
+                    "basin": "EP",
+                    "source": "NHC",
+                    # Legacy retained NHC row where its W suffix was lost.
+                    "current_position": {
+                        "timestamp": "2026-07-28T03:00:00+00:00",
+                        "latitude": 13.8,
+                        "longitude": 151.7,
+                    },
+                }],
+            },
+        }]
+
+        augmented = ops._with_hurricane_history_tracks(snapshot, history)
+        points = augmented["payload_summary"]["storms"][0]["observed_track"]
+
+        self.assertEqual(-151.7, points[0]["longitude"])
+
     def test_retired_ibtracs_display_payload_is_not_a_live_hurricane_feed(self):
         payloads = ops._report_display_payload_by_feed({
             "display_payloads": [

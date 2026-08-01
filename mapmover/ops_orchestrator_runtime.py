@@ -1771,6 +1771,15 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
             longitude = float(point.get("longitude"))
         except (TypeError, ValueError):
             return
+        # Preserve the NHC longitude repair at the point's actual provenance,
+        # not only at the eventual composed-storm record. A retained storm can
+        # start from a fallback authority and later receive NHC positions; if
+        # the legacy NHC row lost its W suffix, using target.source below
+        # would fail to repair it and create a world-spanning join.
+        if candidate_source == "NHC" and 0.0 < longitude <= 180.0:
+            longitude = -longitude
+        if not (-180.0 <= longitude <= 180.0 and -90.0 <= latitude <= 90.0):
+            return
         storm_id = str(target.get("storm_id") or "").strip()
         if not storm_id:
             return
