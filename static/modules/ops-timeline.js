@@ -245,7 +245,6 @@ export const OpsTimeline = {
 
   _renderSelectedFrame(ms, { preserveCurrent = false } = {}) {
     if (!this.timeline || !Number.isFinite(ms)) return;
-    const displayPayloads = [];
     const specialFrames = [];
     const updatedFeedIds = new Set();
     for (const [feedId, frames] of Object.entries(this.timeline.feeds || {})) {
@@ -275,7 +274,6 @@ export const OpsTimeline = {
           if (renderKey && this.selectedDisplayKeys.get(feedId) === renderKey) {
             this.selectedDisplayPayloads.set(feedId, replayPayload);
           } else {
-            displayPayloads.push(replayPayload);
             this.selectedDisplayPayloads.set(feedId, replayPayload);
             if (renderKey) this.selectedDisplayKeys.set(feedId, renderKey);
             updatedFeedIds.add(feedId);
@@ -285,7 +283,6 @@ export const OpsTimeline = {
         specialFrames.push(selected.display_payload);
       } else if (selected?.display_payload) {
         const displayPayload = selected.display_payload;
-        displayPayloads.push(displayPayload);
         this.selectedDisplayPayloads.set(feedId, displayPayload);
         this.selectedDisplayKeys.delete(feedId);
         updatedFeedIds.add(feedId);
@@ -299,18 +296,15 @@ export const OpsTimeline = {
         provider?.renderAt?.(ms);
       }
     }
-    // A collector can be temporarily stale beyond its declared cadence.  On
-    // first hydrate retain the normal Ops snapshot rather than blanking the
-    // map; later deliberate scrubs can still show an honestly empty moment.
-    if (displayPayloads.length || !preserveCurrent) {
+    // Keep the last painted frame on screen until a feed has a real
+    // replacement. Slider ticks between storm fixes update the label/thumb
+    // only; they must not become empty timeline renders.
+    if (updatedFeedIds.size > 0) {
       this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
         at: new Date(ms).toISOString(),
         opsTimelineUpdate: true,
         opsTimelineFeedIds: Array.from(updatedFeedIds),
-        // Initial hydration can legitimately have retained frames for only a
-        // subset of active feeds. Keep their normal current snapshots until
-        // the user deliberately scrubs to a time where a feed is absent.
-        preserveMissing: preserveCurrent,
+        preserveMissing: true,
       });
     }
     for (const frame of specialFrames) {
