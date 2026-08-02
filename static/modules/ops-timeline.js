@@ -14,11 +14,9 @@ import { formatOpsTime } from './ops-time-display.js';
 
 const CURSOR_STEP_MS = 5 * 60 * 1000;
 const NWS_BACKGROUND_BATCH_SIZE = 24;
-const HURRICANE_BACKGROUND_BATCH_SIZE = 24;
 const INTERACTIVE_GRACE_MS = 250;
 const HISTORY_PRELOAD_METHODS = {
   nws_alerts: '_preloadNwsFrames',
-  hurricane_history: '_preloadHurricaneFrames',
   live_point: '_preloadPointFrames',
 };
 
@@ -58,7 +56,6 @@ export const OpsTimeline = {
   // leaving one station layer visually stuck on an older cursor value.
   pointRequestTokens: new Map(),
   pointInteractiveRequestedAt: 0,
-  hurricaneFrameCache: new Map(),
   hurricaneReplayData: new Map(),
   hurricaneWarmupPromise: null,
   hurricaneWarmupRun: 0,
@@ -79,7 +76,6 @@ export const OpsTimeline = {
     this.nwsFrameCache.clear();
     this.pointFrameCache.clear();
     this.pointRequestTokens.clear();
-    this.hurricaneFrameCache.clear();
     this.hurricaneReplayData.clear();
     this.selectedDisplayPayloads.clear();
     this.hurricaneWarmupRun += 1;
@@ -233,7 +229,6 @@ export const OpsTimeline = {
     const displayPayloads = [];
     const specialFrames = [];
     const updatedFeedIds = new Set();
-    let hasDeferredPayload = false;
     for (const [feedId, frames] of Object.entries(this.timeline.feeds || {})) {
       if (!Array.isArray(frames)) continue;
       let selected = null;
@@ -254,27 +249,17 @@ export const OpsTimeline = {
         const pointOverlay = getLivePointOverlay(frames[0].overlay_id);
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
         else pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
-      } else if (selected?.timeline_provider === 'hurricane_history') {
-        // Hurricane replay is hydrated as browser-held display frames before
-        // the cursor is enabled. A scrub is therefore a synchronous render
-        // change, not a data request.
-        if (ms < this.timeline.currentMs) {
-          const replayPayload = this._buildHurricaneReplayDisplayPayload(feedId, ms, selected);
-          const loaded = replayPayload ? { display_payload: replayPayload } : this.hurricaneFrameCache.get(frameCacheKey(selected));
-          if (loaded?.display_payload) {
-            displayPayloads.push(loaded.display_payload);
-            this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
-            updatedFeedIds.add(feedId);
-          } else {
-            hasDeferredPayload = true;
-          }
+      } else if (this.hurricaneReplayData.has(feedId)) {
+        const replayPayload = this._buildHurricaneReplayDisplayPayload(feedId, ms, selected);
+        if (replayPayload) {
+          displayPayloads.push(replayPayload);
+          this.selectedDisplayPayloads.set(feedId, replayPayload);
+          updatedFeedIds.add(feedId);
         }
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
       } else if (selected?.display_payload) {
-        const displayPayload = feedId === 'hurricanes_live'
-          ? this._hurricanePayloadAt(selected.display_payload, ms)
-          : selected.display_payload;
+        const displayPayload = selected.display_payload;
         displayPayloads.push(displayPayload);
         this.selectedDisplayPayloads.set(feedId, displayPayload);
         updatedFeedIds.add(feedId);
@@ -298,9 +283,7 @@ export const OpsTimeline = {
         // Initial hydration can legitimately have retained frames for only a
         // subset of active feeds. Keep their normal current snapshots until
         // the user deliberately scrubs to a time where a feed is absent.
-        // A deferred additive hurricane frame must not clear the last
-        // coherent track while its compact frame is materialized.
-        preserveMissing: preserveCurrent || hasDeferredPayload,
+        preserveMissing: preserveCurrent,
       });
     }
     for (const frame of specialFrames) {
@@ -363,44 +346,11 @@ export const OpsTimeline = {
   },
 
   _hasPendingRequiredHistoryWarmup() {
-    const contracts = this.timeline?.preload_history || {};
-    for (const [feedId, contract] of Object.entries(contracts)) {
-      if (contract?.preload_history && String(contract.provider || '') === 'hurricane_history') {
-        if (this.hurricaneReplayData.has(feedId)) continue;
-        const frames = Array.isArray(this.timeline?.feeds?.[feedId])
-          ? this.timeline.feeds[feedId].filter((frame) => frame?.timeline_provider === 'hurricane_history')
-          : [];
-        if (frames.some((frame) => !this.hurricaneFrameCache.has(frameCacheKey(frame)))) {
-          return true;
-        }
-      }
-    }
     return false;
   },
 
   async _warmRequiredHistory() {
-    const timeline = this.timeline;
-    const contracts = timeline?.preload_history || {};
-    const batches = [];
-    const run = ++this.hurricaneWarmupRun;
-    for (const [feedId, contract] of Object.entries(contracts)) {
-      if (!contract?.preload_history || String(contract.provider || '') !== 'hurricane_history') continue;
-      const frames = Array.isArray(timeline?.feeds?.[feedId])
-        ? timeline.feeds[feedId].filter((frame) => frame?.timeline_provider === 'hurricane_history').reverse()
-        : [];
-      if (frames.length && !this.hurricaneReplayData.has(feedId)) {
-        batches.push(this._preloadHurricaneFrames(frames, timeline, this.backgroundPrefetchRun, contract.batch_size));
-      }
-    }
-    if (!batches.length) return;
-    this.hurricaneWarmupPromise = Promise.allSettled(batches).finally(() => {
-      if (run === this.hurricaneWarmupRun) {
-        this.hurricaneWarmupPromise = null;
-        if (this.input) this.input.disabled = false;
-        if (this.selectedMs != null) this.selectAt(this.selectedMs, { preserveCurrent: true });
-      }
-    });
-    await this.hurricaneWarmupPromise;
+    this.hurricaneWarmupPromise = null;
   },
 
   _scheduleBackgroundPrefetch() {
@@ -457,33 +407,6 @@ export const OpsTimeline = {
     }
   },
 
-  async _preloadHurricaneFrames(frames, timeline, run, declaredBatchSize = HURRICANE_BACKGROUND_BATCH_SIZE) {
-    const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || HURRICANE_BACKGROUND_BATCH_SIZE));
-    for (let index = 0; index < frames.length; index += batchSize) {
-      if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
-      const batch = frames.slice(index, index + batchSize);
-      const missing = batch.filter((frame) => {
-        const key = frameCacheKey(frame);
-        return key && !this.hurricaneFrameCache.has(key);
-      });
-      if (!missing.length) continue;
-      try {
-        const response = await postMsgpack('/api/local/ops/timeline/hurricane-frames', {
-          at: missing.map((frame) => frame.start_at),
-        }, { silent: true });
-        for (const loaded of response?.frames || []) {
-          const key = frameCacheKey(loaded);
-          if (key) this.hurricaneFrameCache.set(key, loaded);
-        }
-      } catch (error) {
-        console.warn('OpsTimeline: background hurricane frame batch failed', error);
-        return;
-      }
-      // Give paint and interactive scrub work a turn before the next bundle.
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  },
-
   async _preloadPointFrames(frames, timeline, run, declaredBatchSize, contract = {}) {
     const overlayId = String(contract.overlay_id || '');
     if (!overlayId) return;
@@ -528,23 +451,49 @@ export const OpsTimeline = {
     return [lon, lat];
   },
 
+  _hurricanePointMs(point) {
+    return toMs(point?.timestamp) ?? toMs(point?.valid_at) ?? toMs(point?.time) ?? toMs(point?.issued_at);
+  },
+
+  _hurricaneCategoryFromWind(windKt) {
+    const wind = Number(windKt);
+    if (!Number.isFinite(wind)) return null;
+    if (wind >= 137) return 'Cat5';
+    if (wind >= 113) return 'Cat4';
+    if (wind >= 96) return 'Cat3';
+    if (wind >= 83) return 'Cat2';
+    if (wind >= 64) return 'Cat1';
+    if (wind >= 34) return 'TS';
+    if (wind > 0) return 'TD';
+    return null;
+  },
+
   _buildHurricaneReplayDisplayPayload(feedId, selectedMs, selectedFrame = null) {
     const replay = this.hurricaneReplayData.get(feedId);
     if (!replay || !Array.isArray(replay.storms)) return null;
     const historyHours = Math.max(1, Number(replay.history_hours) || 72);
-    const cutoffMs = selectedMs - (historyHours * 60 * 60 * 1000);
+    const currentMs = this.timeline?.currentMs;
+    const observedCursorMs = Number.isFinite(currentMs) ? Math.min(selectedMs, currentMs) : selectedMs;
+    const showForecast = Number.isFinite(currentMs) && selectedMs >= currentMs;
+    const cutoffMs = observedCursorMs - (historyHours * 60 * 60 * 1000);
     const features = [];
     let stormCount = 0;
     for (const storm of replay.storms) {
       const points = Array.isArray(storm?.observed_track) ? storm.observed_track : [];
       const usable = points
-        .map((point) => ({ point, timeMs: toMs(point?.timestamp), coord: this._normalizeHurricaneCoord(storm, point) }))
-        .filter((item) => Number.isFinite(item.timeMs) && item.coord && item.timeMs >= cutoffMs && item.timeMs <= selectedMs)
+        .map((point) => ({ point, timeMs: this._hurricanePointMs(point), coord: this._normalizeHurricaneCoord(storm, point) }))
+        .filter((item) => Number.isFinite(item.timeMs) && item.coord && item.timeMs >= cutoffMs && item.timeMs <= observedCursorMs)
         .sort((a, b) => a.timeMs - b.timeMs);
       if (!usable.length) continue;
       const latest = usable[usable.length - 1];
+      const forecastItems = (Array.isArray(storm?.forecast_points) ? storm.forecast_points : [])
+        .map((point) => ({ point, timeMs: this._hurricanePointMs(point), coord: this._normalizeHurricaneCoord(storm, point) }))
+        .filter((item) => Number.isFinite(item.timeMs) && item.coord && (!Number.isFinite(currentMs) || item.timeMs >= currentMs) && item.timeMs <= selectedMs)
+        .sort((a, b) => a.timeMs - b.timeMs);
+      const displayLatest = showForecast && forecastItems.length ? forecastItems[forecastItems.length - 1] : latest;
       const baseProps = {
         storm_id: storm.storm_id,
+        storm_color: storm.storm_color,
         name: storm.name,
         basin: storm.basin,
         source: storm.source,
@@ -556,10 +505,10 @@ export const OpsTimeline = {
         source_product_url: storm.source_product_url,
         advisory_number: storm.advisory_number,
         issued_at: storm.issued_at,
-        wind_kt: latest.point.wind_kt,
-        max_wind_kt: Math.max(...usable.map((item) => Number(item.point.wind_kt)).filter(Number.isFinite), 0),
-        category: latest.point.category,
-        max_category: latest.point.category,
+        wind_kt: displayLatest.point.wind_kt,
+        max_wind_kt: Math.max(...[...usable, ...forecastItems].map((item) => Number(item.point.wind_kt)).filter(Number.isFinite), 0),
+        category: displayLatest.point.category || this._hurricaneCategoryFromWind(displayLatest.point.wind_kt),
+        max_category: displayLatest.point.category || this._hurricaneCategoryFromWind(displayLatest.point.wind_kt),
         event_type: 'hurricane',
         track_state: 'replay',
         track_opacity: 0.95,
@@ -576,15 +525,42 @@ export const OpsTimeline = {
       }
       features.push({
         type: 'Feature',
-        geometry: { type: 'Point', coordinates: latest.coord },
+        geometry: { type: 'Point', coordinates: displayLatest.coord },
         properties: {
           ...baseProps,
-          ...latest.point,
-          longitude: latest.coord[0],
-          latitude: latest.coord[1],
+          ...displayLatest.point,
+          longitude: displayLatest.coord[0],
+          latitude: displayLatest.coord[1],
           track_kind: 'current',
+          forecast_valid_at: showForecast && forecastItems.length ? (displayLatest.point.valid_at || displayLatest.point.timestamp || null) : null,
         },
       });
+      if (showForecast && forecastItems.length) {
+        const forecastCoords = [latest.coord, ...forecastItems.map((item) => item.coord)];
+        const forecastTimes = [latest.point.timestamp, ...forecastItems.map((item) => item.point.valid_at || item.point.timestamp || item.point.time || item.point.issued_at)];
+        if (forecastCoords.length >= 2) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: forecastCoords },
+            properties: {
+              ...baseProps,
+              track_kind: 'forecast',
+              line_style: 'dotted',
+              forecast_timestamps: forecastTimes,
+            },
+          });
+        }
+        if (storm.uncertainty_geometry && ['Polygon', 'MultiPolygon'].includes(storm.uncertainty_geometry.type)) {
+          features.push({
+            type: 'Feature',
+            geometry: storm.uncertainty_geometry,
+            properties: {
+              ...baseProps,
+              track_kind: 'forecast_uncertainty',
+            },
+          });
+        }
+      }
     }
     if (!features.length) return null;
     return {
@@ -603,23 +579,4 @@ export const OpsTimeline = {
     };
   },
 
-  _hurricanePayloadAt(payload, selectedMs) {
-    if (!payload?.geojson?.features?.length || !Number.isFinite(selectedMs)) return payload;
-    const features = payload.geojson.features.map((feature) => {
-      if (feature?.properties?.track_kind !== 'forecast' || feature?.geometry?.type !== 'LineString') return feature;
-      const coordinates = Array.isArray(feature.geometry.coordinates) ? feature.geometry.coordinates : [];
-      const times = Array.isArray(feature.properties?.forecast_timestamps) ? feature.properties.forecast_timestamps : [];
-      if (coordinates.length < 2 || times.length !== coordinates.length) return feature;
-      const revealed = coordinates.filter((coordinate, index) => {
-        const at = toMs(times[index]);
-        // The first coordinate is the current observed fix: keep it as the
-        // anchor, but do not draw a dotted segment until a later source-valid
-        // forecast point has entered the future cursor.
-        return index === 0 || (Number.isFinite(at) && at <= selectedMs);
-      });
-      if (revealed.length < 2) return null;
-      return { ...feature, geometry: { ...feature.geometry, coordinates: revealed } };
-    }).filter(Boolean);
-    return { ...payload, geojson: { ...payload.geojson, features } };
-  },
 };

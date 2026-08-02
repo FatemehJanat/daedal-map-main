@@ -1973,7 +1973,7 @@ def _build_hurricane_replay_payload(
     as_of: datetime,
     history_hours: int,
 ) -> dict | None:
-    """Return compact observed storm fixes for browser-side Ops replay."""
+    """Return bounded storm track records for browser-side Ops replay."""
     if not isinstance(snapshot, dict):
         return None
     composed = _with_hurricane_history_tracks(snapshot, entries)
@@ -2027,12 +2027,19 @@ def _build_hurricane_replay_payload(
             "name": storm.get("name"),
             "basin": storm.get("basin"),
             "source": storm.get("source"),
+            "storm_color": _hurricane_storm_color(storm_id),
             "source_name": storm.get("source_name"),
             "source_url": storm.get("source_url"),
             "source_page_url": storm.get("source_page_url"),
             "source_product_url": storm.get("source_product_url"),
             "advisory_number": storm.get("advisory_number"),
             "issued_at": storm.get("issued_at"),
+            "valid_through": storm.get("valid_through"),
+            "current_position": storm.get("current_position") if isinstance(storm.get("current_position"), dict) else None,
+            "forecast_horizon_hours": storm.get("forecast_horizon_hours"),
+            "forecast_points": storm.get("forecast_points") if isinstance(storm.get("forecast_points"), list) else [],
+            "forecast_track": storm.get("forecast_track") if isinstance(storm.get("forecast_track"), dict) else None,
+            "uncertainty_geometry": storm.get("uncertainty_geometry") if isinstance(storm.get("uncertainty_geometry"), dict) else None,
             "selected_observed_source": storm.get("selected_observed_source"),
             "selected_forecast_source": storm.get("selected_forecast_source"),
             "observed_track": points,
@@ -2045,6 +2052,28 @@ def _build_hurricane_replay_payload(
         "range_end": as_of.isoformat(),
         "storms": storms,
     }
+
+
+def _hurricane_replay_cursor_times(replay_payload: dict | None, *, range_start: datetime, now: datetime) -> list[datetime]:
+    """Return cursor anchors from bounded storm records, not display frames."""
+    if not isinstance(replay_payload, dict):
+        return []
+    times: set[datetime] = {range_start, now}
+    for storm in replay_payload.get("storms") or []:
+        if not isinstance(storm, dict):
+            continue
+        for point in [*(storm.get("observed_track") or []), *(storm.get("forecast_points") or [])]:
+            if not isinstance(point, dict):
+                continue
+            parsed = (
+                _parse_iso_datetime(point.get("timestamp"))
+                or _parse_iso_datetime(point.get("valid_at"))
+                or _parse_iso_datetime(point.get("time"))
+                or _parse_iso_datetime(point.get("issued_at"))
+            )
+            if parsed is not None and parsed >= range_start:
+                times.add(parsed)
+    return sorted(times)
 
 
 def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries: list[dict]) -> dict | None:
@@ -2235,6 +2264,23 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             )
             if replay_payload is not None:
                 hurricane_replay[feed] = replay_payload
+                cursor_times = _hurricane_replay_cursor_times(
+                    replay_payload,
+                    range_start=range_start,
+                    now=now,
+                )
+                frames = [
+                    {
+                        "start_at": cursor_time.isoformat(),
+                        "end_at": cursor_times[index + 1].isoformat() if index + 1 < len(cursor_times) else None,
+                        "payload_hash": snapshot.get("payload_hash") if isinstance(snapshot, dict) else None,
+                        "timeline_provider": "hurricane_replay",
+                    }
+                    for index, cursor_time in enumerate(cursor_times)
+                ]
+                if frames:
+                    feeds[feed] = frames
+                continue
         for index, entry in enumerate(entries):
             start = _ops_timeline_entry_time(entry)
             if start is None:
@@ -2249,28 +2295,6 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
                 continue
             display_snapshot = entry
             if _is_hurricane_live_feed(feed):
-                if start < range_start:
-                    continue
-                # Hurricane tracks are additive history.  Send a compact
-                # frame index now; constructing every cumulative GeoJSON
-                # payload here made the slider wait on an O(n²) hydrate.
-                # The selected cursor frame is composed and cached on demand
-                # by the dedicated Ops route below.
-                frame = {
-                    "start_at": start.isoformat(),
-                    "end_at": end.isoformat() if end is not None else None,
-                    "payload_hash": entry.get("payload_hash"),
-                    "timeline_provider": "hurricane_history",
-                }
-                # Keep the single live/current payload inline. It is small and
-                # lets the cursor return to Now without another request; only
-                # historical cumulative tracks take the lazy path.
-                if index == len(entries) - 1:
-                    current_payload = _build_snapshot_display_payload(feed, entry, as_of=start)
-                    if current_payload is not None:
-                        frame.pop("timeline_provider", None)
-                        frame["display_payload"] = current_payload
-                frames.append(frame)
                 continue
             display_payload = _build_snapshot_display_payload(feed, display_snapshot, as_of=start)
             if display_payload is None:
@@ -2293,6 +2317,20 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             and isinstance(frame.get("display_payload"), dict)
             and (parsed := _parse_iso_datetime(frame["display_payload"].get("forecast_end_at"))) is not None
         ),
+        *(
+            parsed
+            for replay in hurricane_replay.values()
+            for storm in (replay.get("storms") or [])
+            if isinstance(storm, dict)
+            for point in (storm.get("forecast_points") or [])
+            if isinstance(point, dict)
+            and (parsed := (
+                _parse_iso_datetime(point.get("valid_at"))
+                or _parse_iso_datetime(point.get("timestamp"))
+                or _parse_iso_datetime(point.get("time"))
+                or _parse_iso_datetime(point.get("issued_at"))
+            )) is not None
+        ),
         default=None,
     )
     payload = {
@@ -2310,6 +2348,7 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
         "preload_history": {
             feed: contract
             for feed in feeds
+            if not _is_hurricane_live_feed(feed)
             if (contract := ops_timeline_preload_history_contract(feed)) is not None
         },
     }

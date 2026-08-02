@@ -799,18 +799,20 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         self.assertEqual(72, timeline["history_hours"])
         self.assertEqual(72, timeline["hurricane_replay"]["hurricanes_live"]["history_hours"])
+        self.assertNotIn("hurricanes_live", timeline.get("preload_history", {}))
         frames = timeline["feeds"]["hurricanes_live"]
-        self.assertEqual(2, len(frames))
+        self.assertGreaterEqual(len(frames), 3)
         self.assertGreaterEqual(
             datetime.fromisoformat(frames[0]["start_at"]),
             datetime.fromisoformat(timeline["range_start"]),
         )
+        self.assertEqual({"hurricane_replay"}, {frame["timeline_provider"] for frame in frames})
+        self.assertFalse(any("display_payload" in frame for frame in frames))
         replay_points = timeline["hurricane_replay"]["hurricanes_live"]["storms"][0]["observed_track"]
         self.assertEqual([first_at.isoformat(), second_at.isoformat()], [point["timestamp"] for point in replay_points])
-        self.assertEqual("hurricane_history", frames[0]["timeline_provider"])
         # Historical tracks are materialized on demand so the slider receives
-        # its compact frame index immediately. The underlying composition
-        # remains additive: the later frame retains the older fix.
+        # its compact storm records immediately. The underlying composition
+        # remains additive: the replay record retains the older fix.
         composed = ops._with_hurricane_history_tracks(newer, [older, newer])
         payload = ops._build_live_hurricane_display_payload(composed, as_of=second_at)
         newer_observed = next(

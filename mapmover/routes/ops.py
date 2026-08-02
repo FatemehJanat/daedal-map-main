@@ -18,10 +18,6 @@ from mapmover.ops_route_runtime import (
 from mapmover.ops_orchestrator_runtime import (
     WILDFIRE_LIVE_FEED,
     _wildfire_perimeter_geometry,
-    _build_live_hurricane_display_payload,
-    _is_hurricane_live_feed,
-    _ops_timeline_entries,
-    _with_hurricane_history_tracks,
     build_ops_timeline_payload,
     load_current_state_history,
     load_current_state_snapshot,
@@ -270,92 +266,6 @@ def _local_nws_alert_detail_at(raw_at: object, alert_id: object) -> dict | None:
                 "source_product_url": alert.get("source_product_url"),
             }
     return None
-
-
-def _local_hurricane_timeline_frame_at(raw_at: object) -> dict | None:
-    """Compose one additive hurricane replay frame only when the cursor needs it."""
-    try:
-        target = datetime.fromisoformat(str(raw_at or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    target = target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc)
-    collector = "hurricanes_live"
-    current = load_current_state_snapshot(collector)
-    entries = _ops_timeline_entries(collector, current, load_current_state_history(collector))
-    selected_index = -1
-    for index, entry in enumerate(entries):
-        at = _snapshot_time(entry)
-        if at is not None and at <= target:
-            selected_index = index
-        elif at is not None:
-            break
-    if selected_index < 0:
-        return None
-    selected = entries[selected_index]
-    composed = _with_hurricane_history_tracks(selected, entries[:selected_index + 1])
-    payload = _build_live_hurricane_display_payload(composed, as_of=target)
-    if payload is None:
-        return None
-    return {
-        "payload_hash": selected.get("payload_hash"),
-        "start_at": (_snapshot_time(selected) or target).isoformat(),
-        "display_payload": payload,
-    }
-
-
-def _local_hurricane_timeline_frames_at(raw_values: object) -> list[dict]:
-    """Build a bounded batch of additive hurricane replay frames.
-
-    The browser paints the current hurricane snapshot first, then uses this
-    endpoint to warm its entire 72-hour replay cache in a handful of requests.
-    Keeping the composition server-side preserves collector precedence and
-    avoids exposing raw provider points to the display runtime.
-    """
-    if not isinstance(raw_values, list):
-        return []
-    targets: list[datetime] = []
-    for value in raw_values:
-        try:
-            target = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        targets.append(target.replace(tzinfo=timezone.utc) if target.tzinfo is None else target.astimezone(timezone.utc))
-    if not targets:
-        return []
-
-    collector = "hurricanes_live"
-    current = load_current_state_snapshot(collector)
-    entries = _ops_timeline_entries(collector, current, load_current_state_history(collector))
-    if not entries:
-        return []
-
-    # Resolve requested cursor positions in chronological order with one pass
-    # through the retained index. Responses need not preserve request order:
-    # the browser keys every frame by start_at + payload_hash.
-    frames: list[dict] = []
-    selected_index = -1
-    entry_index = 0
-    for target in sorted(set(targets)):
-        while entry_index < len(entries):
-            at = _snapshot_time(entries[entry_index])
-            if at is None or at <= target:
-                selected_index = entry_index
-                entry_index += 1
-                continue
-            break
-        if selected_index < 0:
-            continue
-        selected = entries[selected_index]
-        composed = _with_hurricane_history_tracks(selected, entries[:selected_index + 1])
-        payload = _build_live_hurricane_display_payload(composed, as_of=target)
-        if payload is None:
-            continue
-        frames.append({
-            "payload_hash": selected.get("payload_hash"),
-            "start_at": (_snapshot_time(selected) or target).isoformat(),
-            "display_payload": payload,
-        })
-    return frames
 
 
 def _point_overlay_id_for_collector(collector: str) -> str | None:
@@ -737,41 +647,6 @@ async def local_ops_timeline_nws_alert_detail_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_nws_alert_detail", "detail": detail})
     except Exception as exc:
         logger.exception("Ops NWS alert detail error")
-        return msgpack_error(str(exc), 500)
-
-
-@router.post("/api/local/ops/timeline/hurricane-frame")
-async def local_ops_timeline_hurricane_frame_endpoint(req: Request):
-    """Return one additive hurricane replay payload for a selected cursor time."""
-    try:
-        body = await decode_request_body(req)
-        frame = _local_hurricane_timeline_frame_at(body.get("at"))
-        return msgpack_response({"type": "local_ops_hurricane_frame", "frame": frame})
-    except Exception as exc:
-        logger.exception("Ops hurricane timeline frame error")
-        return msgpack_error(str(exc), 500)
-
-
-@router.post("/api/local/ops/timeline/hurricane-frames")
-async def local_ops_timeline_hurricane_frames_endpoint(req: Request):
-    """Return up to 96 retained hurricane frames for silent cache hydration.
-
-    The browser's declared hurricane preload contract is 96 frames.  Keeping
-    this route at the old 24-frame NWS cap made every background batch fail
-    with HTTP 413, which in turn forced interactive scrubs back onto one
-    request and a full track repaint at a time.
-    """
-    try:
-        body = await decode_request_body(req)
-        values = body.get("at")
-        if not isinstance(values, list) or len(values) > 96:
-            return msgpack_error("at must be a list of at most 96 retained frame timestamps", 413)
-        return msgpack_response({
-            "type": "local_ops_hurricane_frames",
-            "frames": _local_hurricane_timeline_frames_at(values),
-        })
-    except Exception as exc:
-        logger.exception("Ops hurricane timeline batch error")
         return msgpack_error(str(exc), 500)
 
 
