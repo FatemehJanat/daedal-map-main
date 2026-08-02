@@ -803,17 +803,11 @@ def load_current_state_snapshot(
                 pass
         if child_retention_hours:
             retention_hours = max(child_retention_hours)
-        display_hours = DEFAULT_OPS_HISTORY_DISPLAY_HOURS
-        child_display_hours = []
-        for child in children:
-            try:
-                hours = int(child.get("ops_history_display_hours"))
-                if hours > 0:
-                    child_display_hours.append(hours)
-            except Exception:
-                pass
-        if child_display_hours:
-            display_hours = max(child_display_hours)
+        # Keep the collector archive retention long enough for investigation,
+        # but the default Ops map/replay surface is intentionally the recent
+        # operational window. Otherwise the page first paints the retained
+        # 336h collector view and then immediately collapses to the 72h scrubber.
+        display_hours = min(DEFAULT_OPS_HISTORY_DISPLAY_HOURS, retention_hours)
         payload_summary = {
             "logical_feed": HURRICANE_LIVE_FEED,
             "storm_count": len(storms),
@@ -2255,6 +2249,8 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
                 continue
             display_snapshot = entry
             if _is_hurricane_live_feed(feed):
+                if start < range_start:
+                    continue
                 # Hurricane tracks are additive history.  Send a compact
                 # frame index now; constructing every cumulative GeoJSON
                 # payload here made the slider wait on an O(n²) hydrate.

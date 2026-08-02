@@ -1360,6 +1360,14 @@ export const OverlayController = {
         features
       }
     });
+    const uniquePropertyCount = (features, propertyName) => {
+      const values = new Set();
+      for (const feature of features || []) {
+        const value = String(feature?.properties?.[propertyName] || '').trim();
+        if (value) values.add(value);
+      }
+      return values.size;
+    };
 
     if (!sourcePayload) {
       return {
@@ -1432,14 +1440,19 @@ export const OverlayController = {
         };
       }
       case 'hurricanes_live':
+        const visibleStormCount = uniquePropertyCount(sourceFeatures, 'storm_id');
+        const currentStormCount = Number.isFinite(compactSummary?.storm_count)
+          ? compactSummary.storm_count
+          : (visibleStormCount || fullCountFromPayload);
+        const displayedStormCount = visibleStormCount || currentStormCount;
         return {
           payload: sourcePayload,
-          snapshotCount: isHistoryDefault ? fullCountFromPayload : (Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : fullCountFromPayload),
-          visibleCount: sourceFeatures.length,
+          snapshotCount: isHistoryDefault ? displayedStormCount : currentStormCount,
+          visibleCount: displayedStormCount,
           filterDescription: null,
           chatHint: 'Ask chat to focus on one storm, compare tracks, or show only the strongest storms.',
           defaultView: isHistoryDefault ? 'history' : 'snapshot',
-          currentSnapshotCount: Number.isFinite(compactSummary?.storm_count) ? compactSummary.storm_count : null,
+          currentSnapshotCount: currentStormCount,
           windowLabel: windowLabel || null,
         };
       case 'tsunamis':
@@ -1659,11 +1672,40 @@ export const OverlayController = {
 
   setOpsSnapshotPayloads(displayPayloads = [], options = {}) {
     const previousOverlayIds = new Set(this.opsSnapshotPayloads.keys());
-    this.opsSnapshotPayloads.clear();
+    const isTimelineUpdate = options.opsTimelineUpdate === true;
+    const timelineRenderScope = isTimelineUpdate
+      ? new Set(
+          (Array.isArray(options.opsTimelineFeedIds) ? options.opsTimelineFeedIds : [])
+            .map((feedId) => {
+              const value = String(feedId || '').trim();
+              if (value === 'hurricanes') return 'hurricanes_live';
+              return value;
+            })
+            .filter(Boolean)
+        )
+      : null;
+    if (timelineRenderScope?.has('hurricanes_live')) {
+      timelineRenderScope.add('hurricanes');
+    }
+    const timelineMissingScope = timelineRenderScope ? new Set(timelineRenderScope) : null;
+
+    if (!isTimelineUpdate) {
+      this.opsSnapshotPayloads.clear();
+    }
     for (const payload of displayPayloads || []) {
       const overlayId = this._opsOverlayIdForPayload(payload);
       if (!overlayId) continue;
       this.opsSnapshotPayloads.set(overlayId, payload);
+      if (isTimelineUpdate) {
+        timelineMissingScope?.delete(overlayId);
+        if (overlayId === 'hurricanes_live') timelineMissingScope?.delete('hurricanes');
+      }
+    }
+    if (isTimelineUpdate && options.preserveMissing !== true) {
+      for (const overlayId of timelineMissingScope || []) {
+        this.opsSnapshotPayloads.delete(overlayId);
+        if (overlayId === 'hurricanes') this.opsSnapshotPayloads.delete('hurricanes_live');
+      }
     }
 
     MapAdapter?.refreshRouteFocusPopupFromSnapshot?.();
@@ -1703,6 +1745,7 @@ export const OverlayController = {
     }
 
     for (const overlayId of activeOverlays) {
+      if (timelineRenderScope && !timelineRenderScope.has(overlayId)) continue;
       if (this.opsSnapshotPayloads.has(overlayId)) {
         this.renderOpsSnapshotOverlay(overlayId, options);
       }

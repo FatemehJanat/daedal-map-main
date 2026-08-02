@@ -385,7 +385,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
         storms = snapshot["payload_summary"]["storms"]
         self.assertEqual(336, snapshot["ops_history_retention_hours"])
-        self.assertEqual(336, snapshot["ops_history_display_hours"])
+        self.assertEqual(72, snapshot["ops_history_display_hours"])
         self.assertEqual(2, len(storms))
         bavi = next(storm for storm in storms if storm["name"] == "BAVI")
         self.assertEqual("JTWC", bavi["source"])
@@ -765,6 +765,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
 
     def test_hurricane_timeline_carries_the_last_fix_until_a_newer_fix_arrives(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
+        stale_at = now - timedelta(hours=96)
         first_at = now - timedelta(hours=4)
         second_at = now - timedelta(hours=1)
 
@@ -773,6 +774,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                 "collector": "hurricanes_live",
                 "published_at": at.isoformat(),
                 "payload_hash": f"fausto-{at.isoformat()}",
+                "ops_history_retention_hours": 336,
                 "ops_history_display_hours": 72,
                 "payload_summary": {"storms": [{
                     "storm_id": "EP062026",
@@ -787,15 +789,24 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                 }]},
             }
 
+        stale = frame(stale_at, -145.0, 18.0)
         older = frame(first_at, -149.0, 20.2)
         newer = frame(second_at, -151.7, 21.9)
-        with patch.object(ops, "load_current_state_history", return_value=[older]), patch.object(
+        with patch.object(ops, "load_current_state_history", return_value=[stale, older]), patch.object(
             ops, "load_current_state_snapshot", return_value=newer
         ):
             timeline = ops.build_ops_timeline_payload(effective_feeds=["hurricanes_live"])
 
+        self.assertEqual(72, timeline["history_hours"])
+        self.assertEqual(72, timeline["hurricane_replay"]["hurricanes_live"]["history_hours"])
         frames = timeline["feeds"]["hurricanes_live"]
         self.assertEqual(2, len(frames))
+        self.assertGreaterEqual(
+            datetime.fromisoformat(frames[0]["start_at"]),
+            datetime.fromisoformat(timeline["range_start"]),
+        )
+        replay_points = timeline["hurricane_replay"]["hurricanes_live"]["storms"][0]["observed_track"]
+        self.assertEqual([first_at.isoformat(), second_at.isoformat()], [point["timestamp"] for point in replay_points])
         self.assertEqual("hurricane_history", frames[0]["timeline_provider"])
         # Historical tracks are materialized on demand so the slider receives
         # its compact frame index immediately. The underlying composition

@@ -13,10 +13,6 @@ import { getLivePointOverlay } from './live-point-overlay.js';
 import { formatOpsTime } from './ops-time-display.js';
 
 const CURSOR_STEP_MS = 5 * 60 * 1000;
-// The shared Ops cursor is an operational replay, not each source's complete
-// archive. Long retained histories remain available for event drill-down, but
-// the normal cross-overlay scrubber always means "the last three days".
-const SHARED_OPS_HISTORY_MS = 72 * 60 * 60 * 1000;
 const NWS_BACKGROUND_BATCH_SIZE = 24;
 const HURRICANE_BACKGROUND_BATCH_SIZE = 24;
 const INTERACTIVE_GRACE_MS = 250;
@@ -158,7 +154,7 @@ export const OpsTimeline = {
       this.clear();
       return;
     }
-    const rangeStart = Math.max(suppliedRangeStart, currentMs - SHARED_OPS_HISTORY_MS);
+    const rangeStart = suppliedRangeStart;
     const frameCount = Object.values(feedFrames).reduce(
       (total, frames) => total + (Array.isArray(frames) ? frames.length : 0),
       0
@@ -236,6 +232,7 @@ export const OpsTimeline = {
     if (this.timeLabel) this.timeLabel.textContent = formatCursor(ms);
     const displayPayloads = [];
     const specialFrames = [];
+    const updatedFeedIds = new Set();
     let hasDeferredPayload = false;
     for (const [feedId, frames] of Object.entries(this.timeline.feeds || {})) {
       if (!Array.isArray(frames)) continue;
@@ -267,6 +264,7 @@ export const OpsTimeline = {
           if (loaded?.display_payload) {
             displayPayloads.push(loaded.display_payload);
             this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
+            updatedFeedIds.add(feedId);
           } else {
             hasDeferredPayload = true;
           }
@@ -279,8 +277,10 @@ export const OpsTimeline = {
           : selected.display_payload;
         displayPayloads.push(displayPayload);
         this.selectedDisplayPayloads.set(feedId, displayPayload);
+        updatedFeedIds.add(feedId);
       } else if (!feedId.startsWith('external:')) {
         this.selectedDisplayPayloads.delete(feedId);
+        updatedFeedIds.add(feedId);
       }
       if (feedId.startsWith('external:')) {
         const provider = this.externalProviders.get(feedId.slice('external:'.length));
@@ -294,6 +294,7 @@ export const OpsTimeline = {
       this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
         at: new Date(ms).toISOString(),
         opsTimelineUpdate: true,
+        opsTimelineFeedIds: Array.from(updatedFeedIds),
         // Initial hydration can legitimately have retained frames for only a
         // subset of active feeds. Keep their normal current snapshots until
         // the user deliberately scrubs to a time where a feed is absent.
