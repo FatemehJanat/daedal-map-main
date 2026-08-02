@@ -293,6 +293,7 @@ export const OpsTimeline = {
     if (displayPayloads.length || !preserveCurrent) {
       this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
         at: new Date(ms).toISOString(),
+        opsTimelineUpdate: true,
         // Initial hydration can legitimately have retained frames for only a
         // subset of active feeds. Keep their normal current snapshots until
         // the user deliberately scrubs to a time where a feed is absent.

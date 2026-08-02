@@ -1704,7 +1704,7 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (this.opsSnapshotPayloads.has(overlayId)) {
-        this.renderOpsSnapshotOverlay(overlayId);
+        this.renderOpsSnapshotOverlay(overlayId, options);
       }
     }
   },
@@ -1727,7 +1727,7 @@ export const OverlayController = {
     this._refreshOpsTimelineForActiveOverlays();
   },
 
-  renderOpsSnapshotOverlay(overlayId) {
+  renderOpsSnapshotOverlay(overlayId, options = {}) {
     const payload = this.opsSnapshotPayloads.get(overlayId);
     const endpoint = OVERLAY_ENDPOINTS[overlayId];
     const preparedPayload = this._buildFilteredOpsPayload(overlayId, payload);
@@ -1761,7 +1761,9 @@ export const OverlayController = {
     }
 
     TimeSlider?.hide?.();
-    this._cleanupOverlayAnimations(overlayId);
+    if (options.opsTimelineUpdate !== true) {
+      this._cleanupOverlayAnimations(overlayId);
+    }
 
     const rendered = ModelRegistry?.render(displayPayload.geojson, endpoint.eventType, {
       displayContract: getOverlayDisplayContract(overlayId),
