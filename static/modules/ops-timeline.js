@@ -247,6 +247,7 @@ export const OpsTimeline = {
     if (!this.timeline || !Number.isFinite(ms)) return;
     const specialFrames = [];
     const updatedFeedIds = new Set();
+    const clearFeedIds = new Set();
     for (const [feedId, frames] of Object.entries(this.timeline.feeds || {})) {
       if (!Array.isArray(frames)) continue;
       let selected = null;
@@ -268,6 +269,13 @@ export const OpsTimeline = {
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
         else pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
       } else if (this.hurricaneReplayData.has(feedId)) {
+        if (this._isPastHurricaneReplayEnd(feedId, ms)) {
+          this.selectedDisplayPayloads.delete(feedId);
+          this.selectedDisplayKeys.delete(feedId);
+          updatedFeedIds.add(feedId);
+          clearFeedIds.add(feedId);
+          continue;
+        }
         const replayPayload = this._buildHurricaneReplayDisplayPayload(feedId, ms, selected);
         if (replayPayload) {
           const renderKey = String(replayPayload.ops_render_key || '');
@@ -290,6 +298,7 @@ export const OpsTimeline = {
         this.selectedDisplayPayloads.delete(feedId);
         this.selectedDisplayKeys.delete(feedId);
         updatedFeedIds.add(feedId);
+        clearFeedIds.add(feedId);
       }
       if (feedId.startsWith('external:')) {
         const provider = this.externalProviders.get(feedId.slice('external:'.length));
@@ -304,7 +313,7 @@ export const OpsTimeline = {
         at: new Date(ms).toISOString(),
         opsTimelineUpdate: true,
         opsTimelineFeedIds: Array.from(updatedFeedIds),
-        preserveMissing: true,
+        preserveMissing: clearFeedIds.size === 0,
       });
     }
     for (const frame of specialFrames) {
@@ -511,6 +520,42 @@ export const OpsTimeline = {
         };
       })
       .filter((item) => item.coord && item.timeMs <= selectedMs);
+  },
+
+  _hurricaneForecastEndMs(storm, currentMs) {
+    const pointTimes = (Array.isArray(storm?.forecast_points) ? storm.forecast_points : [])
+      .map((point) => this._hurricanePointMs(point))
+      .filter(Number.isFinite);
+    if (pointTimes.length) return Math.max(...pointTimes);
+    const track = storm?.forecast_track;
+    const coords = track?.type === 'LineString' && Array.isArray(track.coordinates) ? track.coordinates : [];
+    if (coords.length && Number.isFinite(currentMs)) {
+      const horizonHours = Math.max(1, Math.min(168, Number(storm?.forecast_horizon_hours) || 120));
+      return currentMs + (horizonHours * 60 * 60 * 1000);
+    }
+    return null;
+  },
+
+  _hurricaneReplayEndMs(feedId) {
+    const replay = this.hurricaneReplayData.get(feedId);
+    const currentMs = this.timeline?.currentMs;
+    if (!replay || !Array.isArray(replay.storms)) return Number.isFinite(currentMs) ? currentMs : null;
+    const endTimes = [];
+    if (Number.isFinite(currentMs)) endTimes.push(currentMs);
+    for (const storm of replay.storms) {
+      const forecastEnd = this._hurricaneForecastEndMs(storm, currentMs);
+      if (Number.isFinite(forecastEnd)) endTimes.push(forecastEnd);
+      for (const point of storm?.observed_track || []) {
+        const at = this._hurricanePointMs(point);
+        if (Number.isFinite(at)) endTimes.push(at);
+      }
+    }
+    return endTimes.length ? Math.max(...endTimes) : null;
+  },
+
+  _isPastHurricaneReplayEnd(feedId, selectedMs) {
+    const endMs = this._hurricaneReplayEndMs(feedId);
+    return Number.isFinite(endMs) && selectedMs > endMs;
   },
 
   _buildHurricaneReplayDisplayPayload(feedId, selectedMs, selectedFrame = null) {

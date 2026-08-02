@@ -326,6 +326,13 @@ export const AuroraOverlay = {
       ...this.historyFrames.map((frame) => ({ ...frame, frameKind: 'observed' })),
       ...(this.forecastFrame ? [this.forecastFrame] : []),
     ].sort((left, right) => left.at - right.at);
+    const lastFrame = frames[frames.length - 1];
+    if (lastFrame && target > lastFrame.at) {
+      this._stopShimmer();
+      this._stopHistoryPlayback();
+      this._removeLayer();
+      return true;
+    }
     let selected = null;
     for (const frame of frames) {
       if (frame.at <= target) selected = frame;
