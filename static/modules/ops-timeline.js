@@ -48,8 +48,9 @@ export const OpsTimeline = {
   selectedMs: null,
   externalProviders: new Map(),
   nwsFrameCache: new Map(),
-  nwsRequestToken: 0,
   nwsInteractiveRequestedAt: 0,
+  nwsFrameRequestInFlight: false,
+  nwsPendingFrameRequest: null,
   pointFrameCache: new Map(),
   // Point feeds are independent overlays. A single global request token would
   // let an AirNow request cancel an in-flight buoy frame (or the reverse),
@@ -77,6 +78,8 @@ export const OpsTimeline = {
     this.timeline = null;
     this.selectedMs = null;
     this.nwsFrameCache.clear();
+    this.nwsFrameRequestInFlight = false;
+    this.nwsPendingFrameRequest = null;
     this.pointFrameCache.clear();
     this.pointRequestTokens.clear();
     this.hurricaneReplayData.clear();
@@ -258,15 +261,15 @@ export const OpsTimeline = {
         selected = (end === null || ms < end) ? frame : null;
       }
       if (selected?.timeline_provider === 'nws_alerts') {
-        if (ms >= this.timeline.currentMs) NwsAlertsOverlay.clearOpsTimelineFrame?.();
+        if (ms > this.timeline.currentMs) void NwsAlertsOverlay.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
         else void this._loadNwsFrame(selected, ms);
       } else if (selected?.timeline_provider === 'live_point') {
         const pointOverlay = getLivePointOverlay(selected.overlay_id);
-        if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
+        if (ms > this.timeline.currentMs) pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
         else void this._loadPointFrame(selected, ms);
       } else if (frames[0]?.timeline_provider === 'live_point') {
         const pointOverlay = getLivePointOverlay(frames[0].overlay_id);
-        if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
+        if (ms > this.timeline.currentMs) pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
         else pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
       } else if (this.hurricaneReplayData.has(feedId)) {
         if (this._isPastHurricaneReplayEnd(feedId, ms)) {
@@ -330,24 +333,47 @@ export const OpsTimeline = {
     // on the first cached alert frame.
     const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
     if (!key) return;
-    const token = ++this.nwsRequestToken;
     this.nwsInteractiveRequestedAt = Date.now();
     let loaded = this.nwsFrameCache.get(key);
-    if (!loaded) {
-      try {
-        const response = await postMsgpack('/api/local/ops/timeline/nws-frame', {
-          at: frame.start_at || new Date(selectedMs).toISOString(),
-        });
-        loaded = response?.frame;
-        if (loaded) this.nwsFrameCache.set(key, loaded);
-      } catch (error) {
-        console.warn('OpsTimeline: retained NWS frame failed', error);
-        return;
-      }
+    if (loaded?.geojson) {
+      if (this.selectedMs !== selectedMs) return;
+      void NwsAlertsOverlay.setOpsTimelineFrame?.(loaded.geojson);
+      return;
     }
-    // Do not paint a late response after the cursor moved to a newer frame.
-    if (token !== this.nwsRequestToken || this.selectedMs !== selectedMs || !loaded?.geojson) return;
-    void NwsAlertsOverlay.setOpsTimelineFrame?.(loaded.geojson);
+    this.nwsPendingFrameRequest = { frame, selectedMs, key };
+    if (this.nwsFrameRequestInFlight) return;
+    await this._drainNwsFrameRequestQueue();
+  },
+
+  async _drainNwsFrameRequestQueue() {
+    if (this.nwsFrameRequestInFlight) return;
+    this.nwsFrameRequestInFlight = true;
+    try {
+      while (this.nwsPendingFrameRequest) {
+        const request = this.nwsPendingFrameRequest;
+        this.nwsPendingFrameRequest = null;
+        if (request.selectedMs !== this.selectedMs) continue;
+        let loaded = this.nwsFrameCache.get(request.key);
+        if (!loaded) {
+          try {
+            const response = await postMsgpack('/api/local/ops/timeline/nws-frame', {
+              at: request.frame.start_at || new Date(request.selectedMs).toISOString(),
+            });
+            loaded = response?.frame;
+            if (loaded) this.nwsFrameCache.set(request.key, loaded);
+          } catch (error) {
+            console.warn('OpsTimeline: retained NWS frame failed', error);
+            continue;
+          }
+        }
+        if (request.selectedMs === this.selectedMs && loaded?.geojson) {
+          void NwsAlertsOverlay.setOpsTimelineFrame?.(loaded.geojson);
+        }
+      }
+    } finally {
+      this.nwsFrameRequestInFlight = false;
+      if (this.nwsPendingFrameRequest) void this._drainNwsFrameRequestQueue();
+    }
   },
 
   async _loadPointFrame(frame, selectedMs) {
