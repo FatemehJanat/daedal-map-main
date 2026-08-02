@@ -62,6 +62,7 @@ export const OpsTimeline = {
   backgroundPrefetchTimers: [],
   backgroundPrefetchRun: 0,
   selectedDisplayPayloads: new Map(),
+  selectedDisplayKeys: new Map(),
   pendingSelectAt: null,
   selectRenderRequest: 0,
 
@@ -80,6 +81,7 @@ export const OpsTimeline = {
     this.pointRequestTokens.clear();
     this.hurricaneReplayData.clear();
     this.selectedDisplayPayloads.clear();
+    this.selectedDisplayKeys.clear();
     this.hurricaneWarmupRun += 1;
     this.hurricaneWarmupPromise = null;
     if (this.selectRenderRequest) cancelAnimationFrame(this.selectRenderRequest);
@@ -269,9 +271,15 @@ export const OpsTimeline = {
       } else if (this.hurricaneReplayData.has(feedId)) {
         const replayPayload = this._buildHurricaneReplayDisplayPayload(feedId, ms, selected);
         if (replayPayload) {
-          displayPayloads.push(replayPayload);
-          this.selectedDisplayPayloads.set(feedId, replayPayload);
-          updatedFeedIds.add(feedId);
+          const renderKey = String(replayPayload.ops_render_key || '');
+          if (renderKey && this.selectedDisplayKeys.get(feedId) === renderKey) {
+            this.selectedDisplayPayloads.set(feedId, replayPayload);
+          } else {
+            displayPayloads.push(replayPayload);
+            this.selectedDisplayPayloads.set(feedId, replayPayload);
+            if (renderKey) this.selectedDisplayKeys.set(feedId, renderKey);
+            updatedFeedIds.add(feedId);
+          }
         }
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
@@ -279,9 +287,11 @@ export const OpsTimeline = {
         const displayPayload = selected.display_payload;
         displayPayloads.push(displayPayload);
         this.selectedDisplayPayloads.set(feedId, displayPayload);
+        this.selectedDisplayKeys.delete(feedId);
         updatedFeedIds.add(feedId);
       } else if (!feedId.startsWith('external:')) {
         this.selectedDisplayPayloads.delete(feedId);
+        this.selectedDisplayKeys.delete(feedId);
         updatedFeedIds.add(feedId);
       }
       if (feedId.startsWith('external:')) {
@@ -494,12 +504,19 @@ export const OpsTimeline = {
     const track = storm?.forecast_track;
     const coords = track?.type === 'LineString' && Array.isArray(track.coordinates) ? track.coordinates : [];
     if (!coords.length || !Number.isFinite(currentMs) || selectedMs < currentMs) return [];
+    const horizonHours = Math.max(1, Math.min(168, Number(storm?.forecast_horizon_hours) || 120));
+    const stepMs = coords.length > 1 ? (horizonHours * 60 * 60 * 1000) / (coords.length - 1) : 0;
     return coords
-      .map((coord) => {
+      .map((coord, index) => {
         const point = { longitude: coord?.[0], latitude: coord?.[1] };
-        return { point, timeMs: currentMs, coord: this._normalizeHurricaneCoord(storm, point), isTimed: false };
+        return {
+          point,
+          timeMs: currentMs + (index * stepMs),
+          coord: this._normalizeHurricaneCoord(storm, point),
+          isTimed: false
+        };
       })
-      .filter((item) => item.coord);
+      .filter((item) => item.coord && item.timeMs <= selectedMs);
   },
 
   _buildHurricaneReplayDisplayPayload(feedId, selectedMs, selectedFrame = null) {
@@ -511,6 +528,7 @@ export const OpsTimeline = {
     const showForecast = Number.isFinite(currentMs) && selectedMs >= currentMs;
     const cutoffMs = observedCursorMs - (historyHours * 60 * 60 * 1000);
     const features = [];
+    const renderParts = [];
     let stormCount = 0;
     for (const storm of replay.storms) {
       const points = Array.isArray(storm?.observed_track) ? storm.observed_track : [];
@@ -523,6 +541,16 @@ export const OpsTimeline = {
       const forecastItems = this._hurricaneForecastItems(storm, selectedMs, currentMs);
       const timedForecastItems = forecastItems.filter((item) => item.isTimed);
       const displayLatest = showForecast && timedForecastItems.length ? timedForecastItems[timedForecastItems.length - 1] : latest;
+      renderParts.push([
+        storm.storm_id,
+        latest.point.timestamp || latest.timeMs,
+        latest.coord.join(','),
+        displayLatest.point.valid_at || displayLatest.point.timestamp || displayLatest.timeMs,
+        displayLatest.coord.join(','),
+        usable.length,
+        forecastItems.length,
+        showForecast ? 'forecast' : 'history'
+      ].join(':'));
       const baseProps = {
         storm_id: storm.storm_id,
         storm_color: storm.storm_color,
@@ -607,6 +635,7 @@ export const OpsTimeline = {
       count: stormCount,
       fit: false,
       ops_default_view: 'history',
+      ops_render_key: renderParts.join('|'),
       geojson: { type: 'FeatureCollection', features },
     };
   },

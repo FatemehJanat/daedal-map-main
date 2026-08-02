@@ -349,9 +349,8 @@ export const TrackModel = {
     // intensity.
     this._addLiveWindRadiiLayers(map);
 
-    // JMA publishes discrete forecast probability circles. Keep them hidden
-    // by default; a hover-only soft fill makes their overlap read as one
-    // forecast corridor without claiming a mathematically exact union.
+    // JMA publishes discrete forecast probability circles. Keep a quiet fill
+    // visible by default so source-issued forecast uncertainty is readable.
     map.addLayer({
       id: CONFIG.layers.hurricaneCircle + '-forecast-cones',
       type: 'fill',
@@ -364,8 +363,8 @@ export const TrackModel = {
         'fill-color': categoryColorExpr,
         // Probability geometry is supporting context, not the affected-wind
         // footprint. Actual r34/r50/r64 bands render above it when supplied.
-        'fill-opacity': 0,
-        'fill-outline-color': 'transparent'
+        'fill-opacity': 0.055,
+        'fill-outline-color': categoryColorExpr
       }
     });
 
@@ -382,7 +381,7 @@ export const TrackModel = {
       ],
       paint: {
         'fill-color': categoryColorExpr,
-        'fill-opacity': 0.072,
+        'fill-opacity': 0.12,
         'fill-outline-color': categoryColorExpr
       }
     });
@@ -398,7 +397,7 @@ export const TrackModel = {
       ],
       paint: {
         'fill-color': categoryColorExpr,
-        'fill-opacity': 0.12
+        'fill-opacity': 0.18
       }
     });
 
@@ -413,7 +412,7 @@ export const TrackModel = {
       paint: {
         'line-color': categoryColorExpr,
         'line-width': 1,
-        'line-opacity': 0,
+        'line-opacity': 0.32,
         'line-dasharray': [1.5, 2]
       }
     });
