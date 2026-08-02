@@ -36,6 +36,18 @@ class OpsRouteRuntimeTest(unittest.TestCase):
             ops_routes._requested_timeline_feeds(requested, route_context),
         )
 
+    def test_timeline_feed_filter_accepts_overlay_aliases(self):
+        route_context = DummyRouteContext(
+            allowed_feeds=[],
+            effective_feeds=["hurricanes_live", "usa_nws_alerts", "noaa_ndbc"],
+        )
+        requested = ["hurricanes", "nws_alerts", "buoys"]
+
+        self.assertEqual(
+            ["hurricanes_live", "usa_nws_alerts", "noaa_ndbc"],
+            ops_routes._requested_timeline_feeds(requested, route_context),
+        )
+
     def test_strict_registry_requires_runtime_contract_fields(self):
         payload = {
             "schema_version": 2,

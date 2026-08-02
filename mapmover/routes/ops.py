@@ -70,15 +70,23 @@ def _ops_report_payload(route_context) -> dict:
 
 
 def _requested_timeline_feeds(requested_timeline_feeds, route_context) -> list[str]:
+    feed_aliases = {
+        "nws_alerts": "usa_nws_alerts",
+        "hurricanes": "hurricanes_live",
+        "aurora": "noaa_aurora",
+        "cams-air-quality-grid": "cams_air_quality",
+        "ocean-sst-grid": "ocean_sst",
+        "buoys": "noaa_ndbc",
+    }
     requested = [
-        str(feed or "").strip()
+        feed_aliases.get(str(feed or "").strip(), str(feed or "").strip())
         for feed in (requested_timeline_feeds if isinstance(requested_timeline_feeds, list) else [])
     ]
     timeline_feed_scope = set(route_context.effective_feeds or route_context.allowed_feeds or [])
-    return [
+    return list(dict.fromkeys(
         feed for feed in requested
         if feed and feed in timeline_feed_scope
-    ]
+    ))
 
 
 def _snapshot_time(snapshot: dict) -> datetime | None:
