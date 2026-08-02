@@ -62,6 +62,8 @@ export const OpsTimeline = {
   backgroundPrefetchTimers: [],
   backgroundPrefetchRun: 0,
   selectedDisplayPayloads: new Map(),
+  pendingSelectAt: null,
+  selectRenderRequest: 0,
 
   init({ onFrame } = {}) {
     this.element = document.getElementById('opsTimelineContainer');
@@ -80,6 +82,9 @@ export const OpsTimeline = {
     this.selectedDisplayPayloads.clear();
     this.hurricaneWarmupRun += 1;
     this.hurricaneWarmupPromise = null;
+    if (this.selectRenderRequest) cancelAnimationFrame(this.selectRenderRequest);
+    this.selectRenderRequest = 0;
+    this.pendingSelectAt = null;
     for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
     this.backgroundPrefetchTimers = [];
     this.backgroundPrefetchRun += 1;
@@ -226,6 +231,18 @@ export const OpsTimeline = {
     this.selectedMs = ms;
     if (this.input && Number(this.input.value) !== ms) this.input.value = String(ms);
     if (this.timeLabel) this.timeLabel.textContent = formatCursor(ms);
+    this.pendingSelectAt = { ms, preserveCurrent };
+    if (this.selectRenderRequest) return;
+    this.selectRenderRequest = requestAnimationFrame(() => {
+      this.selectRenderRequest = 0;
+      const pending = this.pendingSelectAt;
+      this.pendingSelectAt = null;
+      if (pending) this._renderSelectedFrame(pending.ms, { preserveCurrent: pending.preserveCurrent });
+    });
+  },
+
+  _renderSelectedFrame(ms, { preserveCurrent = false } = {}) {
+    if (!this.timeline || !Number.isFinite(ms)) return;
     const displayPayloads = [];
     const specialFrames = [];
     const updatedFeedIds = new Set();
@@ -468,6 +485,23 @@ export const OpsTimeline = {
     return null;
   },
 
+  _hurricaneForecastItems(storm, selectedMs, currentMs) {
+    const pointItems = (Array.isArray(storm?.forecast_points) ? storm.forecast_points : [])
+      .map((point) => ({ point, timeMs: this._hurricanePointMs(point), coord: this._normalizeHurricaneCoord(storm, point), isTimed: true }))
+      .filter((item) => Number.isFinite(item.timeMs) && item.coord && (!Number.isFinite(currentMs) || item.timeMs >= currentMs) && item.timeMs <= selectedMs)
+      .sort((a, b) => a.timeMs - b.timeMs);
+    if (pointItems.length) return pointItems;
+    const track = storm?.forecast_track;
+    const coords = track?.type === 'LineString' && Array.isArray(track.coordinates) ? track.coordinates : [];
+    if (!coords.length || !Number.isFinite(currentMs) || selectedMs < currentMs) return [];
+    return coords
+      .map((coord) => {
+        const point = { longitude: coord?.[0], latitude: coord?.[1] };
+        return { point, timeMs: currentMs, coord: this._normalizeHurricaneCoord(storm, point), isTimed: false };
+      })
+      .filter((item) => item.coord);
+  },
+
   _buildHurricaneReplayDisplayPayload(feedId, selectedMs, selectedFrame = null) {
     const replay = this.hurricaneReplayData.get(feedId);
     if (!replay || !Array.isArray(replay.storms)) return null;
@@ -486,11 +520,9 @@ export const OpsTimeline = {
         .sort((a, b) => a.timeMs - b.timeMs);
       if (!usable.length) continue;
       const latest = usable[usable.length - 1];
-      const forecastItems = (Array.isArray(storm?.forecast_points) ? storm.forecast_points : [])
-        .map((point) => ({ point, timeMs: this._hurricanePointMs(point), coord: this._normalizeHurricaneCoord(storm, point) }))
-        .filter((item) => Number.isFinite(item.timeMs) && item.coord && (!Number.isFinite(currentMs) || item.timeMs >= currentMs) && item.timeMs <= selectedMs)
-        .sort((a, b) => a.timeMs - b.timeMs);
-      const displayLatest = showForecast && forecastItems.length ? forecastItems[forecastItems.length - 1] : latest;
+      const forecastItems = this._hurricaneForecastItems(storm, selectedMs, currentMs);
+      const timedForecastItems = forecastItems.filter((item) => item.isTimed);
+      const displayLatest = showForecast && timedForecastItems.length ? timedForecastItems[timedForecastItems.length - 1] : latest;
       const baseProps = {
         storm_id: storm.storm_id,
         storm_color: storm.storm_color,
@@ -537,7 +569,7 @@ export const OpsTimeline = {
       });
       if (showForecast && forecastItems.length) {
         const forecastCoords = [latest.coord, ...forecastItems.map((item) => item.coord)];
-        const forecastTimes = [latest.point.timestamp, ...forecastItems.map((item) => item.point.valid_at || item.point.timestamp || item.point.time || item.point.issued_at)];
+        const forecastTimes = [latest.point.timestamp, ...forecastItems.map((item) => item.point.valid_at || item.point.timestamp || item.point.time || item.point.issued_at || null)];
         if (forecastCoords.length >= 2) {
           features.push({
             type: 'Feature',
