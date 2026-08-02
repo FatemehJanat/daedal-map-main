@@ -2955,6 +2955,10 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
+      if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+        this.renderOpsSnapshotOverlay(overlayId) || this.renderCurrentData(overlayId);
+        continue;
+      }
 
       // Handle weather grid overlays
       const overlayConfig = OverlaySelector?.getOverlayConfig(overlayId);
@@ -3065,6 +3069,10 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
+      if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
+        this.renderOpsSnapshotOverlay(overlayId) || this.renderCurrentData(overlayId);
+        continue;
+      }
 
       // The local historical NWS test is frame-backed, rather than a normal
       // catalog endpoint.  Refresh it at each throttled timestamp change so
