@@ -2308,31 +2308,29 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             })
         if frames:
             feeds[feed] = frames
-    forecast_end = max(
-        (
-            parsed
-            for frames in feeds.values()
-            for frame in frames
-            if isinstance(frame, dict)
-            and isinstance(frame.get("display_payload"), dict)
-            and (parsed := _parse_iso_datetime(frame["display_payload"].get("forecast_end_at"))) is not None
-        ),
-        *(
-            parsed
-            for replay in hurricane_replay.values()
-            for storm in (replay.get("storms") or [])
-            if isinstance(storm, dict)
-            for point in (storm.get("forecast_points") or [])
-            if isinstance(point, dict)
-            and (parsed := (
-                _parse_iso_datetime(point.get("valid_at"))
-                or _parse_iso_datetime(point.get("timestamp"))
-                or _parse_iso_datetime(point.get("time"))
-                or _parse_iso_datetime(point.get("issued_at"))
-            )) is not None
-        ),
-        default=None,
+    forecast_end_candidates = [
+        parsed
+        for frames in feeds.values()
+        for frame in frames
+        if isinstance(frame, dict)
+        and isinstance(frame.get("display_payload"), dict)
+        and (parsed := _parse_iso_datetime(frame["display_payload"].get("forecast_end_at"))) is not None
+    ]
+    forecast_end_candidates.extend(
+        parsed
+        for replay in hurricane_replay.values()
+        for storm in (replay.get("storms") or [])
+        if isinstance(storm, dict)
+        for point in (storm.get("forecast_points") or [])
+        if isinstance(point, dict)
+        and (parsed := (
+            _parse_iso_datetime(point.get("valid_at"))
+            or _parse_iso_datetime(point.get("timestamp"))
+            or _parse_iso_datetime(point.get("time"))
+            or _parse_iso_datetime(point.get("issued_at"))
+        )) is not None
     )
+    forecast_end = max(forecast_end_candidates, default=None)
     payload = {
         "range_start": range_start.isoformat(),
         "range_end": now.isoformat(),

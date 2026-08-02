@@ -786,6 +786,12 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
                         "longitude": longitude,
                         "latitude": latitude,
                     },
+                    "forecast_points": [{
+                        "valid_at": (now + timedelta(hours=12)).isoformat(),
+                        "longitude": longitude - 1.0,
+                        "latitude": latitude + 1.0,
+                        "wind_kt": 35,
+                    }],
                 }]},
             }
 
@@ -798,6 +804,7 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
             timeline = ops.build_ops_timeline_payload(effective_feeds=["hurricanes_live"])
 
         self.assertEqual(72, timeline["history_hours"])
+        self.assertEqual((now + timedelta(hours=12)).isoformat(), timeline["forecast_end"])
         self.assertEqual(72, timeline["hurricane_replay"]["hurricanes_live"]["history_hours"])
         self.assertNotIn("hurricanes_live", timeline.get("preload_history", {}))
         frames = timeline["feeds"]["hurricanes_live"]
