@@ -3375,7 +3375,15 @@ export const OverlayController = {
         // before composing the status copy or the first cursor frame, so a
         // stale page report cannot claim "0 earthquakes" while the collector
         // already has a newer active snapshot.
-        await this._hydrateActiveOpsFeedSet(`${formatSurfaceLabel(overlayId)} Ops snapshot`);
+        // App bootstrap has already loaded the complete Ops watch.  Rendering
+        // the active defaults once MapLibre is ready must reuse that coherent
+        // payload rather than issue one request per overlay; otherwise a
+        // moving collector can visibly replace the just-rendered hurricane
+        // scene with a different current snapshot. User-driven toggles still
+        // deliberately establish a new freshness boundary.
+        if (options.systemTransition !== true) {
+          await this._hydrateActiveOpsFeedSet(`${formatSurfaceLabel(overlayId)} Ops snapshot`);
+        }
         if (this.opsSnapshotPayloads.has(overlayId)) {
           this.renderOpsSnapshotOverlay(overlayId);
           this._refreshOpsTimelineForActiveOverlays();

@@ -5,7 +5,6 @@ const OPS_PUBLIC_DEFAULT_OVERLAY_IDS = [
   'tsunamis',
   'volcanoes',
   'ocean-sst-grid',
-  'land-temperature-grid',
   'cams-air-quality-grid',
   'buoys',
   'aurora',

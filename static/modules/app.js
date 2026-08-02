@@ -1007,7 +1007,15 @@ export const App = {
     // overlays before MapAdapter.init() runs, so re-trigger them now.
     if (!researchStartup) {
       for (const overlayId of OverlaySelector.activeOverlays) {
-        OverlayController.handleOverlayChange(overlayId, true, { allowDefaultLoad: false, suppressStatusMessage: true });
+        // The Ops watch was already fetched above. Replay only its existing
+        // rendered payload after MapLibre becomes ready; do not turn each
+        // default overlay into a second freshness request that can replace a
+        // hurricane scene during bootstrap.
+        OverlayController.handleOverlayChange(overlayId, true, {
+          allowDefaultLoad: false,
+          suppressStatusMessage: true,
+          systemTransition: true,
+        });
       }
     }
 
