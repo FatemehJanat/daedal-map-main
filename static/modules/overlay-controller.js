@@ -457,7 +457,7 @@ const OVERLAY_ENDPOINTS = {
 };
 
 const NWS_HISTORICAL_VARIANTS = {
-  nws_alerts_historical: { apiBase: '/api/wip/nws-alerts' },
+  nws_alerts_historical: { apiBase: '/api/disasters/nws-alerts' },
 };
 
 function nwsHistoricalVariant(overlayId) {

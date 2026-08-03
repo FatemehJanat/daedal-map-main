@@ -998,13 +998,15 @@ export function applyOverlayCatalogResponse(response = {}) {
     const opsWipShown = laneShownAdjustments.get('ops') || new Set();
     opsWipShown.add('air_quality_stations');
     laneShownAdjustments.set('ops', opsWipShown);
-    const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
-    if (usContext?.overlays) {
-      // WIP overlays are intentionally not part of the normal Explore
-      // visibility allowlist.  Mark this local/admin-only test entry visible
-      // once the server has already confirmed the WIP surface.
-      usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
-    }
+  }
+  const catalogSourceIds = new Set(
+    (Array.isArray(response.sources) ? response.sources : [])
+      .map((source) => String(source?.source_id || '').trim())
+      .filter(Boolean)
+  );
+  const usContext = ALL_CATEGORIES.find((category) => category.id === 'us_context');
+  if (catalogSourceIds.has('nws_alerts_historical') && usContext?.overlays && !usContext.overlays.some((overlay) => overlay.id === 'nws_alerts_historical')) {
+    usContext.overlays.push({ id: 'nws_alerts_historical', source_id: 'nws_alerts_historical', label: 'NWS Alerts', description: 'Historical alert playback', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: true, alwaysVisible: true });
   }
   // CAMS is an Ops-only public feed, not a normal data-catalog surface. Add
   // its tray definition directly in Ops so published catalog filtering can

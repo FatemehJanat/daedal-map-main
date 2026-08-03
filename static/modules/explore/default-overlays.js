@@ -27,7 +27,9 @@ export function getExploreDefaultOverlayIds() {
     'ocean-sst-grid',
     'land-temperature-grid',
 
-    // WIP-only choices such as FEMA declarations, Fairfax Climate, ZIP codes,
-    // and historical NWS are injected only when the local WIP catalog is on.
+    // Historical NWS is catalog-injected when the source is available. Keeping
+    // the ID here lets the normal default-overlay path activate playback once
+    // the published or WIP catalog exposes it.
+    'nws_alerts_historical',
   ];
 }

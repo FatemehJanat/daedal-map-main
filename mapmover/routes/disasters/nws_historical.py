@@ -1,4 +1,4 @@
-"""Admin/local-only WIP historical NWS alert frames."""
+"""Historical NWS alert frames for WIP review and published Explore playback."""
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ from mapmover.paths import GLOBAL_DIR
 from .helpers import msgpack_error, msgpack_response
 
 router = APIRouter()
-EVENTS = GLOBAL_DIR / "disasters" / "nws_alerts" / "events.parquet"
+EVENTS = GLOBAL_DIR / "disasters" / "nws_alerts" / "events_with_zones.parquet"
 V2_EVENTS = GLOBAL_DIR / "disasters" / "nws_alerts_v2" / "events.parquet"
 YEARLY_TEXT_ROOT = GLOBAL_DIR / "disasters" / "nws_alerts" / "text_hydration" / "yearly"
 _events_df: pd.DataFrame | None = None
@@ -141,6 +141,12 @@ def _event_properties(row: dict) -> dict:
     return props
 
 
+def _check_access(req: Request, *, require_wip: bool) -> bool:
+    if not require_wip:
+        return True
+    return request_can_use_wip_catalog(req, get_authenticated_user(req))
+
+
 @lru_cache(maxsize=512)
 def _load_yearly_text(product_id: str) -> dict:
     """Return one hydrated bulletin without preloading annual text into playback."""
@@ -162,13 +168,12 @@ def _load_yearly_text(product_id: str) -> dict:
     }
 
 
-@router.get("/api/wip/nws-alerts/availability")
-async def historical_nws_alert_availability(req: Request):
+async def _historical_nws_alert_availability(req: Request, *, require_wip: bool):
     """Return event playback coverage and optional hydrated-detail coverage."""
-    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+    if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
     if not EVENTS.exists():
-        return msgpack_error("Historical NWS WIP data is not installed.", 404)
+        return msgpack_error("Historical NWS data is not installed.", 404)
     playback_years = _playback_years()
     if not playback_years:
         return msgpack_error("No historical NWS alert events are installed.", 404)
@@ -180,13 +185,22 @@ async def historical_nws_alert_availability(req: Request):
     })
 
 
-@router.get("/api/wip/nws-alerts")
-async def active_historical_nws_alerts(req: Request, at: str):
-    """Return one historical NWS frame; never available to public callers."""
-    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+@router.get("/api/wip/nws-alerts/availability")
+async def historical_nws_alert_availability(req: Request):
+    return await _historical_nws_alert_availability(req, require_wip=True)
+
+
+@router.get("/api/disasters/nws-alerts/availability")
+async def published_historical_nws_alert_availability(req: Request):
+    return await _historical_nws_alert_availability(req, require_wip=False)
+
+
+async def _active_historical_nws_alerts(req: Request, at: str, *, require_wip: bool):
+    """Return one historical NWS frame."""
+    if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
     if not EVENTS.exists():
-        return msgpack_error("Historical NWS WIP data is not installed.", 404)
+        return msgpack_error("Historical NWS data is not installed.", 404)
     moment = pd.to_datetime(at, utc=True, errors="coerce")
     if pd.isna(moment):
         return msgpack_error("at must be an ISO timestamp", 400)
@@ -212,18 +226,29 @@ async def active_historical_nws_alerts(req: Request, at: str):
     return msgpack_response({"type": "FeatureCollection", "features": features, "active_alert_count": len(active)})
 
 
-@router.get("/api/wip/nws-alerts/history")
-async def historical_nws_alerts(
+@router.get("/api/wip/nws-alerts")
+async def active_historical_nws_alerts(req: Request, at: str):
+    return await _active_historical_nws_alerts(req, at, require_wip=True)
+
+
+@router.get("/api/disasters/nws-alerts")
+async def published_active_historical_nws_alerts(req: Request, at: str):
+    return await _active_historical_nws_alerts(req, at, require_wip=False)
+
+
+async def _historical_nws_alerts(
     req: Request,
     start_year: int = 2025,
     end_year: int = 2025,
     summary_only: bool = False,
+    *,
+    require_wip: bool,
 ):
     """Return one selected local playback range, with shared counties deduplicated."""
-    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+    if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
     if not EVENTS.exists():
-        return msgpack_error("Historical NWS WIP data is not installed.", 404)
+        return msgpack_error("Historical NWS data is not installed.", 404)
     available_years = _playback_years()
     if not available_years:
         return msgpack_error("No historical NWS alert events are installed.", 404)
@@ -301,10 +326,41 @@ async def historical_nws_alerts(
     return msgpack_response(_history_payloads[cache_key])
 
 
-@router.get("/api/wip/nws-alerts/text")
-async def historical_nws_alert_text(req: Request, product_id: str):
+@router.get("/api/wip/nws-alerts/history")
+async def historical_nws_alerts(
+    req: Request,
+    start_year: int = 2025,
+    end_year: int = 2025,
+    summary_only: bool = False,
+):
+    return await _historical_nws_alerts(
+        req,
+        start_year=start_year,
+        end_year=end_year,
+        summary_only=summary_only,
+        require_wip=True,
+    )
+
+
+@router.get("/api/disasters/nws-alerts/history")
+async def published_historical_nws_alerts(
+    req: Request,
+    start_year: int = 2025,
+    end_year: int = 2025,
+    summary_only: bool = False,
+):
+    return await _historical_nws_alerts(
+        req,
+        start_year=start_year,
+        end_year=end_year,
+        summary_only=summary_only,
+        require_wip=False,
+    )
+
+
+async def _historical_nws_alert_text(req: Request, product_id: str, *, require_wip: bool):
     """Load one historical bulletin's parsed text when its popup is opened."""
-    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+    if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
     product_id = str(product_id or "").strip()
     if not _PRODUCT_ID_RE.fullmatch(product_id):
@@ -313,6 +369,16 @@ async def historical_nws_alert_text(req: Request, product_id: str):
         return msgpack_response(_load_yearly_text(product_id))
     except Exception:
         return msgpack_error("Historical NWS bulletin text is unavailable.", 500)
+
+
+@router.get("/api/wip/nws-alerts/text")
+async def historical_nws_alert_text(req: Request, product_id: str):
+    return await _historical_nws_alert_text(req, product_id, require_wip=True)
+
+
+@router.get("/api/disasters/nws-alerts/text")
+async def published_historical_nws_alert_text(req: Request, product_id: str):
+    return await _historical_nws_alert_text(req, product_id, require_wip=False)
 
 
 @router.get("/api/wip/nws-alerts-v2/availability")

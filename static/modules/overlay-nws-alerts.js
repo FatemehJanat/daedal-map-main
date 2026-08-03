@@ -227,7 +227,7 @@ export const NwsAlertsOverlay = {
   _historicalHistories: new Map(),
   _historicalActiveKeys: new Set(),
   _historicalTimelineIndex: null,
-  _historicalApiBase: '/api/wip/nws-alerts',
+  _historicalApiBase: '/api/disasters/nws-alerts',
   _historicalRenderToken: 0,
   _historicalPopupToken: 0,
   _legendEl: null,
@@ -298,7 +298,7 @@ export const NwsAlertsOverlay = {
     }
     const startYear = Number(range.startYear) || new Date(timestamp).getUTCFullYear();
     const endYear = Number(range.endYear) || startYear;
-    const apiBase = String(range.apiBase || '/api/wip/nws-alerts').replace(/\/$/, '');
+    const apiBase = String(range.apiBase || '/api/disasters/nws-alerts').replace(/\/$/, '');
     if (apiBase !== this._historicalApiBase) {
       this._historicalApiBase = apiBase;
       this._historicalActiveKeys.clear();
@@ -708,7 +708,7 @@ export const NwsAlertsOverlay = {
         return;
       }
       if (!productId) return;
-      fetchMsgpack(`/api/wip/nws-alerts/text?product_id=${encodeURIComponent(productId)}`)
+      fetchMsgpack(`${this._historicalApiBase}/text?product_id=${encodeURIComponent(productId)}`)
         .then((textRecord) => {
           if (popupToken !== this._historicalPopupToken || !this.historical) return;
           const status = String(textRecord?.fetch_status || 'missing');
