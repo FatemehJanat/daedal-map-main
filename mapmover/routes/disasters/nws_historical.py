@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 
 from mapmover.auth_context import get_authenticated_user
 from mapmover.catalog_surface import request_can_use_wip_catalog
+from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, select_rows
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.paths import GLOBAL_DIR
 from .helpers import msgpack_error, msgpack_response
@@ -22,10 +23,13 @@ _v2_events_df: pd.DataFrame | None = None
 _history_payloads: dict[tuple[int, int], dict] = {}
 _v2_history_payloads: dict[tuple[int, int], dict] = {}
 _PRODUCT_ID_RE = re.compile(r"^(?P<year>\d{4})\d{8}-[A-Z0-9-]+$")
+_TEXT_COVERAGE_YEARS = list(range(1986, 2026))
 
 
 def _available_years() -> list[int]:
     """Discover years whose optional on-click bulletin text is hydrated."""
+    if is_cloud_mode():
+        return _TEXT_COVERAGE_YEARS
     if not YEARLY_TEXT_ROOT.exists():
         return []
     years = []
@@ -50,7 +54,9 @@ def _load_events() -> pd.DataFrame:
     """Keep the compact event index resident; bulletin text remains on disk."""
     global _events_df
     if _events_df is None:
-        _events_df = pd.read_parquet(EVENTS)
+        _events_df = select_rows(EVENTS)
+        if _events_df.empty and not is_cloud_mode():
+            _events_df = pd.read_parquet(EVENTS)
         _events_df["_start_at"] = pd.to_datetime(_events_df["start_time"], utc=True, errors="coerce")
         _events_df["_end_at"] = pd.to_datetime(_events_df["end_time"], utc=True, errors="coerce")
     return _events_df
@@ -155,10 +161,12 @@ def _load_yearly_text(product_id: str) -> dict:
         return {"product_id": product_id, "fetch_status": "invalid"}
     year = int(match.group("year"))
     path = YEARLY_TEXT_ROOT / f"{year}_finished.parquet"
-    if year not in _available_years() or not path.exists():
+    if year not in _available_years() or (not is_cloud_mode() and not path.exists()):
         return {"product_id": product_id, "fetch_status": "not_materialized"}
     columns = ["product_id", "headline", "description", "instruction", "area", "fetch_status"]
-    frame = pd.read_parquet(path, columns=columns, filters=[("product_id", "=", product_id)])
+    frame = select_rows(path, columns=columns, exact_filters={"product_id": product_id})
+    if frame.empty and not is_cloud_mode():
+        frame = pd.read_parquet(path, columns=columns, filters=[("product_id", "=", product_id)])
     if frame.empty:
         return {"product_id": product_id, "fetch_status": "missing"}
     row = frame.iloc[0].to_dict()
@@ -172,7 +180,7 @@ async def _historical_nws_alert_availability(req: Request, *, require_wip: bool)
     """Return event playback coverage and optional hydrated-detail coverage."""
     if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
-    if not EVENTS.exists():
+    if not parquet_available(EVENTS):
         return msgpack_error("Historical NWS data is not installed.", 404)
     playback_years = _playback_years()
     if not playback_years:
@@ -199,7 +207,7 @@ async def _active_historical_nws_alerts(req: Request, at: str, *, require_wip: b
     """Return one historical NWS frame."""
     if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
-    if not EVENTS.exists():
+    if not parquet_available(EVENTS):
         return msgpack_error("Historical NWS data is not installed.", 404)
     moment = pd.to_datetime(at, utc=True, errors="coerce")
     if pd.isna(moment):
@@ -247,7 +255,7 @@ async def _historical_nws_alerts(
     """Return one selected local playback range, with shared counties deduplicated."""
     if not _check_access(req, require_wip=require_wip):
         return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
-    if not EVENTS.exists():
+    if not parquet_available(EVENTS):
         return msgpack_error("Historical NWS data is not installed.", 404)
     available_years = _playback_years()
     if not available_years:
