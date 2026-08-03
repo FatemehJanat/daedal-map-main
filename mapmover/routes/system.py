@@ -1273,6 +1273,192 @@ def _build_public_pack_detail(pack_id: str, mcp_only: bool = False) -> dict | No
     return payload
 
 
+def _catalog_public_response(payload: dict) -> JSONResponse:
+    response = JSONResponse(payload)
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
+
+def _build_historical_catalog_payload() -> dict:
+    packs = _build_public_pack_list()
+    return {
+        "catalog_family": "historical_packs",
+        "catalog_path": "catalog.json",
+        "endpoint": "/api/v1/historical/catalog",
+        "pack_count": len(packs),
+        "packs": packs,
+    }
+
+
+def _geometry_scope_codes(*values) -> set[str]:
+    codes: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        if text.lower() == "global":
+            codes.add("GLOBAL")
+        if re.match(r"^[A-Z]{3}$", text):
+            codes.add(text.upper())
+        for match in re.findall(r"(?:countries/|_)([A-Z]{3})(?:[./_-]|$)", text):
+            codes.add(match.upper())
+    return codes
+
+
+def _build_geometry_catalog_payload() -> dict:
+    from mapmover.runtime.geometry_catalog import load_geometry_catalog
+
+    catalog = load_geometry_catalog()
+    banks = [item for item in (catalog.get("geometry_banks") or []) if isinstance(item, dict)]
+    families = [item for item in (catalog.get("geometry_families") or []) if isinstance(item, dict)]
+    bridges = [item for item in (catalog.get("bridge_artifacts") or []) if isinstance(item, dict)]
+    assets = [item for item in (catalog.get("geometry_assets") or []) if isinstance(item, dict)]
+    packages = [item for item in (catalog.get("geometry_packages") or []) if isinstance(item, dict)]
+    named = [item for item in (catalog.get("named_geometries") or []) if isinstance(item, dict)]
+    groups = [item for item in (catalog.get("named_geometry_groups") or []) if isinstance(item, dict)]
+
+    country_codes = sorted({
+        code
+        for item in [*banks, *bridges, *assets]
+        for code in _geometry_scope_codes(
+            item.get("scope"),
+            item.get("bank_id"),
+            item.get("geometry_path"),
+            item.get("artifact_path"),
+            item.get("index_path"),
+            item.get("local_probe_path"),
+            item.get("cloud_probe_path"),
+        )
+        if code != "GLOBAL"
+    })
+
+    family_cards = []
+    for family in families:
+        family_id = str(family.get("family") or "").strip()
+        family_bridges = [
+            bridge for bridge in bridges
+            if str(bridge.get("source_family") or "").strip() == family_id
+        ]
+        family_banks = [
+            bank for bank in banks
+            if str(bank.get("family") or "").strip() == family_id
+        ]
+        family_assets = [
+            asset for asset in assets
+            if str(asset.get("family") or "").strip() == family_id
+        ]
+        family_cards.append({
+            "family": family_id,
+            "label": family.get("label") or family_id,
+            "feature_count": family.get("feature_count"),
+            "bank_count": len(family_banks),
+            "asset_count": len(family_assets),
+            "bridge_count": len(family_bridges),
+            "has_shapes": bool(family.get("geometry_path") or family_assets or family_banks),
+            "target_admin_levels": sorted({
+                str(bridge.get("target_admin_level") or "").strip()
+                for bridge in family_bridges
+                if str(bridge.get("target_admin_level") or "").strip()
+            }),
+        })
+
+    return {
+        "catalog_family": "geometry",
+        "catalog_path": "geometry/geometry_catalog.json",
+        "endpoint": "/api/v1/geometry/catalog",
+        "ok": bool(catalog),
+        "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
+        "generated_at": catalog.get("generated_at"),
+        "bank_count": len(banks),
+        "family_count": len(families),
+        "bridge_artifact_count": len(bridges),
+        "asset_count": len(assets),
+        "package_count": len(packages),
+        "named_geometry_count": len(named),
+        "named_group_count": len(groups),
+        "country_count": len(country_codes),
+        "country_codes": country_codes,
+        "families": family_cards,
+        "banks": [
+            {
+                "bank_id": bank.get("bank_id"),
+                "family": bank.get("family"),
+                "label": bank.get("label") or bank.get("bank_id"),
+                "bank_role": bank.get("bank_role"),
+                "admin_level": bank.get("admin_level"),
+                "feature_count": bank.get("feature_count"),
+                "license_review_status": bank.get("license_review_status"),
+                "usable_for_derivation": bool(bank.get("usable_for_derivation")),
+                "supports_admin_spine_bridge": bool(bank.get("supports_admin_spine_bridge")),
+                "geometry_path": bank.get("geometry_path"),
+            }
+            for bank in banks
+        ],
+        "bridges": [
+            {
+                "index_path": bridge.get("index_path"),
+                "artifact_path": bridge.get("artifact_path"),
+                "source_family": bridge.get("source_family"),
+                "target_family": bridge.get("target_family"),
+                "target_admin_level": bridge.get("target_admin_level"),
+                "status": bridge.get("status"),
+                "row_count": bridge.get("row_count"),
+                "source_count": bridge.get("source_count"),
+                "target_count": bridge.get("target_count"),
+                "bridge_vintage": bridge.get("bridge_vintage"),
+            }
+            for bridge in bridges
+        ],
+    }
+
+
+def _build_live_feed_catalog_payload() -> dict:
+    from mapmover.ops_feed_registry import load_ops_feed_records
+
+    records = load_ops_feed_records()
+    public_records = [
+        record for record in records
+        if str(record.get("release_state") or "").strip().lower() == "public"
+        and bool(record.get("runtime_enabled"))
+    ]
+
+    def _feed_card(record: dict) -> dict:
+        timeline = record.get("timeline") if isinstance(record.get("timeline"), dict) else {}
+        display = record.get("display_contract") if isinstance(record.get("display_contract"), dict) else {}
+        return {
+            "feed_id": record.get("feed_id"),
+            "release_state": record.get("release_state"),
+            "runtime_enabled": bool(record.get("runtime_enabled")),
+            "account_available": bool(record.get("account_available")),
+            "default_watch": bool(record.get("default_watch")),
+            "default_tray": bool(record.get("default_tray")),
+            "collector_ids": record.get("collector_ids") or [],
+            "presentation": record.get("presentation") or [],
+            "processor_id": record.get("processor_id"),
+            "timeline": {
+                "provider": timeline.get("provider"),
+                "mode": timeline.get("mode"),
+                "cache_posture": timeline.get("cache_posture"),
+                "preload_history": bool(timeline.get("preload_history")),
+                "geometry_mode": timeline.get("geometry_mode"),
+                "runtime_artifact": timeline.get("runtime_artifact"),
+            },
+            "display_contract": {
+                "family": display.get("family"),
+                "popup_family": display.get("popup_family"),
+            } if display else None,
+        }
+
+    return {
+        "catalog_family": "live_feeds",
+        "catalog_path": "ops_feed_registry.json",
+        "endpoint": "/api/v1/feeds/catalog",
+        "feed_count": len(public_records),
+        "total_registry_feed_count": len(records),
+        "feeds": [_feed_card(record) for record in public_records],
+    }
+
+
 def _build_v1_guide_payload() -> dict:
     return {
         "guide_version": "1.0",
@@ -2020,6 +2206,24 @@ async def get_catalog_pack(pack_id: str, req: Request):
     return msgpack_response({"pack": pack})
 
 
+@router.get("/api/v1/historical/catalog")
+async def get_v1_historical_catalog():
+    """Return the public historical/data-pack discovery catalog."""
+    return _catalog_public_response(_build_historical_catalog_payload())
+
+
+@router.get("/api/v1/geometry/catalog")
+async def get_v1_geometry_catalog():
+    """Return the public geometry-bank/crosswalk discovery catalog."""
+    return _catalog_public_response(_build_geometry_catalog_payload())
+
+
+@router.get("/api/v1/feeds/catalog")
+async def get_v1_feeds_catalog():
+    """Return the public live-feed/Ops discovery catalog."""
+    return _catalog_public_response(_build_live_feed_catalog_payload())
+
+
 @router.get("/api/v1/guide")
 async def get_v1_guide():
     """Return the agent/API usage guide for the current v1 discovery surface."""
@@ -2032,6 +2236,12 @@ async def get_v1_guide():
 @router.get("/api/v1/catalog")
 async def get_v1_catalog():
     """Return the public MCP/API catalog for sources carrying the mcp surface."""
+    return await get_v1_agent_catalog()
+
+
+@router.get("/api/v1/agent/catalog")
+async def get_v1_agent_catalog():
+    """Return the public Agent/API/MCP catalog for sources carrying the mcp surface."""
     from mapmover.data_loading import load_api_catalog
     from pack_registry_shared import tool_family_catalog_entry, tool_family_ids
 

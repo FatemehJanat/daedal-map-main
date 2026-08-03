@@ -111,7 +111,12 @@ def _classify_route_surface(path: str) -> str:
         return "agent_api_mcp"
     if path == "/apis.json" or path.startswith("/.well-known/mcp/"):
         return "agent_api_discovery"
-    if path == "/api/v1/guide" or path == "/api/v1/catalog" or path.startswith("/api/v1/packs/"):
+    if (
+        path == "/api/v1/guide"
+        or path == "/api/v1/catalog"
+        or (path.startswith("/api/v1/") and path.endswith("/catalog"))
+        or path.startswith("/api/v1/packs/")
+    ):
         return "agent_api_discovery"
     if path.startswith("/api/catalog/packs"):
         return "human_app_catalog"

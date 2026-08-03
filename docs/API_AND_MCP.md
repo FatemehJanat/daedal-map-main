@@ -12,7 +12,11 @@ supported external API.
 Useful discovery endpoints include:
 
 - `GET /api/v1/guide`
-- `GET /api/v1/catalog`
+- `GET /api/v1/historical/catalog`
+- `GET /api/v1/geometry/catalog`
+- `GET /api/v1/feeds/catalog`
+- `GET /api/v1/agent/catalog`
+- `GET /api/v1/catalog` (legacy alias for the Agent/API/MCP catalog)
 - `GET /api/v1/packs/{pack_id}`
 - `GET /api/catalog/sources`
 - `GET /api/catalog/packs`
@@ -23,6 +27,15 @@ Useful discovery endpoints include:
 - `GET /mcp/server.json`
 
 Start with discovery rather than hard-coding an assumed source inventory.
+
+The four public catalog families are:
+
+| Catalog | Backing owner | Purpose |
+|---|---|---|
+| Historical | `published/catalog.json` | Published metric and historical data packs |
+| Geometry | `published/geometry/geometry_catalog.json` | Admin spines, sidechains, crosswalks/bridges, and shape-backed geometry families |
+| Feeds | `published/ops_feed_registry.json` | Public/runtime live feeds and Ops overlays |
+| Agent | `published/agent_catalog/api_catalog.json` | Agent/API/MCP-ready packs and tool families |
 
 ## Structured dataset query
 

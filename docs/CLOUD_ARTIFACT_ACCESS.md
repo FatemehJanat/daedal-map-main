@@ -7,6 +7,19 @@ For local pack installation, start with
 [DATA_INSTALLATION.md](DATA_INSTALLATION.md). Cloud artifact access covers
 direct object reads.
 
+For broad public discovery, start with the catalog endpoints instead of probing
+object storage:
+
+```text
+GET https://app.daedalmap.com/api/v1/historical/catalog
+GET https://app.daedalmap.com/api/v1/geometry/catalog
+GET https://app.daedalmap.com/api/v1/feeds/catalog
+GET https://app.daedalmap.com/api/v1/agent/catalog
+```
+
+Use artifact `HEAD`/`GET` only after discovery names a specific downloadable,
+published, or staging object to inspect.
+
 ## Lane policy
 
 | Lane | Access |
