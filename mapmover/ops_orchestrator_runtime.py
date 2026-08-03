@@ -996,6 +996,30 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
     return entries
 
 
+def load_current_state_timeline_index(collector_name: str) -> dict | None:
+    """Read compact cursor metadata without touching a retained raw archive."""
+    collector = _normalize_ops_feed_id(collector_name)
+    if not collector or not re.fullmatch(r"[A-Za-z0-9_-]+", collector):
+        return None
+    payload = _read_json_object(f"{collector}/timeline_index.json")
+    if not isinstance(payload, dict) or not isinstance(payload.get("frames"), list):
+        return None
+    return payload
+
+
+def load_current_state_timeline_frame(collector_name: str, frame_key: object) -> dict | None:
+    """Read one independently published retained snapshot for an Ops cursor."""
+    collector = _normalize_ops_feed_id(collector_name)
+    key = str(frame_key or "").strip().replace("\\", "/")
+    if (
+        not collector
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", collector)
+        or not re.fullmatch(r"timeline_frames/[a-f0-9]{64}\\.json", key)
+    ):
+        return None
+    return _read_json_object(f"{collector}/{key}")
+
+
 def load_aurora_frame_bundle() -> dict:
     """Load compact retained Aurora frames for the overlay's real-history loop."""
     cached = _get_live_state_cache("noaa_aurora", "frames")

@@ -21,6 +21,8 @@ from mapmover.ops_orchestrator_runtime import (
     build_ops_timeline_payload,
     load_current_state_history,
     load_current_state_snapshot,
+    load_current_state_timeline_frame,
+    load_current_state_timeline_index,
 )
 from mapmover.ops_ticker import (
     build_cached_aurora_payload,
@@ -115,6 +117,27 @@ def _local_nws_timeline_entries() -> list[dict]:
     Old retained delta entries remain reconstructible while they age out. New
     collector snapshots already contain each moment's complete alert state.
     """
+    index = load_current_state_timeline_index("usa_nws_alerts")
+    indexed_frames = index.get("frames") if isinstance(index, dict) else None
+    if isinstance(indexed_frames, list) and indexed_frames:
+        # The compact index is the normal deployed path.  Do not read the
+        # 30-day archive just to build metadata for the shared 72-hour cursor.
+        entries = []
+        for frame in indexed_frames:
+            if not isinstance(frame, dict):
+                continue
+            start_at = str(frame.get("start_at") or "").strip()
+            frame_key = str(frame.get("frame_key") or "").strip()
+            payload_hash = str(frame.get("payload_hash") or "").strip()
+            if start_at and frame_key and payload_hash:
+                entries.append({
+                    "published_at": start_at,
+                    "payload_hash": payload_hash,
+                    "timeline_frame_key": frame_key,
+                })
+        entries.sort(key=lambda entry: _snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
+        return entries
+
     current = load_current_state_snapshot("usa_nws_alerts")
     raw_entries = [entry for entry in load_current_state_history("usa_nws_alerts") if isinstance(entry, dict)]
     raw_entries.sort(key=lambda entry: _snapshot_time(entry) or datetime.min.replace(tzinfo=timezone.utc))
@@ -169,6 +192,16 @@ def _local_nws_timeline_entries() -> list[dict]:
     ]
 
 
+def _materialize_nws_timeline_entry(entry: dict | None) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+    frame_key = entry.get("timeline_frame_key")
+    if frame_key:
+        frame = load_current_state_timeline_frame("usa_nws_alerts", frame_key)
+        return frame if isinstance(frame, dict) else None
+    return entry
+
+
 def _local_nws_timeline_frames() -> list[dict]:
     """Return NWS cursor metadata without bulk-transferring warning geometry.
 
@@ -209,10 +242,13 @@ def _local_nws_timeline_frame_at(raw_at: object) -> dict | None:
             break
     if selected is None:
         return None
+    materialized = _materialize_nws_timeline_entry(selected)
+    if not isinstance(materialized, dict):
+        return None
     return {
         "payload_hash": selected.get("payload_hash"),
         "start_at": (_snapshot_time(selected) or target).isoformat(),
-        "geojson": build_nws_alerts_payload_for_snapshot(selected),
+        "geojson": build_nws_alerts_payload_for_snapshot(materialized),
     }
 
 
@@ -237,10 +273,13 @@ def _local_nws_timeline_frames_at(raw_values: object) -> list[dict]:
         at = _snapshot_time(entry)
         if at is None or at.isoformat() not in requested:
             continue
+        materialized = _materialize_nws_timeline_entry(entry)
+        if not isinstance(materialized, dict):
+            continue
         frames.append({
             "payload_hash": entry.get("payload_hash"),
             "start_at": at.isoformat(),
-            "geojson": build_nws_alerts_payload_for_snapshot(entry),
+            "geojson": build_nws_alerts_payload_for_snapshot(materialized),
         })
     return frames
 
@@ -262,7 +301,8 @@ def _local_nws_alert_detail_at(raw_at: object, alert_id: object) -> dict | None:
     if not isinstance(selected, dict):
         return None
     wanted = str(alert_id or "").strip()
-    summary = selected.get("payload_summary") if isinstance(selected.get("payload_summary"), dict) else {}
+    materialized = _materialize_nws_timeline_entry(selected)
+    summary = materialized.get("payload_summary") if isinstance((materialized or {}).get("payload_summary"), dict) else {}
     for alert in summary.get("alerts") or []:
         if isinstance(alert, dict) and str(alert.get("alert_id") or "").strip() == wanted:
             return {

@@ -107,6 +107,33 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertNotIn("description", props)
         self.assertTrue(props["detail_available"])
 
+    def test_nws_timeline_uses_compact_index_without_reading_raw_history(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        frame_key = "timeline_frames/" + ("a" * 64) + ".json"
+        index = {
+            "collector": "usa_nws_alerts",
+            "frames": [{
+                "start_at": now.isoformat(),
+                "payload_hash": "a" * 64,
+                "frame_key": frame_key,
+            }],
+        }
+        stored_frame = {
+            "collector": "usa_nws_alerts",
+            "payload_summary": {"alerts": [{
+                "alert_id": "nws-indexed",
+                "event": "Tornado Warning",
+                "point": [-90, 35],
+            }]},
+        }
+        with patch.object(ops_routes, "load_current_state_timeline_index", return_value=index), patch.object(
+            ops_routes, "load_current_state_timeline_frame", return_value=stored_frame
+        ), patch.object(ops_routes, "load_current_state_history") as history:
+            frame = ops_routes._local_nws_timeline_frame_at(now.isoformat())
+
+        history.assert_not_called()
+        self.assertEqual("nws-indexed", frame["geojson"]["features"][0]["properties"]["alert_id"])
+
     def test_requested_sources_replace_cached_watch_feeds(self):
         cache = DummyCache()
         cache.map_state["ops_watch"] = {
