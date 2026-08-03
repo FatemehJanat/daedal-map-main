@@ -57,6 +57,10 @@ from mapmover.geography import get_country_names_from_codes
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.runtime.filter_primitives import resolve_exact_id_filter_field
 from mapmover.runtime.geography_reference import classify_loc_id_family
+from mapmover.runtime.source_response_semantics import (
+    collect_metric_response_contract,
+)
+from mapmover.data_loading import load_source_metadata
 from mapmover.security import get_client_ip, rate_limiter
 from mapmover.storage_mode import get_runtime_mode
 
@@ -411,6 +415,16 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             ),
         )
         return metrics_error
+    metric_error_contract = collect_metric_response_contract(
+        spec.source_id,
+        metrics,
+        normalized_time=None,
+        load_source_metadata_func=load_source_metadata,
+    )
+    metric_error_details = {
+        "metric_availability": metric_error_contract["metric_availability"],
+        "response_obligations": metric_error_contract["response_obligations"],
+    }
 
     filters = payload.get("filters") or {}
     if not isinstance(filters, dict):
@@ -475,6 +489,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             "invalid_time_range",
             "time is required for this source.",
             400,
+            details=metric_error_details,
             retry_hint="Pass time as {value} or {start, end}.",
             pack_id=spec.pack_id,
             source_id=source_id,
@@ -521,6 +536,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 "invalid_time_range",
                 "time.start cannot be greater than time.end.",
                 400,
+                details=metric_error_details,
                 retry_hint="Use a time range where start is less than or equal to end.",
                 pack_id=spec.pack_id,
                 source_id=source_id,
@@ -535,6 +551,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             "invalid_time_range",
             "time filters are invalid for this source.",
             400,
+            details=metric_error_details,
             retry_hint=retry_hint,
             pack_id=spec.pack_id,
             source_id=source_id,
@@ -1212,6 +1229,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 "count": null_only_rows_omitted,
             }
         )
+    metric_response_contract = collect_metric_response_contract(
+        spec.source_id,
+        metrics,
+        normalized_time=normalized_time,
+        load_source_metadata_func=load_source_metadata,
+    )
+    warnings.extend(metric_response_contract["warnings"])
 
     payload_out: dict[str, Any] = {
         "request_id": request_id,
@@ -1226,6 +1250,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         "truncated": False,
         "rows": response_rows,
         "warnings": warnings,
+        "metric_availability": metric_response_contract["metric_availability"],
+        "response_obligations": metric_response_contract["response_obligations"],
     }
     if include_provenance:
         payload_out["provenance"] = {

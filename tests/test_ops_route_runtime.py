@@ -17,7 +17,25 @@ class DummyCache:
         self.map_state = {}
 
 
+class DummyRouteContext:
+    def __init__(self, *, allowed_feeds=None, effective_feeds=None):
+        self.allowed_feeds = list(allowed_feeds or [])
+        self.effective_feeds = list(effective_feeds or [])
+
+
 class OpsRouteRuntimeTest(unittest.TestCase):
+    def test_timeline_feed_filter_uses_effective_ops_feed_scope(self):
+        route_context = DummyRouteContext(
+            allowed_feeds=[],
+            effective_feeds=["hurricanes_live", "usa_nws_alerts", "noaa_ndbc"],
+        )
+        requested = ["hurricanes_live", "usa_nws_alerts", "noaa_ndbc", "not_allowed"]
+
+        self.assertEqual(
+            ["hurricanes_live", "usa_nws_alerts", "noaa_ndbc"],
+            ops_routes._requested_timeline_feeds(requested, route_context),
+        )
+
     def test_strict_registry_requires_runtime_contract_fields(self):
         payload = {
             "schema_version": 2,

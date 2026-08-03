@@ -42,6 +42,11 @@ function formatCursor(ms) {
   return formatOpsTime(ms);
 }
 
+function frameCacheKey(frame, overlayId = '') {
+  const prefix = overlayId ? `${String(overlayId)}:` : '';
+  return `${prefix}${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+}
+
 export const OpsTimeline = {
   enabled: false,
   element: null,
@@ -61,10 +66,9 @@ export const OpsTimeline = {
   pointRequestTokens: new Map(),
   pointInteractiveRequestedAt: 0,
   hurricaneFrameCache: new Map(),
-  hurricaneFrameInFlight: new Map(),
-  hurricaneRequestToken: 0,
-  hurricaneInteractiveRequestedAt: 0,
-  hurricaneDebounceTimer: null,
+  hurricaneReplayData: new Map(),
+  hurricaneWarmupPromise: null,
+  hurricaneWarmupRun: 0,
   backgroundPrefetchTimers: [],
   backgroundPrefetchRun: 0,
   selectedDisplayPayloads: new Map(),
@@ -83,10 +87,10 @@ export const OpsTimeline = {
     this.pointFrameCache.clear();
     this.pointRequestTokens.clear();
     this.hurricaneFrameCache.clear();
-    this.hurricaneFrameInFlight.clear();
+    this.hurricaneReplayData.clear();
     this.selectedDisplayPayloads.clear();
-    if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
-    this.hurricaneDebounceTimer = null;
+    this.hurricaneWarmupRun += 1;
+    this.hurricaneWarmupPromise = null;
     for (const timer of this.backgroundPrefetchTimers) clearTimeout(timer);
     this.backgroundPrefetchTimers = [];
     this.backgroundPrefetchRun += 1;
@@ -139,11 +143,11 @@ export const OpsTimeline = {
       watch_context: watchContext,
       timeline_feeds: timelineFeeds,
     });
-    this.setTimeline(response?.timeline);
+    await this.setTimeline(response?.timeline);
     return response;
   },
 
-  setTimeline(timeline) {
+  async setTimeline(timeline) {
     const feedFrames = timeline?.feeds;
     if (!this.enabled || !feedFrames || typeof feedFrames !== 'object') {
       this.clear();
@@ -185,8 +189,15 @@ export const OpsTimeline = {
       rangeEnd,
       historyHours: Math.max(1, Math.round((currentMs - rangeStart) / 3_600_000)),
     };
+    this.hurricaneReplayData.clear();
+    for (const [feedId, replay] of Object.entries(timeline?.hurricane_replay || {})) {
+      if (replay?.type === 'hurricane_replay') {
+        this.hurricaneReplayData.set(feedId, replay);
+      }
+    }
     this._render();
     this.selectAt(currentMs, { preserveCurrent: true });
+    await this._warmRequiredHistory();
     this._scheduleBackgroundPrefetch();
   },
 
@@ -208,6 +219,7 @@ export const OpsTimeline = {
     this.input.min = String(floorToCursor(rangeStart));
     this.input.max = String(floorToCursor(rangeEnd));
     this.input.value = String(floorToCursor(currentMs));
+    this.input.disabled = this._hasPendingRequiredHistoryWarmup();
     const nowPercent = ((currentMs - rangeStart) / (rangeEnd - rangeStart)) * 100;
     this.element.style.setProperty('--ops-now-position', `${Math.max(0, Math.min(100, nowPercent))}%`);
     this.input.addEventListener('input', () => this.selectAt(Number(this.input.value)));
@@ -245,12 +257,18 @@ export const OpsTimeline = {
         if (ms >= this.timeline.currentMs) pointOverlay?.clearOpsTimelineFrame?.();
         else pointOverlay?.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
       } else if (selected?.timeline_provider === 'hurricane_history') {
-        // The live snapshot is already on-map. Historical additive tracks are
-        // intentionally materialized only after a user moves the cursor so
-        // timeline hydration stays fast even with many retained collector polls.
+        // Hurricane replay is hydrated as browser-held display frames before
+        // the cursor is enabled. A scrub is therefore a synchronous render
+        // change, not a data request.
         if (ms < this.timeline.currentMs) {
-          hasDeferredPayload = true;
-          this._scheduleHurricaneFrame(feedId, selected, ms);
+          const replayPayload = this._buildHurricaneReplayDisplayPayload(feedId, ms, selected);
+          const loaded = replayPayload ? { display_payload: replayPayload } : this.hurricaneFrameCache.get(frameCacheKey(selected));
+          if (loaded?.display_payload) {
+            displayPayloads.push(loaded.display_payload);
+            this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
+          } else {
+            hasDeferredPayload = true;
+          }
         }
       } else if (selected?.display_payload?.ops_timeline_provider) {
         specialFrames.push(selected.display_payload);
@@ -338,50 +356,45 @@ export const OpsTimeline = {
     void getLivePointOverlay(overlayId)?.setOpsTimelineFrame?.(loaded.geojson);
   },
 
-  async _loadHurricaneFrame(feedId, frame, selectedMs) {
-    const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
-    if (!key) return;
-    const token = ++this.hurricaneRequestToken;
-    this.hurricaneInteractiveRequestedAt = Date.now();
-    const loaded = await this._getHurricaneFrame(key, frame, selectedMs);
-    if (!loaded) return;
-    if (token !== this.hurricaneRequestToken || this.selectedMs !== selectedMs || !loaded?.display_payload) return;
-    this.selectedDisplayPayloads.set(feedId, loaded.display_payload);
-    this.onFrame?.(Array.from(this.selectedDisplayPayloads.values()), {
-      at: new Date(selectedMs).toISOString(),
-      preserveMissing: true,
-    });
+  _hasPendingRequiredHistoryWarmup() {
+    const contracts = this.timeline?.preload_history || {};
+    for (const [feedId, contract] of Object.entries(contracts)) {
+      if (contract?.preload_history && String(contract.provider || '') === 'hurricane_history') {
+        if (this.hurricaneReplayData.has(feedId)) continue;
+        const frames = Array.isArray(this.timeline?.feeds?.[feedId])
+          ? this.timeline.feeds[feedId].filter((frame) => frame?.timeline_provider === 'hurricane_history')
+          : [];
+        if (frames.some((frame) => !this.hurricaneFrameCache.has(frameCacheKey(frame)))) {
+          return true;
+        }
+      }
+    }
+    return false;
   },
 
-  _scheduleHurricaneFrame(feedId, frame, selectedMs) {
-    if (this.hurricaneDebounceTimer) clearTimeout(this.hurricaneDebounceTimer);
-    // Slider input can emit dozens of intermediate cursor positions. Keep the
-    // last coherent track visible and only materialize the settled position.
-    this.hurricaneDebounceTimer = setTimeout(() => {
-      this.hurricaneDebounceTimer = null;
-      void this._loadHurricaneFrame(feedId, frame, selectedMs);
-    }, 90);
-  },
-
-  async _getHurricaneFrame(key, frame, selectedMs) {
-    const cached = this.hurricaneFrameCache.get(key);
-    if (cached) return cached;
-    const inFlight = this.hurricaneFrameInFlight.get(key);
-    if (inFlight) return inFlight;
-    const request = postMsgpack('/api/local/ops/timeline/hurricane-frame', {
-      at: frame.start_at || new Date(selectedMs).toISOString(),
-    }).then((response) => {
-      const loaded = response?.frame || null;
-      if (loaded) this.hurricaneFrameCache.set(key, loaded);
-      return loaded;
-    }).catch((error) => {
-      console.warn('OpsTimeline: retained hurricane frame failed', error);
-      return null;
-    }).finally(() => {
-      this.hurricaneFrameInFlight.delete(key);
+  async _warmRequiredHistory() {
+    const timeline = this.timeline;
+    const contracts = timeline?.preload_history || {};
+    const batches = [];
+    const run = ++this.hurricaneWarmupRun;
+    for (const [feedId, contract] of Object.entries(contracts)) {
+      if (!contract?.preload_history || String(contract.provider || '') !== 'hurricane_history') continue;
+      const frames = Array.isArray(timeline?.feeds?.[feedId])
+        ? timeline.feeds[feedId].filter((frame) => frame?.timeline_provider === 'hurricane_history').reverse()
+        : [];
+      if (frames.length && !this.hurricaneReplayData.has(feedId)) {
+        batches.push(this._preloadHurricaneFrames(frames, timeline, this.backgroundPrefetchRun, contract.batch_size));
+      }
+    }
+    if (!batches.length) return;
+    this.hurricaneWarmupPromise = Promise.allSettled(batches).finally(() => {
+      if (run === this.hurricaneWarmupRun) {
+        this.hurricaneWarmupPromise = null;
+        if (this.input) this.input.disabled = false;
+        if (this.selectedMs != null) this.selectAt(this.selectedMs, { preserveCurrent: true });
+      }
     });
-    this.hurricaneFrameInFlight.set(key, request);
-    return request;
+    await this.hurricaneWarmupPromise;
   },
 
   _scheduleBackgroundPrefetch() {
@@ -417,7 +430,7 @@ export const OpsTimeline = {
       }
       const batch = frames.slice(index, index + batchSize);
       const missing = batch.filter((frame) => {
-        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        const key = frameCacheKey(frame);
         return key && !this.nwsFrameCache.has(key);
       });
       if (!missing.length) continue;
@@ -442,13 +455,9 @@ export const OpsTimeline = {
     const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || HURRICANE_BACKGROUND_BATCH_SIZE));
     for (let index = 0; index < frames.length; index += batchSize) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
-      while (Date.now() - this.hurricaneInteractiveRequestedAt < INTERACTIVE_GRACE_MS) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
-      }
       const batch = frames.slice(index, index + batchSize);
       const missing = batch.filter((frame) => {
-        const key = `${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
+        const key = frameCacheKey(frame);
         return key && !this.hurricaneFrameCache.has(key);
       });
       if (!missing.length) continue;
@@ -457,7 +466,7 @@ export const OpsTimeline = {
           at: missing.map((frame) => frame.start_at),
         }, { silent: true });
         for (const loaded of response?.frames || []) {
-          const key = `${String(loaded?.start_at || '')}:${String(loaded?.payload_hash || '')}`;
+          const key = frameCacheKey(loaded);
           if (key) this.hurricaneFrameCache.set(key, loaded);
         }
       } catch (error) {
@@ -500,5 +509,91 @@ export const OpsTimeline = {
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+  },
+
+  _normalizeHurricaneCoord(storm, point) {
+    const lat = Number(point?.latitude);
+    let lon = Number(point?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (String(storm?.source || '').trim().toUpperCase() === 'NHC' && lon > 0 && lon <= 180) {
+      lon = -lon;
+    }
+    if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+    return [lon, lat];
+  },
+
+  _buildHurricaneReplayDisplayPayload(feedId, selectedMs, selectedFrame = null) {
+    const replay = this.hurricaneReplayData.get(feedId);
+    if (!replay || !Array.isArray(replay.storms)) return null;
+    const historyHours = Math.max(1, Number(replay.history_hours) || 72);
+    const cutoffMs = selectedMs - (historyHours * 60 * 60 * 1000);
+    const features = [];
+    let stormCount = 0;
+    for (const storm of replay.storms) {
+      const points = Array.isArray(storm?.observed_track) ? storm.observed_track : [];
+      const usable = points
+        .map((point) => ({ point, timeMs: toMs(point?.timestamp), coord: this._normalizeHurricaneCoord(storm, point) }))
+        .filter((item) => Number.isFinite(item.timeMs) && item.coord && item.timeMs >= cutoffMs && item.timeMs <= selectedMs)
+        .sort((a, b) => a.timeMs - b.timeMs);
+      if (!usable.length) continue;
+      const latest = usable[usable.length - 1];
+      const baseProps = {
+        storm_id: storm.storm_id,
+        name: storm.name,
+        basin: storm.basin,
+        source: storm.source,
+        selected_observed_source: storm.selected_observed_source,
+        selected_forecast_source: storm.selected_forecast_source,
+        source_name: storm.source_name || storm.source || 'Tropical cyclone advisory source',
+        source_url: storm.source_page_url || storm.source_url || storm.source_product_url,
+        source_page_url: storm.source_page_url,
+        source_product_url: storm.source_product_url,
+        advisory_number: storm.advisory_number,
+        issued_at: storm.issued_at,
+        wind_kt: latest.point.wind_kt,
+        max_wind_kt: Math.max(...usable.map((item) => Number(item.point.wind_kt)).filter(Number.isFinite), 0),
+        category: latest.point.category,
+        max_category: latest.point.category,
+        event_type: 'hurricane',
+        track_state: 'replay',
+        track_opacity: 0.95,
+        last_observed_at: latest.point.timestamp,
+        track_kind: 'observed',
+      };
+      stormCount += 1;
+      if (usable.length >= 2) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: usable.map((item) => item.coord) },
+          properties: { ...baseProps, line_style: 'solid' },
+        });
+      }
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: latest.coord },
+        properties: {
+          ...baseProps,
+          ...latest.point,
+          longitude: latest.coord[0],
+          latitude: latest.coord[1],
+          track_kind: 'current',
+        },
+      });
+    }
+    if (!features.length) return null;
+    return {
+      type: 'data',
+      data_type: 'events',
+      event_type: 'hurricane',
+      source_id: 'hurricanes_live_ops',
+      snapshot_hash: selectedFrame?.payload_hash || null,
+      dataset_name: 'Hurricanes',
+      source_name: 'Tropical cyclone advisory sources',
+      summary: `Showing ${stormCount} recent storm tracks from advisory sources.`,
+      count: stormCount,
+      fit: false,
+      ops_default_view: 'history',
+      geojson: { type: 'FeatureCollection', features },
+    };
   },
 };

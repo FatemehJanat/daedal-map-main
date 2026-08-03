@@ -73,6 +73,18 @@ def _ops_report_payload(route_context) -> dict:
     }
 
 
+def _requested_timeline_feeds(requested_timeline_feeds, route_context) -> list[str]:
+    requested = [
+        str(feed or "").strip()
+        for feed in (requested_timeline_feeds if isinstance(requested_timeline_feeds, list) else [])
+    ]
+    timeline_feed_scope = set(route_context.effective_feeds or route_context.allowed_feeds or [])
+    return [
+        feed for feed in requested
+        if feed and feed in timeline_feed_scope
+    ]
+
+
 def _snapshot_time(snapshot: dict) -> datetime | None:
     for key in ("published_at", "fetched_at", "last_checked_at"):
         value = str(snapshot.get(key) or "").replace("Z", "+00:00")
@@ -662,14 +674,7 @@ async def local_ops_timeline_endpoint(req: Request):
                 headers=rejection_headers or {},
             )
         assert route_context is not None
-        requested = [
-            str(feed or "").strip()
-            for feed in (requested_timeline_feeds if isinstance(requested_timeline_feeds, list) else [])
-        ]
-        timeline_feeds = [
-            feed for feed in requested
-            if feed and feed in route_context.allowed_feeds
-        ]
+        timeline_feeds = _requested_timeline_feeds(requested_timeline_feeds, route_context)
         timeline = build_ops_timeline_payload(effective_feeds=timeline_feeds)
         if "usa_nws_alerts" in timeline_feeds:
             frames = _local_nws_timeline_frames()

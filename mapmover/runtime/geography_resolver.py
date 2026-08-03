@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 from .api_contract_normalization import normalize_machine_region_ids
-from .geometry_catalog import is_deprecated_geometry_loc_id, resolve_geometry_name
+from .geometry_catalog import expand_geometry_loc_id, is_deprecated_geometry_loc_id, resolve_geometry_name
 from .geography_reference import classify_loc_id_family
 from .loc_id_resolution import resolve_admin_text_to_loc_id, resolve_point_to_loc_id_stack
 
@@ -51,9 +51,9 @@ def resolve_geography(
     """Resolve human text or a point into canonical ``loc_id`` values.
 
     A success can intentionally contain many loc_ids for a documented land
-    regional group. Named water bodies are different: they resolve to exactly
-    one polygon-backed marine id (for example, ``Mediterranean Sea`` ->
-    ``XSM``), never to bordering countries.
+    regional group or a named-geometry hierarchy. Named water bodies never
+    expand to bordering countries; a broad sea such as ``Mediterranean Sea``
+    resolves to its reviewed marine loc_id plus catalogued child waters.
     """
     if longitude is not None or latitude is not None:
         if longitude is None or latitude is None:
@@ -122,10 +122,16 @@ def resolve_geography(
     # to its IHO geometry rather than a coastal-country group.
     geometry_entry = resolve_geometry_name(text)
     if geometry_entry:
-        loc_ids = [str(value) for value in geometry_entry.get("loc_ids") or []]
+        loc_ids = [str(value).strip().upper() for value in geometry_entry.get("loc_ids") or [] if str(value).strip()]
+        expanded_from_loc_id: str | None = None
         if not loc_ids:
             loc_id = str(geometry_entry.get("loc_id") or "").strip()
             loc_ids = [loc_id] if loc_id else []
+            expanded = expand_geometry_loc_id(loc_id)
+            if expanded:
+                loc_ids = expanded
+                if len(expanded) > 1:
+                    expanded_from_loc_id = expanded[0]
         if not loc_ids:
             return {
                 "outcome": "error",
@@ -142,12 +148,13 @@ def resolve_geography(
             "locations": [{
                 "loc_id": loc_id,
                 "family": geometry_entry.get("family"),
-                "label": geometry_entry.get("label") if len(loc_ids) == 1 else None,
+                "label": geometry_entry.get("label") if loc_id == str(geometry_entry.get("loc_id") or "").strip().upper() else None,
             } for loc_id in loc_ids],
             "deepest_loc_id": loc_ids[0] if len(loc_ids) == 1 else None,
             "provenance": {
                 "geometry_path": geometry_entry.get("geometry_path"),
                 "provenance": geometry_entry.get("provenance"),
+                "expanded_from_loc_id": expanded_from_loc_id,
             },
         }
 

@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover import logger
@@ -50,6 +51,7 @@ LIVE_STATE_SNAPSHOT_TTL_SECONDS = 60.0
 LIVE_STATE_HISTORY_TTL_SECONDS = 60.0
 DEFAULT_OPS_HISTORY_RETENTION_HOURS = 72
 DEFAULT_OPS_HISTORY_DISPLAY_HOURS = 72
+DEFAULT_OPS_LIVE_STATE_BASE_URL = "https://daedalmap.com"
 HURRICANE_LIVE_FEED = "hurricanes_live"
 WILDFIRE_LIVE_FEED = "wildfires"
 WILDFIRE_OPS_COLLECTORS = ("wildfires_us_nifc", "wildfires_can_cwfis")
@@ -542,13 +544,48 @@ def _read_jsonl_object(relative_key: str) -> list[dict]:
     return entries
 
 
+def _is_local_live_state_base_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return True
+    host = str(parsed.hostname or "").strip().lower()
+    if not parsed.scheme or not host:
+        return True
+    return host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local")
+
+
 def _site_live_state_base_url() -> str:
-    value = (
-        str(os.environ.get("SITE_URL", "") or "").strip()
-        or str(os.environ.get("CLOUD_URL", "") or "").strip()
-        or str(((get_runtime_config().get("app", {}) or {}).get("site_url", "")) or "").strip()
+    explicit = (
+        str(os.environ.get("OPS_LIVE_STATE_BASE_URL", "") or "").strip()
+        or str(os.environ.get("OPS_CONTROL_PLANE_URL", "") or "").strip()
     ).rstrip("/")
-    return value
+    if explicit:
+        return explicit
+
+    app_cfg = get_runtime_config().get("app", {}) or {}
+    candidates = [
+        os.environ.get("CLOUD_URL", ""),
+        os.environ.get("SITE_URL", ""),
+        app_cfg.get("site_url", ""),
+        DEFAULT_OPS_LIVE_STATE_BASE_URL,
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip().rstrip("/")
+        if value and not _is_local_live_state_base_url(value):
+            return value
+    return DEFAULT_OPS_LIVE_STATE_BASE_URL
+
+
+def _live_state_site_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    token = (
+        str(os.environ.get("CLOUD_INTERNAL_API_TOKEN", "") or "").strip()
+        or str(os.environ.get("CLOUD_TOKEN", "") or "").strip()
+    )
+    if token:
+        headers["x-internal-api-key"] = token
+    return headers
 
 
 def _live_state_cache_ttl(kind: str) -> float:
@@ -603,6 +640,7 @@ def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | 
     try:
         response = requests.get(
             f"{base_url}/api/internal/live-state/{collector}/{kind}",
+            headers=_live_state_site_headers(),
             timeout=4,
         )
         if response.status_code >= 300:
@@ -1882,6 +1920,87 @@ def _with_hurricane_history_tracks(snapshot: dict, entries: list[dict]) -> dict:
     }
 
 
+def _build_hurricane_replay_payload(
+    snapshot: dict | None,
+    entries: list[dict],
+    *,
+    as_of: datetime,
+    history_hours: int,
+) -> dict | None:
+    """Return compact observed storm fixes for browser-side Ops replay."""
+    if not isinstance(snapshot, dict):
+        return None
+    composed = _with_hurricane_history_tracks(snapshot, entries)
+    summary = composed.get("payload_summary") if isinstance(composed.get("payload_summary"), dict) else {}
+    cutoff = as_of - timedelta(hours=max(1, int(history_hours)))
+    storms = []
+    for storm in summary.get("storms") or []:
+        if not isinstance(storm, dict):
+            continue
+        storm_id = str(storm.get("storm_id") or "").strip()
+        if not storm_id:
+            continue
+        points = []
+        for point in storm.get("observed_track") or []:
+            if not isinstance(point, dict):
+                continue
+            observed_at = _parse_iso_datetime(point.get("timestamp"))
+            if observed_at is None or observed_at < cutoff or observed_at > as_of:
+                continue
+            try:
+                latitude = float(point.get("latitude"))
+                longitude = float(point.get("longitude"))
+            except (TypeError, ValueError):
+                continue
+            points.append({
+                "timestamp": observed_at.isoformat(),
+                "latitude": latitude,
+                "longitude": longitude,
+                "wind_kt": point.get("wind_kt"),
+                "pressure_mb": point.get("pressure_mb"),
+                "category": point.get("category"),
+                "status": point.get("status"),
+                "r34_ne": point.get("r34_ne"),
+                "r34_se": point.get("r34_se"),
+                "r34_sw": point.get("r34_sw"),
+                "r34_nw": point.get("r34_nw"),
+                "r50_ne": point.get("r50_ne"),
+                "r50_se": point.get("r50_se"),
+                "r50_sw": point.get("r50_sw"),
+                "r50_nw": point.get("r50_nw"),
+                "r64_ne": point.get("r64_ne"),
+                "r64_se": point.get("r64_se"),
+                "r64_sw": point.get("r64_sw"),
+                "r64_nw": point.get("r64_nw"),
+            })
+        points.sort(key=lambda item: item["timestamp"])
+        if not points:
+            continue
+        storms.append({
+            "storm_id": storm_id,
+            "name": storm.get("name"),
+            "basin": storm.get("basin"),
+            "source": storm.get("source"),
+            "source_name": storm.get("source_name"),
+            "source_url": storm.get("source_url"),
+            "source_page_url": storm.get("source_page_url"),
+            "source_product_url": storm.get("source_product_url"),
+            "advisory_number": storm.get("advisory_number"),
+            "issued_at": storm.get("issued_at"),
+            "selected_observed_source": storm.get("selected_observed_source"),
+            "selected_forecast_source": storm.get("selected_forecast_source"),
+            "observed_track": points,
+        })
+    if not storms:
+        return None
+    return {
+        "type": "hurricane_replay",
+        "history_hours": history_hours,
+        "range_end": as_of.isoformat(),
+        "storms": storms,
+    }
+
+
 def _build_default_history_payload(*, feed: str, snapshot: dict, history_entries: list[dict]) -> dict | None:
     in_window, window_label = _default_history_window_entries(
         snapshot=snapshot,
@@ -2052,10 +2171,24 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
     ]))
     range_start = now - timedelta(hours=requested_hours)
     feeds: dict[str, list[dict]] = {}
+    hurricane_replay: dict[str, dict] = {}
     for feed in effective_feeds:
         snapshot = snapshots.get(feed)
         entries = _ops_timeline_entries(feed, snapshot, load_current_state_history(feed))
         frames: list[dict] = []
+        if _is_hurricane_live_feed(feed):
+            in_window = [
+                item for item in entries
+                if (_ops_timeline_entry_time(item) or datetime.min.replace(tzinfo=timezone.utc)) >= range_start
+            ]
+            replay_payload = _build_hurricane_replay_payload(
+                snapshot,
+                in_window,
+                as_of=now,
+                history_hours=requested_hours,
+            )
+            if replay_payload is not None:
+                hurricane_replay[feed] = replay_payload
         for index, entry in enumerate(entries):
             start = _ops_timeline_entry_time(entry)
             if start is None:
@@ -2103,7 +2236,7 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             })
         if frames:
             feeds[feed] = frames
-    return {
+    payload = {
         "range_start": range_start.isoformat(),
         "range_end": now.isoformat(),
         "history_hours": requested_hours,
@@ -2118,6 +2251,9 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
             if (contract := ops_timeline_preload_history_contract(feed)) is not None
         },
     }
+    if hurricane_replay:
+        payload["hurricane_replay"] = hurricane_replay
+    return payload
 
 
 def _compact_payload_summary(collector: str, summary: dict, *, sample_limit: int = 3) -> dict:

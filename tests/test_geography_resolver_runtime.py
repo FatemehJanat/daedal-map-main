@@ -24,6 +24,19 @@ class GeographyResolverRuntimeTests(unittest.TestCase):
                 self.assertEqual(resolved.get("outcome"), "ok")
                 self.assertEqual(resolved.get("locations", [{}])[0].get("family"), "water_body")
 
+    def test_named_water_parent_expands_to_child_geometry_ids(self):
+        resolved = resolve_geography(query="Mediterranean")
+        self.assertEqual(resolved.get("outcome"), "ok")
+        loc_ids = resolved.get("loc_ids") or []
+        self.assertIn("IHO1953-240001002", loc_ids)
+        self.assertIn("IHO1953-240001003", loc_ids)
+        self.assertIn("IHO1953-240001004", loc_ids)
+        self.assertIn("IHO1953-240001005", loc_ids)
+        self.assertEqual(
+            (resolved.get("provenance") or {}).get("expanded_from_loc_id"),
+            "IHO1953-240001002",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
