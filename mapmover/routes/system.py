@@ -2923,6 +2923,7 @@ async def admin_catalog_refresh(req: Request):
     Restricted to master plan and is_admin users only.
     """
     import mapmover.data_loading as _dl
+    from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
     if forbidden is not None:
@@ -2944,6 +2945,7 @@ async def admin_catalog_refresh(req: Request):
         clear_metadata_cache()
         clear_public_pack_catalog_cache()
         clear_release_marker_cache()
+        clear_geometry_catalog_cache()
         initialize_catalog()
         source_count = len((_dl.load_catalog() or {}).get("sources", []))
         refreshed.append("runtime")
@@ -2973,6 +2975,7 @@ async def admin_runtime_refresh(req: Request):
     from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
     from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
     from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+    from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
     if forbidden is not None:
@@ -2985,6 +2988,7 @@ async def admin_runtime_refresh(req: Request):
     clear_public_pack_catalog_cache()
     clear_release_marker_cache()
     _dl.clear_api_discovery_cache()
+    clear_geometry_catalog_cache()
     clear_geometry_cache()
     clear_data_cascade_cache()
     cache_clear()
@@ -3024,6 +3028,7 @@ async def admin_runtime_soft_refresh(req: Request):
     from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
     from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
     from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+    from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
     if forbidden is not None:
@@ -3036,6 +3041,7 @@ async def admin_runtime_soft_refresh(req: Request):
     clear_public_pack_catalog_cache()
     clear_release_marker_cache()
     _dl.clear_api_discovery_cache()
+    clear_geometry_catalog_cache()
     clear_geometry_cache()
     clear_data_cascade_cache()
     cache_clear()

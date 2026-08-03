@@ -8,12 +8,14 @@ API, and MCP path the same name -> canonical ``loc_id`` lookup.
 from __future__ import annotations
 
 import json
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from ..paths import GEOMETRY_DIR
+from ..runtime_config import get_runtime_config
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
@@ -24,9 +26,41 @@ def _normalize(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
 
 
+def _is_cloud_mode() -> bool:
+    return str(get_runtime_config().get("runtime_mode", "local")).strip().lower() == "cloud"
+
+
+def _fetch_geometry_catalog_from_s3() -> dict[str, Any] | None:
+    import boto3
+
+    cloud_cfg = get_runtime_config().get("cloud", {})
+    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+    if not bucket:
+        return None
+    prefix = (
+        os.environ.get("S3_PREFIX", "").strip()
+        or str(cloud_cfg.get("prefix", "")).strip()
+    ).strip("/")
+    key = f"{prefix}/geometry/geometry_catalog.json" if prefix else "geometry/geometry_catalog.json"
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
+    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
+    client = boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+    obj = client.get_object(Bucket=bucket, Key=key)
+    payload = json.loads(obj["Body"].read())
+    return payload if isinstance(payload, dict) else None
+
+
 @lru_cache(maxsize=1)
 def load_geometry_catalog() -> dict[str, Any]:
     """Load the generated catalog, with a narrow water-body fallback for dev."""
+    if _is_cloud_mode():
+        try:
+            payload = _fetch_geometry_catalog_from_s3()
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+
     try:
         payload = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
@@ -53,6 +87,12 @@ def load_geometry_catalog() -> dict[str, Any]:
             "resolvable": True,
         })
     return {"geometry_families": [], "named_geometries": entries}
+
+
+def clear_geometry_catalog_cache() -> None:
+    load_geometry_catalog.cache_clear()
+    _named_index.cache_clear()
+    _named_group_index.cache_clear()
 
 
 @lru_cache(maxsize=1)

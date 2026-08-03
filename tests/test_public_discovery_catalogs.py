@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import unittest
+import io
+import json
+import os
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from app import app, _classify_route_surface
+from mapmover.runtime import geometry_catalog
 
 
 class PublicDiscoveryCatalogTests(unittest.TestCase):
@@ -58,6 +62,34 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             "/api/v1/feeds/catalog",
         ):
             self.assertEqual(_classify_route_surface(path), "agent_api_discovery")
+
+    def test_geometry_catalog_loads_from_object_store_in_cloud_mode(self) -> None:
+        class FakeObjectStore:
+            def get_object(self, **kwargs):
+                self.kwargs = kwargs
+                return {
+                    "Body": io.BytesIO(json.dumps({
+                        "schema_version": 1,
+                        "geometry_banks": [{"bank_id": "cloud_bank"}],
+                    }).encode("utf-8"))
+                }
+
+        store = FakeObjectStore()
+        geometry_catalog.clear_geometry_catalog_cache()
+        with mock.patch.dict(os.environ, {"S3_BUCKET": "test-bucket", "S3_PREFIX": "published"}, clear=False):
+            with mock.patch(
+                "mapmover.runtime.geometry_catalog.get_runtime_config",
+                return_value={"runtime_mode": "cloud", "cloud": {"bucket": "test-bucket", "prefix": "published"}},
+            ), mock.patch(
+                "boto3.client",
+                return_value=store,
+            ):
+                payload = geometry_catalog.load_geometry_catalog()
+
+        self.assertEqual(payload["geometry_banks"][0]["bank_id"], "cloud_bank")
+        self.assertEqual(store.kwargs["Bucket"], "test-bucket")
+        self.assertEqual(store.kwargs["Key"], "published/geometry/geometry_catalog.json")
+        geometry_catalog.clear_geometry_catalog_cache()
 
 
 if __name__ == "__main__":
