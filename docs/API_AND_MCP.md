@@ -37,6 +37,18 @@ The four public catalog families are:
 | Feeds | `published/ops_feed_registry.json` | Public/runtime live feeds and Ops overlays |
 | Agent | `published/agent_catalog/api_catalog.json` | Agent/API/MCP-ready packs and tool families |
 
+## API/MCP Versus Downloads
+
+API and MCP surfaces are for small, hosted operations: probing availability,
+running filtered queries, converting identifiers, resolving a point, inspecting
+metadata, and fetching one geometry shape. They should return enough provenance
+for the caller to understand source, license, and citation obligations.
+
+Downloadable artifacts are for bulk use: complete pack snapshots, lite/full
+geometry releases, local runtime installs, external repository uploads, and DOI
+or dataset-search landing pages. Do not make MCP tools stream a whole release
+when the right answer is a manifest or downloadable object URL.
+
 ## Structured dataset query
 
 The main structured query route is:
