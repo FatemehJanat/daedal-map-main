@@ -288,6 +288,7 @@ def adjust_scores_with_context(
     adjusted_locations = sorted(adjusted_locations, key=lambda x: -x["confidence"])
     location_candidates["candidates"] = adjusted_locations
     location_candidates["best"] = adjusted_locations[0] if adjusted_locations else None
+    location_candidates["ignored_locations"] = location_candidates.get("ignored_locations") or []
 
     adjusted_intents = []
     for intent in intent_candidates.get("candidates", []):

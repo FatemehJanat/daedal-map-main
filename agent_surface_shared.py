@@ -134,8 +134,9 @@ def agent_ai_plugin_description_for_model(*, app_origin: str, docs_origin: str, 
     base += (
         "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
         "enabling cross-pack joins on a single column with no geography normalization. "
-        "Free geography tools resolve lat/lon and loc_ids on the same spine: resolve_point, "
-        "get_boundary, loc_id_hierarchy, loc_id_info, sidechain_to_admin, admin_to_sidechain. "
+        "Free geography tools use loc_id as the reserve identifier: list_reference_systems, "
+        "resolve_reference, loc_id_references, convert_reference, get_geometry, resolve_point, "
+        "get_boundary, loc_id_hierarchy, loc_id_info. "
         "request_id is optional but recommended for tracing and idempotency. "
         f"{free_vs_paid_sentence()}"
     )

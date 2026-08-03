@@ -388,6 +388,10 @@ def _direct_family_bank_path(family: str | None, iso3: str) -> Path | None:
         return DATA_ROOT / "countries" / iso3_value / "geometry" / "zcta" / f"{iso3_value}.parquet"
     if family_value == "overlay_tribal" and iso3_value:
         return DATA_ROOT / "countries" / iso3_value / "geometry" / "tribal" / f"{iso3_value}.parquet"
+    if family_value == "overlay_nws_public_zone" and iso3_value:
+        return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_public_zone" / f"{iso3_value}.parquet"
+    if family_value == "overlay_nws_fire_weather_zone" and iso3_value:
+        return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_fire_weather_zone" / f"{iso3_value}.parquet"
     return None
 
 
@@ -1437,7 +1441,7 @@ def get_location_info(loc_id: str):
     iso3 = parts[0]
     family = classify_loc_id_family(loc_id)
     inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
-    if family in {"overlay_zcta", "overlay_tribal", "marine_eez", "water_body", "regional_base"} or (
+    if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "marine_eez", "water_body", "regional_base"} or (
         inferred_admin_level is not None and inferred_admin_level >= 3
     ):
         feature = _get_selection_feature_for_loc_id(loc_id)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from functools import lru_cache
 import json
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,11 @@ class ApiSourceSpec:
     sortable_fields: set[str]
     location_filter_mode: str = "hierarchical_loc_id"
     location_lookup_field: str | None = None
+    hierarchical_filter_fields: tuple[str, ...] = ()
+    delimited_hierarchical_filter_fields: tuple[str, ...] = ()
+    derive_usa_iso3166_2_prefixes: bool = False
+    filter_value_aliases: dict[str, dict[str, tuple[Any, ...]]] = field(default_factory=dict)
+    sidechain_admin_bridges: tuple[dict[str, Any], ...] = ()
     default_limit: int = DEFAULT_LIMIT
     max_limit: int = MAX_LIMIT
     metadata_source_id: str | None = None
@@ -474,6 +480,99 @@ MIXED_TEMPORAL_TRANSITION_YEARS: dict[str, int | None] = {}
 PLAIN_YEAR_RE = re.compile(r"^-?\d{1,6}$")
 
 
+def _normalize_string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        str(item).strip()
+        for item in value
+        if str(item or "").strip()
+    )
+
+
+def _metadata_bool(metadata: dict[str, Any], source_defaults: dict[str, Any], key: str) -> bool:
+    value = metadata.get(key)
+    if value is None:
+        value = source_defaults.get(key)
+    return bool(value)
+
+
+def _normalize_filter_value_aliases(value: Any) -> dict[str, dict[str, tuple[Any, ...]]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, dict[str, tuple[Any, ...]]] = {}
+    for field, aliases in value.items():
+        field_name = str(field or "").strip()
+        if not field_name or not isinstance(aliases, dict):
+            continue
+        field_aliases: dict[str, tuple[Any, ...]] = {}
+        for alias, replacements in aliases.items():
+            alias_key = str(alias or "").strip().lower()
+            if not alias_key:
+                continue
+            if isinstance(replacements, list):
+                values = tuple(item for item in replacements if item is not None)
+            elif replacements is not None:
+                values = (replacements,)
+            else:
+                values = ()
+            if values:
+                field_aliases[alias_key] = values
+        if field_aliases:
+            normalized[field_name] = field_aliases
+    return normalized
+
+
+def _metadata_filter_value_aliases(
+    metadata: dict[str, Any],
+    source_defaults: dict[str, Any],
+) -> dict[str, dict[str, tuple[Any, ...]]]:
+    routing_hints = metadata.get("routing_hints")
+    routing_aliases = (
+        routing_hints.get("filter_value_aliases")
+        if isinstance(routing_hints, dict)
+        else None
+    )
+    return (
+        _normalize_filter_value_aliases(metadata.get("filter_value_aliases"))
+        or _normalize_filter_value_aliases(routing_aliases)
+        or _normalize_filter_value_aliases(source_defaults.get("filter_value_aliases"))
+    )
+
+
+def _normalize_sidechain_admin_bridges(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        return ()
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_family = str(item.get("source_family") or "").strip()
+        target_admin_level = str(item.get("target_admin_level") or "").strip()
+        if not source_family or not target_admin_level:
+            continue
+        bridge: dict[str, Any] = {
+            "source_family": source_family,
+            "target_admin_level": target_admin_level,
+        }
+        if item.get("iso3"):
+            bridge["iso3"] = str(item.get("iso3") or "").strip().upper()
+        if item.get("bridge_path"):
+            bridge["bridge_path"] = str(item.get("bridge_path") or "").strip()
+        if item.get("min_source_area_share") is not None:
+            try:
+                bridge["min_source_area_share"] = float(item.get("min_source_area_share"))
+            except (TypeError, ValueError):
+                pass
+        if item.get("limit") is not None:
+            try:
+                bridge["limit"] = int(item.get("limit"))
+            except (TypeError, ValueError):
+                pass
+        normalized.append(bridge)
+    return tuple(normalized)
+
+
 def _coerce_year_token(value: Any) -> int | None:
     if value is None or isinstance(value, bool):
         return None
@@ -542,6 +641,123 @@ def _compute_contiguous_timestamp_suffix_start(parquet_path: Path) -> int | None
     return int(suffix_start)
 
 
+@lru_cache(maxsize=512)
+def _usa_admin1_aliases_for_region_id(loc_id: str) -> tuple[str, ...]:
+    loc_text = str(loc_id or "").strip().upper()
+    if not loc_text.startswith("USA-"):
+        return ()
+    geometry_path = DATA_ROOT / "geometry" / "USA.parquet"
+    if not geometry_path.exists():
+        return ()
+    try:
+        rows = pd.read_parquet(geometry_path, columns=["loc_id", "admin_level", "iso_3166_2"])
+    except Exception:
+        return ()
+    if re.fullmatch(r"USA-[A-Z]{2}", loc_text):
+        iso_3166_2 = f"US-{loc_text[-2:]}"
+        match = rows[
+            (rows["admin_level"].astype(str) == "1")
+            & (rows["iso_3166_2"].astype(str).str.upper() == iso_3166_2)
+        ]
+        if match.empty:
+            return ()
+        return (str(match.iloc[0].get("loc_id") or "").strip(),)
+
+    match = rows[rows["loc_id"].astype(str).str.upper() == loc_text]
+    if match.empty:
+        return ()
+    row = match.iloc[0]
+    try:
+        admin_level = int(row.get("admin_level"))
+    except (TypeError, ValueError):
+        return ()
+    if admin_level != 1:
+        return ()
+    iso_3166_2 = str(row.get("iso_3166_2") or "").strip().upper()
+    if not iso_3166_2.startswith("US-") or len(iso_3166_2) != 5:
+        return ()
+    return (f"USA-{iso_3166_2[-2:]}",)
+
+
+def _expand_hierarchical_prefixes_for_spec(spec: ApiSourceSpec, prefixes: list[str]) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def append_candidate(candidate: Any) -> None:
+        text = str(candidate or "").strip()
+        if not text:
+            return
+        key = text.upper()
+        if key not in seen:
+            expanded.append(text)
+            seen.add(key)
+
+    for value in prefixes:
+        prefix = str(value or "").strip()
+        if not prefix:
+            continue
+        append_candidate(prefix)
+        if spec.derive_usa_iso3166_2_prefixes or prefix.upper().startswith("USA-"):
+            for alias in _usa_admin1_aliases_for_region_id(prefix):
+                append_candidate(alias)
+        for bridge in spec.sidechain_admin_bridges:
+            source_family = str(bridge.get("source_family") or "").strip()
+            if not source_family:
+                continue
+            try:
+                from .runtime.geography_reference import classify_loc_id_family
+                from .runtime.sidechain_admin_bridge import resolve_sidechain_to_admin
+            except Exception:
+                continue
+            if classify_loc_id_family(prefix) != source_family:
+                continue
+            bridge_path_raw = str(bridge.get("bridge_path") or "").strip()
+            bridge_path = Path(bridge_path_raw) if bridge_path_raw else None
+            result = resolve_sidechain_to_admin(
+                prefix,
+                source_family=source_family,
+                target_admin_level=str(bridge.get("target_admin_level") or "").strip(),
+                iso3=str(bridge.get("iso3") or "USA").strip().upper(),
+                bridge_path=bridge_path,
+                min_source_area_share=bridge.get("min_source_area_share"),
+                limit=bridge.get("limit"),
+            )
+            for overlap in result.get("overlaps") or []:
+                append_candidate(overlap.get("match_loc_id"))
+    return expanded
+
+
+def _append_hierarchical_prefix_where(
+    *,
+    col: str,
+    prefixes: list[str],
+    delimited: bool,
+    params: list[Any],
+) -> list[str]:
+    exact_or_descendant_parts: list[str] = []
+    for prefix in prefixes:
+        prefix_upper = prefix.upper()
+        if delimited:
+            exact_or_descendant_parts.append(f"upper({quote_ident(col)}) = ?")
+            params.append(prefix_upper)
+            exact_or_descendant_parts.append(f"starts_with(upper({quote_ident(col)}), ?)")
+            params.append(f"{prefix_upper}|")
+            exact_or_descendant_parts.append(f"contains(upper({quote_ident(col)}), ?)")
+            params.append(f"|{prefix_upper}|")
+            exact_or_descendant_parts.append(f"ends_with(upper({quote_ident(col)}), ?)")
+            params.append(f"|{prefix_upper}")
+            exact_or_descendant_parts.append(f"starts_with(upper({quote_ident(col)}), ?)")
+            params.append(f"{prefix_upper}-")
+            exact_or_descendant_parts.append(f"contains(upper({quote_ident(col)}), ?)")
+            params.append(f"|{prefix_upper}-")
+        else:
+            exact_or_descendant_parts.append(f"upper({quote_ident(col)}) = ?")
+            params.append(prefix_upper)
+            exact_or_descendant_parts.append(f"starts_with(upper({quote_ident(col)}), ?)")
+            params.append(f"{prefix_upper}-")
+    return exact_or_descendant_parts
+
+
 def _build_metric_specs_from_metadata(metadata: dict[str, Any] | None) -> dict[str, ApiMetricSpec]:
     metrics = metadata.get("metrics") if isinstance(metadata, dict) else {}
     if not isinstance(metrics, dict):
@@ -599,7 +815,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         temporal_coverage.get("granularity") or source_defaults.get("time_granularity")
     )
     source_path = Path(get_source_path(source_id))
-    parquet_name = str(source_defaults["parquet_name"])
+    parquet_name = str(metadata.get("runtime_primary_file") or source_defaults["parquet_name"]).strip()
     primary_candidate = source_path / parquet_name
     wrapper_aggregate_path = None
     if source_path.name.lower() == "aggregates" and source_path.parent.name.lower() == "sources":
@@ -676,7 +892,7 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
     return ApiSourceSpec(
         source_id=source_id,
         pack_id=str(metadata.get("pack_id") or source_defaults["pack_id"]),
-        parquet_name=str(source_defaults["parquet_name"]),
+        parquet_name=parquet_name,
         query_mode=str(source_defaults["query_mode"]),
         location_field=location_field,
         time_field=normalized_time_field,
@@ -686,6 +902,24 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
         sortable_fields=sortable_fields,
         location_filter_mode=location_filter_mode,
         location_lookup_field=location_lookup_field,
+        hierarchical_filter_fields=_normalize_string_tuple(
+            metadata.get("hierarchical_filter_fields")
+            or source_defaults.get("hierarchical_filter_fields")
+        ),
+        delimited_hierarchical_filter_fields=_normalize_string_tuple(
+            metadata.get("delimited_hierarchical_filter_fields")
+            or source_defaults.get("delimited_hierarchical_filter_fields")
+        ),
+        derive_usa_iso3166_2_prefixes=_metadata_bool(
+            metadata,
+            source_defaults,
+            "derive_usa_iso3166_2_prefixes",
+        ),
+        filter_value_aliases=_metadata_filter_value_aliases(metadata, source_defaults),
+        sidechain_admin_bridges=_normalize_sidechain_admin_bridges(
+            metadata.get("sidechain_admin_bridges")
+            or source_defaults.get("sidechain_admin_bridges")
+        ),
         default_limit=int(metadata.get("default_limit") or source_defaults["default_limit"]),
         max_limit=int(metadata.get("max_limit") or source_defaults["max_limit"]),
         metadata_source_id=metadata_source_id,
@@ -1282,6 +1516,7 @@ def execute_dataset_query(
     limit: int | None = None,
     aggregate_dimension_columns: list[str] | None = None,
     aggregate_label_columns: list[str] | None = None,
+    require_any_non_null_columns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     from .duckdb_helpers import _normalize_ts_for_duckdb
 
@@ -1305,6 +1540,13 @@ def execute_dataset_query(
 
     for col, value in (exact_filters or {}).items():
         if col in available_cols and value is not None:
+            alias_values = spec.filter_value_aliases.get(col, {}).get(str(value).strip().lower())
+            if alias_values:
+                normalized_upper_values = [str(alias_value).upper() for alias_value in alias_values]
+                placeholders = ", ".join("?" for _ in normalized_upper_values)
+                where_parts.append(f"upper({quote_ident(col)}) IN ({placeholders})")
+                params.extend(normalized_upper_values)
+                continue
             if col == spec.time_field and is_temporal_time_field(spec):
                 where_parts.append(f"CAST({quote_ident(col)} AS TIMESTAMP) = CAST(? AS TIMESTAMP)")
                 params.append(_normalize_ts_for_duckdb(str(value)))
@@ -1322,16 +1564,24 @@ def execute_dataset_query(
 
     for col, prefixes in (hierarchical_prefix_filters or {}).items():
         normalized_prefixes = [str(value).strip() for value in (prefixes or []) if str(value).strip()]
-        if col not in available_cols or not normalized_prefixes:
+        if not normalized_prefixes:
             continue
+        expanded_prefixes = _expand_hierarchical_prefixes_for_spec(spec, normalized_prefixes)
+        prefix_fields = [col, *spec.hierarchical_filter_fields]
+        delimited_fields = set(spec.delimited_hierarchical_filter_fields)
         exact_or_descendant_parts: list[str] = []
-        for prefix in normalized_prefixes:
-            prefix_upper = prefix.upper()
-            exact_or_descendant_parts.append(f"upper({quote_ident(col)}) = ?")
-            params.append(prefix_upper)
-            exact_or_descendant_parts.append(f"starts_with(upper({quote_ident(col)}), ?)")
-            params.append(f"{prefix_upper}-")
-        where_parts.append("(" + " OR ".join(exact_or_descendant_parts) + ")")
+        for field in dict.fromkeys(prefix_fields):
+            if field in available_cols:
+                exact_or_descendant_parts.extend(
+                    _append_hierarchical_prefix_where(
+                        col=field,
+                        prefixes=expanded_prefixes,
+                        delimited=field in delimited_fields,
+                        params=params,
+                    )
+                )
+        if exact_or_descendant_parts:
+            where_parts.append("(" + " OR ".join(exact_or_descendant_parts) + ")")
 
     for col, op, value in (compare_filters or []):
         if value is None:
@@ -1415,10 +1665,21 @@ def execute_dataset_query(
             return []
         return df.to_dict("records")
 
+    normal_where_parts = list(where_parts)
+    required_non_null = [
+        str(col).strip()
+        for col in (require_any_non_null_columns or [])
+        if str(col).strip() in available_cols
+    ]
+    if required_non_null:
+        normal_where_parts.append(
+            "(" + " OR ".join(f"{quote_ident(col)} IS NOT NULL" for col in dict.fromkeys(required_non_null)) + ")"
+        )
+
     select_expr = ", ".join(quote_ident(col) for col in selected)
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
-    if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
+    if normal_where_parts:
+        sql += " WHERE " + " AND ".join(normal_where_parts)
     if order_parts:
         sql += " ORDER BY " + ", ".join(order_parts)
 

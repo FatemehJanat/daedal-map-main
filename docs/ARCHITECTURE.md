@@ -108,13 +108,16 @@ Avoid embedding a second data model in frontend code.
 The public repository intentionally ships a small authoring seam:
 
 - `converters/catalog_builder.py`;
-- `converters/setup_gadm.py`;
+- `converters/setup_gadm.py` as a legacy compatibility example only;
 - `scripts/add_temporal_columns.py`;
 - `scripts/simplify_geometry.py`.
 
 Researchers may use any reproducible conversion stack that produces compatible
 files. The public runtime contract is defined by outputs, not an internal
-production converter framework.
+production converter framework. The production geometry spine is maintained in
+the private build tooling through reviewed GeoBoundaries/marine bank builders,
+catalog approval, and QA gates; public converters should target the resulting
+loc_id and geometry file contracts rather than rebuilding the spine.
 
 ## Dependency direction
 

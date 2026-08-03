@@ -15,9 +15,12 @@ from .helpers import msgpack_error, msgpack_response
 
 router = APIRouter()
 EVENTS = GLOBAL_DIR / "disasters" / "nws_alerts" / "events.parquet"
+V2_EVENTS = GLOBAL_DIR / "disasters" / "nws_alerts_v2" / "events.parquet"
 YEARLY_TEXT_ROOT = GLOBAL_DIR / "disasters" / "nws_alerts" / "text_hydration" / "yearly"
 _events_df: pd.DataFrame | None = None
+_v2_events_df: pd.DataFrame | None = None
 _history_payloads: dict[tuple[int, int], dict] = {}
+_v2_history_payloads: dict[tuple[int, int], dict] = {}
 _PRODUCT_ID_RE = re.compile(r"^(?P<year>\d{4})\d{8}-[A-Z0-9-]+$")
 
 
@@ -51,6 +54,66 @@ def _load_events() -> pd.DataFrame:
         _events_df["_start_at"] = pd.to_datetime(_events_df["start_time"], utc=True, errors="coerce")
         _events_df["_end_at"] = pd.to_datetime(_events_df["end_time"], utc=True, errors="coerce")
     return _events_df
+
+
+def _load_v2_events() -> pd.DataFrame:
+    """Keep the isolated lifecycle-v2 event index resident for local testing."""
+    global _v2_events_df
+    if _v2_events_df is None:
+        _v2_events_df = pd.read_parquet(V2_EVENTS)
+        _v2_events_df["_start_at"] = pd.to_datetime(_v2_events_df["start_time"], utc=True, errors="coerce")
+        _v2_events_df["_end_at"] = pd.to_datetime(_v2_events_df["end_time"], utc=True, errors="coerce")
+    return _v2_events_df
+
+
+def _history_payload_for(
+    df: pd.DataFrame,
+    cache: dict[tuple[int, int], dict],
+    start_year: int,
+    end_year: int,
+    summary_only: bool,
+) -> dict:
+    """Build a compact NWS playback payload for either source generation."""
+    cache_key = (start_year, end_year)
+    if cache_key not in cache:
+        range_start = pd.Timestamp(f"{start_year}-01-01T00:00:00Z")
+        range_end = pd.Timestamp(f"{end_year + 1}-01-01T00:00:00Z")
+        frame = df[
+            (df["_start_at"] < range_end)
+            & (df["_end_at"] >= range_start)
+            & (df["_end_at"] > df["_start_at"])
+        ]
+        needed = sorted({loc for value in frame.get("affected_loc_ids", []) for loc in str(value or "").split("|") if loc})
+        county = get_selection_geometries(needed) if needed else {"features": []}
+        counties = {
+            str((feature.get("properties") or {}).get("loc_id")): feature.get("geometry")
+            for feature in county.get("features", [])
+            if (feature.get("properties") or {}).get("loc_id") and feature.get("geometry")
+        }
+        events = []
+        for row in frame.to_dict("records"):
+            starts_at, ends_at = row.get("_start_at"), row.get("_end_at")
+            if pd.isna(starts_at) or pd.isna(ends_at):
+                continue
+            raw_geometry = row.get("native_geometry_geojson")
+            events.append({
+                "id": str(row.get("event_id") or ""),
+                "start": int(starts_at.timestamp() * 1000),
+                "end": int(ends_at.timestamp() * 1000),
+                "point": [float(row["longitude"]), float(row["latitude"])],
+                "geometry": json.loads(raw_geometry) if raw_geometry else None,
+                "county_ids": [loc for loc in str(row.get("affected_loc_ids") or "").split("|") if loc],
+                "properties": _event_properties(row),
+            })
+        cache[cache_key] = {
+            "events": events, "counties": counties,
+            "start": int(range_start.timestamp() * 1000),
+            "end": int((range_end - pd.Timedelta(milliseconds=1)).timestamp() * 1000),
+        }
+    payload = cache[cache_key]
+    if summary_only:
+        return {"event_count": int(len(payload.get("events") or [])), "start": payload["start"], "end": payload["end"]}
+    return payload
 
 
 def _event_properties(row: dict) -> dict:
@@ -250,3 +313,47 @@ async def historical_nws_alert_text(req: Request, product_id: str):
         return msgpack_response(_load_yearly_text(product_id))
     except Exception:
         return msgpack_error("Historical NWS bulletin text is unavailable.", 500)
+
+
+@router.get("/api/wip/nws-alerts-v2/availability")
+async def historical_nws_alert_v2_availability(req: Request):
+    """Availability for the isolated lifecycle-corrected NWS v2 source."""
+    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+        return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
+    if not V2_EVENTS.exists():
+        return msgpack_error("Historical NWS v2 WIP data is not installed.", 404)
+    timestamps = _load_v2_events().get("_start_at")
+    years = sorted(set(timestamps.dropna().dt.year.astype(int).tolist())) if timestamps is not None else []
+    if not years:
+        return msgpack_error("No historical NWS v2 alert events are installed.", 404)
+    return msgpack_response({"available_years": years, "newest_year": years[-1], "hydrated_text_years": _available_years()})
+
+
+@router.get("/api/wip/nws-alerts-v2/history")
+async def historical_nws_alerts_v2(
+    req: Request,
+    start_year: int = 2025,
+    end_year: int = 2025,
+    summary_only: bool = False,
+):
+    """Serve isolated lifecycle-v2 playback without changing canonical NWS."""
+    if not request_can_use_wip_catalog(req, get_authenticated_user(req)):
+        return msgpack_error("WIP catalog access is limited to admin accounts.", 403)
+    if not V2_EVENTS.exists():
+        return msgpack_error("Historical NWS v2 WIP data is not installed.", 404)
+    df = _load_v2_events()
+    timestamps = df.get("_start_at")
+    years = sorted(set(timestamps.dropna().dt.year.astype(int).tolist())) if timestamps is not None else []
+    if not years:
+        return msgpack_error("No historical NWS v2 alert events are installed.", 404)
+    start_year, end_year = sorted((start_year, end_year))
+    if start_year < years[0] or end_year > years[-1]:
+        return msgpack_error("Requested NWS v2 history is outside the installed 1986-2025 event coverage.", 404)
+    payload = _history_payload_for(df, _v2_history_payloads, start_year, end_year, summary_only)
+    if summary_only:
+        return msgpack_response(payload)
+    return msgpack_response({
+        **payload,
+        "available_years": years,
+        "hydrated_text_years": _available_years(),
+    })

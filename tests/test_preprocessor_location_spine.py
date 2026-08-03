@@ -131,6 +131,42 @@ class PreprocessorLocationSpineTests(unittest.TestCase):
                 candidates = detect_location_candidates(case["query"])
                 self.assertEqual((candidates.get("best") or {}).get("loc_id"), case["expected_loc_id"])
 
+    def test_lowercase_bare_iso3_words_are_not_locations(self):
+        cases = [
+            ("can you show me volcanoes", "CAN"),
+            ("show me co2 per capita", "PER"),
+            ("volcanic eruptions 10 years ago", "AGO"),
+            ("Are there tsunami events in the Mediterranean in this data?", "ARE"),
+        ]
+
+        for query, iso3 in cases:
+            with self.subTest(query=query):
+                extracted = extract_country_from_query(query)
+                self.assertIsNone(extracted.get("match"))
+
+                candidates = detect_location_candidates(query)
+                self.assertIsNone(candidates.get("best"))
+                ignored = candidates.get("ignored_locations") or []
+                self.assertTrue(
+                    any(item.get("iso3") == iso3 for item in ignored),
+                    f"expected ignored lowercase ISO3 evidence for {iso3}",
+                )
+
+    def test_uppercase_iso3_and_human_aliases_still_resolve(self):
+        cases = [
+            ("show me volcanoes in CAN", "CAN"),
+            ("show me volcanoes in the uae", "ARE"),
+            ("show me volcanoes in Canada", "CAN"),
+        ]
+
+        for query, expected_loc_id in cases:
+            with self.subTest(query=query):
+                extracted = extract_country_from_query(query)
+                self.assertEqual(extracted.get("loc_id"), expected_loc_id)
+
+                candidates = detect_location_candidates(query)
+                self.assertEqual((candidates.get("best") or {}).get("loc_id"), expected_loc_id)
+
     def test_zip_resolution_still_returns_deepest_stack(self):
         resolved = resolve_admin_text_to_loc_id("90210", country_hint="USA")
         self.assertEqual(resolved.get("match_type"), "postal_code")

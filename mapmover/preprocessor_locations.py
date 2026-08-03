@@ -6,16 +6,22 @@ import re
 from pathlib import Path
 from typing import Callable, Optional
 
-from .runtime.geography_reference import load_capital_to_iso3_map, load_country_name_to_iso3_map
+from .runtime.geography_reference import load_capital_to_iso3_map, load_country_name_to_iso3_map, load_iso_codes
 from .runtime.loc_id_resolution import resolve_admin_text_to_loc_id
 
 
+# Spans made only of these tokens never become location candidates. Bare ISO3
+# handling below is the stronger guard for country-code collisions; this list
+# still removes ordinary filler spans before resolver work.
 _SPAN_STOP_WORDS = {
     "a",
+    "ago",
     "an",
     "and",
+    "are",
     "at",
     "by",
+    "can",
     "data",
     "event",
     "events",
@@ -23,14 +29,25 @@ _SPAN_STOP_WORDS = {
     "from",
     "in",
     "me",
+    "nor",
     "of",
     "on",
+    "per",
     "records",
     "show",
     "than",
     "the",
     "to",
+    "ton",
+    "vat",
     "within",
+}
+
+_WORD_RE = re.compile(r"[\w'-]+")
+_EXPLICIT_LOWERCASE_ISO_ALIASES = {
+    # Common human country shorthands. Bare ISO3 codes like "are", "can", and
+    # "per" are not natural-language aliases unless users write them uppercase.
+    "usa",
 }
 
 
@@ -44,9 +61,56 @@ def build_subregion_to_iso3(*, reference_dir: Path, load_reference_file: Callabl
     return dict(load_capital_to_iso3_map())
 
 
-def _extract_explicit_country_hints(query_lower: str, name_to_iso3: dict[str, str]) -> list[tuple[str, str]]:
+def _query_original_term_map(query: str) -> dict[str, list[str]]:
+    terms: dict[str, list[str]] = {}
+    for match in _WORD_RE.finditer(query or ""):
+        original = match.group(0).strip(" ,")
+        normalized = original.lower()
+        if original and normalized:
+            terms.setdefault(normalized, []).append(original)
+    return terms
+
+
+def _is_bare_iso3_alias(term: str, iso3_codes: set[str]) -> bool:
+    token = str(term or "").strip()
+    return len(token) == 3 and token.isalpha() and token.upper() in iso3_codes
+
+
+def _original_term_has_uppercase_iso3(term: str, original_terms: dict[str, list[str]]) -> bool:
+    for original in original_terms.get(str(term or "").strip().lower(), []):
+        if len(original) == 3 and original.isalpha() and original == original.upper():
+            return True
+    return False
+
+
+def _lowercase_iso3_should_be_ignored(term: str, original_terms: dict[str, list[str]], iso3_codes: set[str]) -> bool:
+    token = str(term or "").strip().lower()
+    if token in _EXPLICIT_LOWERCASE_ISO_ALIASES:
+        return False
+    return _is_bare_iso3_alias(token, iso3_codes) and not _original_term_has_uppercase_iso3(token, original_terms)
+
+
+def _ignored_lowercase_iso3_record(term: str, iso3: str, iso3_to_name: dict[str, str]) -> dict:
+    return {
+        "term": str(term or "").strip(),
+        "iso3": str(iso3 or "").strip().upper(),
+        "country_name": iso3_to_name.get(str(iso3 or "").strip().upper(), str(iso3 or "").strip().upper()),
+        "reason": "lowercase_bare_iso3_in_natural_language",
+    }
+
+
+def _extract_explicit_country_hints(
+    query_lower: str,
+    name_to_iso3: dict[str, str],
+    *,
+    original_terms: dict[str, list[str]],
+    iso3_codes: set[str],
+    iso3_to_name: dict[str, str],
+) -> tuple[list[tuple[str, str]], list[dict]]:
     hints: list[tuple[str, str]] = []
+    ignored: list[dict] = []
     seen_iso3: set[str] = set()
+    seen_ignored: set[tuple[str, str]] = set()
     for name in sorted(name_to_iso3.keys(), key=len, reverse=True):
         pattern = r"\b" + re.escape(name) + r"\b"
         if not re.search(pattern, query_lower):
@@ -54,30 +118,53 @@ def _extract_explicit_country_hints(query_lower: str, name_to_iso3: dict[str, st
         iso3 = str(name_to_iso3[name] or "").strip().upper()
         if not iso3 or iso3 in seen_iso3:
             continue
+        if _lowercase_iso3_should_be_ignored(name, original_terms, iso3_codes):
+            key = (name, iso3)
+            if key not in seen_ignored:
+                ignored.append(_ignored_lowercase_iso3_record(name, iso3, iso3_to_name))
+                seen_ignored.add(key)
+            continue
         hints.append((name, iso3))
         seen_iso3.add(iso3)
-    return hints
+    return hints, ignored
 
 
-def _iter_query_spans(query_lower: str, *, max_words: int = 6) -> list[str]:
+def _iter_query_spans(
+    query_lower: str,
+    *,
+    original_terms: dict[str, list[str]],
+    iso3_codes: set[str],
+    iso3_to_name: dict[str, str],
+    max_words: int = 6,
+) -> tuple[list[str], list[dict]]:
     cleaned = re.sub(r"[^\w\s,'-]", " ", query_lower)
     tokens = [token.strip(" ,") for token in cleaned.split() if token.strip(" ,")]
     spans: list[str] = []
+    ignored: list[dict] = []
     seen: set[str] = set()
+    seen_ignored: set[str] = set()
     token_count = len(tokens)
     for length in range(min(max_words, token_count), 0, -1):
         for start in range(0, token_count - length + 1):
             span_tokens = tokens[start : start + length]
             if not span_tokens:
                 continue
-            if all(token in _SPAN_STOP_WORDS for token in span_tokens):
-                continue
             span = " ".join(span_tokens).strip(" ,")
             if not span or span in seen:
                 continue
+            bare_iso = length == 1 and _is_bare_iso3_alias(span, iso3_codes)
+            uppercase_iso = bare_iso and _original_term_has_uppercase_iso3(span, original_terms)
+            if length == 1 and _lowercase_iso3_should_be_ignored(span, original_terms, iso3_codes):
+                iso3 = span.upper()
+                if span not in seen_ignored:
+                    ignored.append(_ignored_lowercase_iso3_record(span, iso3, iso3_to_name))
+                    seen_ignored.add(span)
+                continue
+            if all(token in _SPAN_STOP_WORDS for token in span_tokens) and not uppercase_iso:
+                continue
             seen.add(span)
             spans.append(span)
-    return spans
+    return spans, ignored
 
 
 def _build_location_candidate(
@@ -124,15 +211,43 @@ def _sort_location_candidates(candidates: list[dict]) -> list[dict]:
 def _resolve_query_location_candidates(
     query_lower: str,
     *,
+    original_query: str,
     name_to_iso3: dict[str, str],
     iso3_to_name: dict[str, str],
-) -> list[dict]:
-    explicit_country_hints = _extract_explicit_country_hints(query_lower, name_to_iso3)
+) -> tuple[list[dict], list[dict]]:
+    if not iso3_to_name:
+        iso_data = load_iso_codes()
+        iso3_to_name = iso_data.get("iso3_to_name", {}) if isinstance(iso_data, dict) else {}
+    iso3_codes = {
+        str(code or "").strip().upper()
+        for code in iso3_to_name.keys()
+        if str(code or "").strip()
+    }
+    iso3_codes.update(
+        str(code or "").strip().upper()
+        for code in name_to_iso3.values()
+        if str(code or "").strip()
+    )
+    original_terms = _query_original_term_map(original_query)
+    explicit_country_hints, ignored_locations = _extract_explicit_country_hints(
+        query_lower,
+        name_to_iso3,
+        original_terms=original_terms,
+        iso3_codes=iso3_codes,
+        iso3_to_name=iso3_to_name,
+    )
     hint_values = [None] + [iso3 for _name, iso3 in explicit_country_hints]
     candidates: list[dict] = []
     seen_loc_ids: set[str] = set()
 
-    for span in _iter_query_spans(query_lower):
+    spans, ignored_spans = _iter_query_spans(
+        query_lower,
+        original_terms=original_terms,
+        iso3_codes=iso3_codes,
+        iso3_to_name=iso3_to_name,
+    )
+    ignored_locations.extend(ignored_spans)
+    for span in spans:
         for country_hint in hint_values:
             resolved = resolve_admin_text_to_loc_id(span, country_hint=country_hint)
             loc_id = str(resolved.get("deepest_resolved_loc_id") or "").strip()
@@ -172,7 +287,7 @@ def _resolve_query_location_candidates(
         )
         seen_loc_ids.add(iso3)
 
-    return _sort_location_candidates(candidates)
+    return _sort_location_candidates(candidates), ignored_locations
 
 
 def extract_country_from_query(
@@ -190,11 +305,13 @@ def extract_country_from_query(
     name_to_iso3 = build_name_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
     iso_data = load_reference_file(reference_dir / "iso_codes.json") or {}
     iso3_to_name = iso_data.get("iso3_to_name", {})
-    candidates = _resolve_query_location_candidates(
+    candidates, ignored_locations = _resolve_query_location_candidates(
         query_lower,
+        original_query=normalized_query,
         name_to_iso3=name_to_iso3,
         iso3_to_name=iso3_to_name,
     )
+    result["ignored_locations"] = ignored_locations
     if candidates:
         best = candidates[0]
         result["match"] = (
@@ -235,12 +352,17 @@ def detect_location_candidates(
     iso3_to_name = iso_data.get("iso3_to_name", {})
 
     name_to_iso3 = build_name_to_iso3(reference_dir=reference_dir, load_reference_file=load_reference_file)
-    candidates = _resolve_query_location_candidates(
+    candidates, ignored_locations = _resolve_query_location_candidates(
         query_lower,
+        original_query=normalized_query,
         name_to_iso3=name_to_iso3,
         iso3_to_name=iso3_to_name,
     )
-    return {"candidates": candidates, "best": candidates[0] if candidates else None}
+    return {
+        "candidates": candidates,
+        "best": candidates[0] if candidates else None,
+        "ignored_locations": ignored_locations,
+    }
 
 
 def detect_drilldown_pattern(

@@ -1,6 +1,14 @@
 import unittest
+import asyncio
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
-from mapmover.api_query_runtime import ApiSourceSpec
+import pandas as pd
+from starlette.requests import Request
+
+from mapmover.api_query_runtime import ApiMetricSpec, ApiSourceSpec, execute_dataset_query
 from mapmover.api_query_scope import format_year_end, format_year_start, parse_time_filter
 from mapmover.execution.event_execution import _build_single_event_message
 from mapmover.runtime.filter_primitives import partition_region_filter_codes
@@ -13,6 +21,381 @@ from mapmover.runtime.query_constraint_primitives import extract_query_constrain
 
 
 class EventQueryRuntimeTests(unittest.TestCase):
+    def test_dataset_query_matches_delimited_hierarchical_region_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet_path = Path(tmp) / "events.parquet"
+            pd.DataFrame(
+                [
+                    {
+                        "loc_id": "USA",
+                        "affected_loc_ids": "USA-CA-001|USA-CA-037",
+                        "timestamp": "2020-01-01T00:00:00Z",
+                    },
+                    {
+                        "loc_id": "USA",
+                        "affected_loc_ids": "USA-TX-201",
+                        "timestamp": "2020-01-02T00:00:00Z",
+                    },
+                ]
+            ).to_parquet(parquet_path, index=False)
+            spec = ApiSourceSpec(
+                source_id="nws_alerts_historical",
+                pack_id="nws_alerts",
+                parquet_name="events.parquet",
+                query_mode="single_source_events",
+                location_field="loc_id",
+                time_field="timestamp",
+                time_granularity="timestamp",
+                metrics={
+                    "event_count": ApiMetricSpec(
+                        metric_id="event_count",
+                        column="event_count",
+                        description="Count of events matching the applied filters",
+                    )
+                },
+                filterable_fields={"loc_id", "affected_loc_ids", "timestamp"},
+                sortable_fields={"loc_id", "timestamp", "event_count"},
+                hierarchical_filter_fields=("affected_loc_ids",),
+                delimited_hierarchical_filter_fields=("affected_loc_ids",),
+            )
+            object.__setattr__(spec, "local_parquet_path", str(parquet_path))
+
+            rows = execute_dataset_query(
+                spec,
+                select_columns=["loc_id", "timestamp", "event_count"],
+                hierarchical_prefix_filters={"loc_id": ["USA-CA"]},
+                sort_items=[("timestamp", "asc")],
+                limit=10,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["event_count"], 1)
+        self.assertEqual(rows[0]["timestamp"], "2020-01-01T00:00:00Z")
+
+    def test_dataset_query_derives_usa_iso3166_2_prefix_for_admin_spine_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet_path = Path(tmp) / "classification.parquet"
+            pd.DataFrame(
+                [
+                    {"loc_id": "USA-PR-001-000100", "year": 2024, "disadvantaged": True},
+                    {"loc_id": "USA-CA-037-000100", "year": 2024, "disadvantaged": False},
+                ]
+            ).to_parquet(parquet_path, index=False)
+            spec = ApiSourceSpec(
+                source_id="cejst_classification",
+                pack_id="cejst",
+                parquet_name="classification.parquet",
+                query_mode="single_source",
+                location_field="loc_id",
+                time_field="year",
+                time_granularity="yearly",
+                metrics={
+                    "disadvantaged": ApiMetricSpec(
+                        metric_id="disadvantaged",
+                        column="disadvantaged",
+                        description="Disadvantaged community flag",
+                    )
+                },
+                filterable_fields={"loc_id", "year", "disadvantaged"},
+                sortable_fields={"loc_id", "year", "disadvantaged"},
+                derive_usa_iso3166_2_prefixes=True,
+            )
+            object.__setattr__(spec, "local_parquet_path", str(parquet_path))
+
+            with patch(
+                "mapmover.api_query_runtime._usa_admin1_aliases_for_region_id",
+                return_value=("USA-PR",),
+            ):
+                rows = execute_dataset_query(
+                    spec,
+                    select_columns=["loc_id", "year", "disadvantaged"],
+                    hierarchical_prefix_filters={"loc_id": ["USA-G166186276B86072070009793"]},
+                    exact_filters={"year": 2024},
+                    limit=10,
+                )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["loc_id"], "USA-PR-001-000100")
+
+    def test_dataset_query_derives_geometry_admin1_alias_for_usa_state_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet_path = Path(tmp) / "events.parquet"
+            alaska_geometry_id = "USA-G166186276BTEST"
+            pd.DataFrame(
+                [
+                    {"loc_id": f"{alaska_geometry_id}-G252423323B001", "timestamp": "2026-01-01T00:00:00Z", "magnitude": 5.0},
+                    {"loc_id": "USA-G166186276BOTHER-G252423323B001", "timestamp": "2026-01-02T00:00:00Z", "magnitude": 4.0},
+                ]
+            ).to_parquet(parquet_path, index=False)
+            spec = ApiSourceSpec(
+                source_id="earthquakes_events",
+                pack_id="earthquakes",
+                parquet_name="events.parquet",
+                query_mode="single_source_events",
+                location_field="loc_id",
+                time_field="timestamp",
+                time_granularity="timestamp",
+                metrics={
+                    "magnitude": ApiMetricSpec(
+                        metric_id="magnitude",
+                        column="magnitude",
+                        description="Magnitude",
+                    )
+                },
+                filterable_fields={"loc_id", "timestamp"},
+                sortable_fields={"loc_id", "timestamp", "magnitude"},
+            )
+            object.__setattr__(spec, "local_parquet_path", str(parquet_path))
+
+            with patch(
+                "mapmover.api_query_runtime._usa_admin1_aliases_for_region_id",
+                return_value=(alaska_geometry_id,),
+            ):
+                rows = execute_dataset_query(
+                    spec,
+                    select_columns=["loc_id", "timestamp", "magnitude"],
+                    hierarchical_prefix_filters={"loc_id": ["USA-AK"]},
+                    sort_items=[("magnitude", "desc")],
+                    limit=10,
+                )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["loc_id"], f"{alaska_geometry_id}-G252423323B001")
+
+    def test_dataset_query_expands_source_owned_filter_value_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet_path = Path(tmp) / "locations.parquet"
+            pd.DataFrame(
+                [
+                    {"loc_id": "DEU", "year": 2026, "facility_type": "fab_lab", "latitude": 1.0},
+                    {"loc_id": "DEU", "year": 2026, "facility_type": "hackerspace", "latitude": 2.0},
+                    {"loc_id": "DEU", "year": 2026, "facility_type": "prusa_user", "latitude": 3.0},
+                ]
+            ).to_parquet(parquet_path, index=False)
+            spec = ApiSourceSpec(
+                source_id="distributed_manufacturing",
+                pack_id="distributed_manufacturing",
+                parquet_name="locations.parquet",
+                query_mode="single_source",
+                location_field="loc_id",
+                time_field="year",
+                time_granularity="yearly",
+                metrics={
+                    "latitude": ApiMetricSpec(
+                        metric_id="latitude",
+                        column="latitude",
+                        description="Latitude",
+                    )
+                },
+                filterable_fields={"loc_id", "year", "facility_type"},
+                sortable_fields={"loc_id", "year", "facility_type", "latitude"},
+                filter_value_aliases={
+                    "facility_type": {
+                        "makerspace": ("makerspace", "fab_lab", "hackerspace"),
+                    }
+                },
+            )
+            object.__setattr__(spec, "local_parquet_path", str(parquet_path))
+
+            rows = execute_dataset_query(
+                spec,
+                select_columns=["loc_id", "year", "latitude"],
+                hierarchical_prefix_filters={"loc_id": ["DEU"]},
+                exact_filters={"year": 2026, "facility_type": "makerspace"},
+                sort_items=[("latitude", "asc")],
+                limit=10,
+            )
+
+        self.assertEqual([row["latitude"] for row in rows], [1.0, 2.0])
+
+    def test_dataset_query_expands_declared_sidechain_admin_bridge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "classification.parquet"
+            bridge_path = Path(tmp) / "overlay_tribal_to_admin_3_USA.parquet"
+            pd.DataFrame(
+                [
+                    {"loc_id": "USA-AZ-005-945000", "year": 2024, "disadvantaged": True},
+                    {"loc_id": "USA-AZ-005-945100", "year": 2024, "disadvantaged": False},
+                    {"loc_id": "USA-CA-037-000100", "year": 2024, "disadvantaged": False},
+                ]
+            ).to_parquet(source_path, index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "source_family": "overlay_tribal",
+                        "source_loc_id": "USA-TRIBAL-2430",
+                        "source_name": "Navajo Nation",
+                        "target_family": "admin",
+                        "target_admin_level": "admin_3",
+                        "target_loc_id": "USA-AZ-005-945000",
+                        "target_name": "Census Tract 9450",
+                        "intersection_area": 10.0,
+                        "source_area": 100.0,
+                        "target_area": 10.0,
+                        "source_area_share": 0.7,
+                        "target_area_share": 1.0,
+                        "rank_by_source_area": 1,
+                        "rank_by_target_area": 1,
+                        "is_primary": True,
+                        "primary_policy": "largest_source_area_share",
+                        "source_centroid_target_loc_id": "USA-AZ-005-945000",
+                        "bridge_vintage": "test",
+                        "area_crs": "EPSG:5070",
+                    },
+                    {
+                        "source_family": "overlay_tribal",
+                        "source_loc_id": "USA-TRIBAL-2430",
+                        "source_name": "Navajo Nation",
+                        "target_family": "admin",
+                        "target_admin_level": "admin_3",
+                        "target_loc_id": "USA-AZ-005-945100",
+                        "target_name": "Census Tract 9451",
+                        "intersection_area": 5.0,
+                        "source_area": 100.0,
+                        "target_area": 10.0,
+                        "source_area_share": 0.3,
+                        "target_area_share": 0.5,
+                        "rank_by_source_area": 2,
+                        "rank_by_target_area": 1,
+                        "is_primary": False,
+                        "primary_policy": "largest_source_area_share",
+                        "source_centroid_target_loc_id": "USA-AZ-005-945000",
+                        "bridge_vintage": "test",
+                        "area_crs": "EPSG:5070",
+                    },
+                ]
+            ).to_parquet(bridge_path, index=False)
+            spec = ApiSourceSpec(
+                source_id="cejst_classification",
+                pack_id="cejst",
+                parquet_name="classification.parquet",
+                query_mode="single_source",
+                location_field="loc_id",
+                time_field="year",
+                time_granularity="yearly",
+                metrics={
+                    "disadvantaged": ApiMetricSpec(
+                        metric_id="disadvantaged",
+                        column="disadvantaged",
+                        description="Disadvantaged community flag",
+                    )
+                },
+                filterable_fields={"loc_id", "year", "disadvantaged"},
+                sortable_fields={"loc_id", "year", "disadvantaged"},
+                sidechain_admin_bridges=(
+                    {
+                        "source_family": "overlay_tribal",
+                        "target_admin_level": "admin_3",
+                        "iso3": "USA",
+                        "bridge_path": str(bridge_path),
+                    },
+                ),
+            )
+            object.__setattr__(spec, "local_parquet_path", str(source_path))
+
+            rows = execute_dataset_query(
+                spec,
+                select_columns=["loc_id", "year", "disadvantaged"],
+                hierarchical_prefix_filters={"loc_id": ["USA-TRIBAL-2430"]},
+                exact_filters={"year": 2024},
+                sort_items=[("loc_id", "asc")],
+                limit=10,
+            )
+
+        self.assertEqual([row["loc_id"] for row in rows], ["USA-AZ-005-945000", "USA-AZ-005-945100"])
+
+    def test_dataset_query_response_attaches_metric_response_obligations(self):
+        from mapmover.routes.api_query import execute_query_dataset_payload
+
+        spec = ApiSourceSpec(
+            source_id="tsunamis_events",
+            pack_id="tsunamis",
+            parquet_name="events.parquet",
+            query_mode="single_source_events",
+            location_field="loc_id",
+            time_field="year",
+            time_granularity="yearly",
+            metrics={
+                "max_water_height_m": ApiMetricSpec(
+                    metric_id="max_water_height_m",
+                    column="max_water_height_m",
+                    description="Maximum reported local water height / runup (m)",
+                )
+            },
+            filterable_fields={"loc_id", "year"},
+            sortable_fields={"loc_id", "year", "max_water_height_m"},
+        )
+        metadata = {
+            "metrics": {
+                "max_water_height_m": {
+                    "years": [-2000, 2026],
+                    "countries": 147,
+                    "density": 0.62,
+                    "response_semantics": {
+                        "canonical_term": "reported local water height or runup observation",
+                        "required_framing": "These values are reported local observations.",
+                    }
+                }
+            }
+        }
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/v1/query/dataset",
+                "headers": [(b"accept", b"application/json")],
+                "client": ("test", 0),
+                "server": ("test", 0),
+                "scheme": "http",
+                "query_string": b"",
+            }
+        )
+        request.state.research_source_contract = True
+
+        with patch("mapmover.routes.api_query.resolve_pack_source_for_query", return_value=(spec.pack_id, spec.source_id)), patch(
+            "mapmover.routes.api_query.get_api_source_spec", return_value=spec
+        ), patch(
+            "mapmover.routes.api_query.api_source_ready", return_value=True
+        ), patch(
+            "mapmover.routes.api_query.get_api_source_columns", return_value=["loc_id", "year", "max_water_height_m"]
+        ), patch(
+            "mapmover.routes.api_query.resolve_effective_time_spec", side_effect=lambda source_spec, _time: source_spec
+        ), patch(
+            "mapmover.routes.api_query.get_api_source_time_bounds", return_value=(-2000, 2026)
+        ), patch(
+            "mapmover.routes.api_query.execute_dataset_query",
+            return_value=[{"loc_id": "IHO1953-240001003", "year": 1609, "max_water_height_m": 2.5}],
+        ), patch(
+            "mapmover.routes.api_query.load_source_metadata", return_value=metadata
+        ), patch(
+            "mapmover.routes.api_query.pack_requires_commercial_access", return_value=False
+        ), patch(
+            "mapmover.routes.api_query.log_api_query_event"
+        ):
+            response = asyncio.run(
+                execute_query_dataset_payload(
+                    request,
+                    {
+                        "source_id": "tsunamis_events",
+                        "metrics": ["max_water_height_m"],
+                        "filters": {"time": {"start": -2000, "end": 2026}},
+                        "limit": 1,
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(
+            payload["metric_availability"]["max_water_height_m"],
+            {"start": -2000, "end": 2026, "years": [-2000, 2026], "countries": 147, "density": 0.62},
+        )
+        self.assertEqual(
+            payload["response_obligations"][0]["canonical_term"],
+            "reported local water height or runup observation",
+        )
+        self.assertEqual(payload["response_obligations"][0]["required_framing"], "These values are reported local observations.")
+
     def test_event_qualifier_defaults_are_config_driven_for_single_event_query(self):
         items = [
             {

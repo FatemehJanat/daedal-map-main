@@ -285,6 +285,7 @@ def validate_item(
                     source_text = str(topic_source_id or "").strip()
                     if topic_text and source_text and topic_text in query:
                         resolved_source = source_text
+                        item["_lock_source_id"] = True
                         break
         if not resolved_source and query:
             resolved_source, _, inferred_metric = select_pack_family_source_for_query(
@@ -344,8 +345,9 @@ def validate_item(
         source_id = explicit_currency_source
         catalog_source = get_catalog_source_func(catalog, source_id)
     if pack_id and query and not item.get("_lock_source_id"):
-        source_belongs_to_pack = str((catalog_source or {}).get("pack_id") or "").strip() == pack_id
-        pack_routing_allowed = bool(item.get("_resolved_from_pack")) or source_belongs_to_pack
+        # Query-guided pack routing is for broad pack requests.  If the order
+        # already named a concrete source_id, keep that source anchored.
+        pack_routing_allowed = bool(item.get("_resolved_from_pack"))
         preferred_source_id, preferred_metadata, preferred_metric = select_pack_family_source_for_query(
             pack_id,
             query,

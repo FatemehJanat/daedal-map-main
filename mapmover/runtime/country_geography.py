@@ -16,7 +16,16 @@ def load_country_geometry_profile(iso3: str) -> dict[str, Any]:
 def get_country_sub_admin_levels(iso3: str) -> dict[str, dict[str, Any]]:
     """Return declared canonical deep admin levels for a country."""
     levels = load_country_geometry_profile(iso3).get("sub_admin_levels") or {}
-    return levels if isinstance(levels, dict) else {}
+    if not isinstance(levels, dict):
+        return {}
+    spine_levels: dict[str, dict[str, Any]] = {}
+    for key, info in levels.items():
+        if not isinstance(info, dict):
+            continue
+        spine_role = str(info.get("spine_role") or "strict_nested").strip().lower()
+        if spine_role in {"strict_nested", "admin_spine", "spine"}:
+            spine_levels[str(key)] = info
+    return spine_levels
 
 
 def get_country_level_config(iso3: str, admin_level: int | str) -> dict[str, Any] | None:

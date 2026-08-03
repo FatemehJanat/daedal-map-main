@@ -16,6 +16,7 @@ from mapmover.runtime_env_files import runtime_env_file_candidates
 class RepoSplitRuntimeBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self._original_extra_env_files = os.environ.get("COUNTY_MAP_EXTRA_ENV_FILES")
+        self._original_agent_catalog_root = os.environ.get("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT")
         self._original_catalog_root = os.environ.get("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT")
         self._original_private_mcp_proxy_base_url = os.environ.get("PRIVATE_MCP_PROXY_BASE_URL")
         self._original_cloud_internal_api_token = os.environ.get("CLOUD_INTERNAL_API_TOKEN")
@@ -25,6 +26,11 @@ class RepoSplitRuntimeBoundaryTests(unittest.TestCase):
             os.environ.pop("COUNTY_MAP_EXTRA_ENV_FILES", None)
         else:
             os.environ["COUNTY_MAP_EXTRA_ENV_FILES"] = self._original_extra_env_files
+
+        if self._original_agent_catalog_root is None:
+            os.environ.pop("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT", None)
+        else:
+            os.environ["COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT"] = self._original_agent_catalog_root
 
         if self._original_catalog_root is None:
             os.environ.pop("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT", None)
@@ -68,11 +74,18 @@ class RepoSplitRuntimeBoundaryTests(unittest.TestCase):
         self.assertIn(str(Path("/app/county-map-private/tools")), root_texts)
         self.assertFalse(any(r"C:\workspace\global map\county-map-private" in text for text in root_texts))
 
-    def test_api_catalog_output_root_uses_env_override(self) -> None:
+    def test_agent_catalog_output_root_uses_env_override(self) -> None:
+        override = r"C:\tmp\agent-catalog-output"
+        os.environ["COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT"] = override
+
+        self.assertEqual(data_loading._agent_catalog_output_root(), Path(override))
+
+    def test_legacy_api_catalog_output_root_override_still_works(self) -> None:
         override = r"C:\tmp\api-catalog-output"
+        os.environ.pop("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT", None)
         os.environ["COUNTY_MAP_API_CATALOG_OUTPUT_ROOT"] = override
 
-        self.assertEqual(data_loading._api_catalog_output_root(), Path(override))
+        self.assertEqual(data_loading._agent_catalog_output_root(), Path(override))
 
     def test_api_pack_detail_hydration_strips_private_browser_artifact_paths(self) -> None:
         payload = {

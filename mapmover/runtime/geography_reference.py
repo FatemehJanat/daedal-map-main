@@ -21,6 +21,7 @@ _CAPITAL_TO_ISO3_CACHE: dict[str, str] | None = None
 _CAPITAL_COORDINATES_CACHE: dict[str, dict[str, Any]] | None = None
 _COUNTRY_SUBDIVISION_SLUG_CACHE: dict[tuple[str, str], str | None] = {}
 _WATER_BODY_CODES_CACHE: set[str] | None = None
+_USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE: dict[str, str] | None = None
 
 _EVENT_ENTITY_MARKER_SEGMENTS = {
     "EQ",
@@ -107,6 +108,14 @@ def _looks_like_tribal_loc_id(value: str) -> bool:
     return "TRIBAL" in parts
 
 
+def _looks_like_nws_public_zone_loc_id(value: str) -> bool:
+    return bool(re.fullmatch(r"USA-NWSZ-[A-Z]{2}Z\d{3}", value))
+
+
+def _looks_like_nws_fire_weather_zone_loc_id(value: str) -> bool:
+    return bool(re.fullmatch(r"USA-NWSFZ-[A-Z]{2}Z\d{3}", value))
+
+
 def classify_loc_id_family(loc_id: str | None) -> str | None:
     """Classify the shared runtime loc_id family.
 
@@ -129,6 +138,10 @@ def classify_loc_id_family(loc_id: str | None) -> str | None:
         return "overlay_zcta"
     if _looks_like_tribal_loc_id(value):
         return "overlay_tribal"
+    if _looks_like_nws_public_zone_loc_id(value):
+        return "overlay_nws_public_zone"
+    if _looks_like_nws_fire_weather_zone_loc_id(value):
+        return "overlay_nws_fire_weather_zone"
     if derive_eurostat_geo_level(value):
         return "regional_base"
     if _looks_like_event_or_entity_loc_id(value):
@@ -164,6 +177,38 @@ def build_crosswalk_maps(crosswalk_data: dict[str, Any] | None) -> tuple[dict[st
         geo_to_local.setdefault(geo_loc_id, local_norm)
 
     return local_to_geo, geo_to_local
+
+
+def _load_usa_legacy_geometry_to_local_map() -> dict[str, str]:
+    """Return legacy bundled USA GeoBoundaries ids mapped back to loc_id.
+
+    The generated country crosswalk points at the current geometry bank. Older
+    runtime payloads and reference fixtures can still contain the previous
+    shorter GeoBoundaries ids. Keep those ids resolvable through loc_id without
+    treating them as the current storage id.
+    """
+    global _USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE
+    if _USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE is not None:
+        return _USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE
+
+    payload = load_reference_json("usa/usa_counties.json")
+    rows = (payload or {}).get("counties") if isinstance(payload, dict) else {}
+    out: dict[str, str] = {}
+    if isinstance(rows, dict):
+        for item in rows.values():
+            if not isinstance(item, dict):
+                continue
+            local = canonicalize_loc_id(str(item.get("loc_id") or ""))
+            geometry = canonicalize_loc_id(str(item.get("geometry_loc_id") or ""))
+            state = str(item.get("state_abbr") or "").strip().upper()
+            if local and geometry:
+                out.setdefault(geometry, local)
+                parts = geometry.split("-")
+                if len(parts) >= 2 and state:
+                    out.setdefault(f"{parts[0]}-{parts[1]}", f"USA-{state}")
+
+    _USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE = out
+    return _USA_LEGACY_GEOMETRY_TO_LOCAL_CACHE
 
 
 def translate_loc_id_to_geometry_id(loc_id: str) -> str:
@@ -212,6 +257,10 @@ def translate_geometry_id_to_local_id(loc_id: str) -> str:
         return direct
 
     if iso3 == "USA":
+        legacy_direct = _load_usa_legacy_geometry_to_local_map().get(canonical)
+        if legacy_direct:
+            return legacy_direct
+
         parts = canonical.split("-")
         if len(parts) == 3 and parts[2].isdigit() and len(parts[2]) > 3:
             county_only = f"{parts[0]}-{parts[1]}-{parts[2][-3:]}"
@@ -219,6 +268,19 @@ def translate_geometry_id_to_local_id(loc_id: str) -> str:
                 return county_only
 
     return canonical
+
+
+def legacy_geometry_ids_for_local_id(loc_id: str | None) -> list[str]:
+    """Return accepted legacy geometry ids that resolve to a local loc_id."""
+    canonical = canonicalize_loc_id(loc_id or "")
+    if not canonical or not canonical.startswith("USA"):
+        return []
+    aliases = [
+        geometry_id
+        for geometry_id, local_id in _load_usa_legacy_geometry_to_local_map().items()
+        if local_id == canonical and geometry_id != canonical
+    ]
+    return sorted(set(aliases))
 
 
 def load_conversions() -> dict[str, Any]:

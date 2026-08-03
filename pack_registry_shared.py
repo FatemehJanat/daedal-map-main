@@ -338,29 +338,49 @@ PACK_REGISTRY: dict[str, dict] = {
         "display_name": "Geography Tools",
         "kind": "tool_family",
         "pricing": "free",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point", "get_boundary", "loc_id_hierarchy", "loc_id_info", "sidechain_to_admin", "admin_to_sidechain"),
+        "mcp_tool_allowlist": (
+            "get_catalog",
+            "get_pack",
+            "list_reference_systems",
+            "resolve_reference",
+            "loc_id_references",
+            "convert_reference",
+            "get_geometry",
+            "resolve_point",
+            "get_boundary",
+            "loc_id_hierarchy",
+            "loc_id_info",
+            "sidechain_to_admin",
+            "admin_to_sidechain",
+        ),
         "mcp_name": "com.daedalmap/geocoding",
         "mcp_title": "DaedalMap Geography Tools (loc_id)",
-        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine: resolve latitude/longitude to administrative areas, fetch boundaries and bounding boxes, walk the loc_id hierarchy, and bridge ZCTAs or tribal areas to administrative loc_ids by weighted polygon overlap. A utility tool family, not a queryable dataset pack. No payment required.",
+        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine. Use the reference-exchange tools to list supported systems, resolve outside geography codes into loc_id, list references for a loc_id, and convert one reference system to another through loc_id. Also includes point reverse geocoding, boundaries, hierarchy, and compatibility bridge tools. A utility tool family, not a queryable dataset pack. No payment required.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
+                "Catalog-backed reference exchange: external geography systems <-> DaedalMap loc_id",
+                "Convert ZIP/ZCTA, tribal, NWS public zones, and NWS fire weather zones through the same loc_id spine",
                 "Reverse geocoding: latitude/longitude to administrative loc_id chain",
                 "Boundary and bounding-box lookup for any loc_id",
                 "Walk the loc_id hierarchy up and down to clip to any admin level",
-                "Weighted bridges from ZCTAs and tribal areas to the admin spine",
             ],
         },
         "routing": {
-            "preferred_tool": "resolve_point",
+            "preferred_tool": "list_reference_systems",
         },
         "tool_summaries": (
+            {"name": "list_reference_systems", "summary": "discover exchangeable geography systems, bridge vintages, counts, and licenses"},
+            {"name": "resolve_reference", "summary": "external/admin/named reference -> ranked DaedalMap loc_id matches"},
+            {"name": "loc_id_references", "summary": "loc_id -> known external references and side-chain overlaps"},
+            {"name": "convert_reference", "summary": "reference system X -> loc_id -> reference system Y"},
+            {"name": "get_geometry", "summary": "loc_id -> geometry metadata, bbox, centroid, and optional polygon"},
             {"name": "resolve_point", "summary": "lat/lon -> deepest loc_id plus the full ancestor chain"},
             {"name": "get_boundary", "summary": "loc_id -> bounding box and centroid (optional full polygon)"},
             {"name": "loc_id_hierarchy", "summary": "loc_id -> parent, ancestors, and child summary"},
             {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
-            {"name": "sidechain_to_admin", "summary": "ZCTA or tribal loc_id -> ranked admin matches with overlap shares"},
-            {"name": "admin_to_sidechain", "summary": "admin loc_id -> ranked overlapping ZCTAs or tribal areas"},
+            {"name": "sidechain_to_admin", "summary": "compatibility alias: side-chain loc_id -> ranked admin matches with overlap shares"},
+            {"name": "admin_to_sidechain", "summary": "compatibility alias: admin loc_id -> ranked side-chain overlaps"},
         ),
     },
     "reverse-geocoding": {
@@ -456,7 +476,23 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
     first_arguments: dict[str, object]
     start_here: list[str]
     important_rules: list[str]
-    if preferred_tool == "resolve_point":
+    if preferred_tool == "list_reference_systems":
+        first_arguments = {}
+        start_here = [
+            "Call list_reference_systems first when you need to know which geography systems can be exchanged.",
+            "Use resolve_reference for outside identifiers or names that need to become DaedalMap loc_ids.",
+            "Use convert_reference when the caller wants one external geography system expressed in another.",
+        ]
+        important_rules = [
+            "These are free utility tools, not a query_dataset pack.",
+            "loc_id is the reserve identifier: generic conversions should flow X -> loc_id -> Y.",
+            "Use list_reference_systems for live catalog-backed availability instead of assuming a fixed list of systems.",
+            "Use resolve_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, NWS fire weather-zone, admin-name, and named-geometry inputs.",
+            "Use loc_id_references for reverse lookup from an existing loc_id to overlapping or equivalent external references.",
+            "Use get_geometry or get_boundary only when geometry metadata, bbox, centroid, or polygon is needed.",
+            "sidechain_to_admin and admin_to_sidechain remain compatibility aliases; prefer the generic exchange tools for new workflows.",
+        ]
+    elif preferred_tool == "resolve_point":
         first_arguments = {"lat": 34.0522, "lon": -118.2437}
         start_here = [
             "Call resolve_point first when you have coordinates and need a loc_id.",
@@ -468,8 +504,8 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Coordinates must be WGS84 decimal degrees.",
             "resolve_point returns the deepest loc_id plus the full ancestor chain.",
             "get_boundary returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
-            "Use sidechain_to_admin for ZIP/ZCTA or tribal-area to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001.",
-            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs or tribal areas.",
+            "Use sidechain_to_admin for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001. For NWS public zones, source_family is overlay_nws_public_zone and source_loc_id is a canonical id such as USA-NWSZ-TXZ001. For NWS fire weather zones, source_family is overlay_nws_fire_weather_zone and source_loc_id is a canonical id such as USA-NWSFZ-TXZ001.",
+            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs, tribal areas, NWS public zones, or NWS fire weather zones.",
             "Bridge tools return primary_match and overlaps. source_area_share ranks side-chain to admin results; target_area_share ranks admin to side-chain results.",
         ]
     elif preferred_tool == "get_boundary":
@@ -483,8 +519,8 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "These are free utility tools, not a query_dataset pack.",
             "Use canonical loc_ids such as USA, CAN-BC, or USA-CA-037.",
             "BBox/centroid is the default response shape because full polygons can be large.",
-            "Use sidechain_to_admin for ZIP/ZCTA or tribal-area to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001.",
-            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs or tribal areas.",
+            "Use sidechain_to_admin for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001. For NWS public zones, source_family is overlay_nws_public_zone and source_loc_id is a canonical id such as USA-NWSZ-TXZ001. For NWS fire weather zones, source_family is overlay_nws_fire_weather_zone and source_loc_id is a canonical id such as USA-NWSFZ-TXZ001.",
+            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs, tribal areas, NWS public zones, or NWS fire weather zones.",
         ]
     else:
         first_arguments = {"loc_id": "USA-CA-037"}
@@ -506,23 +542,39 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
         },
         "bridge_examples": [
             {
-                "question": "What Census tracts overlap ZIP/ZCTA 10001?",
-                "tool": "sidechain_to_admin",
+                "question": "What can DaedalMap exchange right now?",
+                "tool": "list_reference_systems",
+                "arguments": {},
+            },
+            {
+                "question": "What county does ZIP/ZCTA 00601 resolve to?",
+                "tool": "resolve_reference",
                 "arguments": {
-                    "source_family": "overlay_zcta",
-                    "source_loc_id": "10001",
-                    "target_admin_level": "tract",
-                    "limit": 10,
+                    "from_system": "zip",
+                    "value": "00601",
+                    "target_admin_level": "county",
+                    "limit": 5,
                 },
             },
             {
-                "question": "Which ZCTAs overlap this block group?",
-                "tool": "admin_to_sidechain",
+                "question": "Which NWS fire weather zones overlap this county?",
+                "tool": "loc_id_references",
                 "arguments": {
-                    "target_loc_id": "USA-NY-061-009903-2",
-                    "source_family": "overlay_zcta",
-                    "target_admin_level": "block_group",
-                    "limit": 10,
+                    "loc_id": "USA-AK-282",
+                    "systems": ["nws_fire"],
+                    "target_admin_level": "county",
+                    "limit_per_system": 5,
+                },
+            },
+            {
+                "question": "Convert ZIP/ZCTA 00601 to overlapping NWS fire weather zones.",
+                "tool": "convert_reference",
+                "arguments": {
+                    "from_system": "zip",
+                    "value": "00601",
+                    "to_system": "nws_fire",
+                    "target_admin_level": "county",
+                    "limit": 5,
                 },
             },
         ],

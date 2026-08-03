@@ -18,6 +18,13 @@ from mapmover.geometry_handlers import (
 )
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+from mapmover.runtime.reference_exchange import (
+    convert_reference,
+    get_geometry_reference,
+    list_reference_systems,
+    loc_id_references,
+    resolve_reference,
+)
 
 
 router = APIRouter()
@@ -213,3 +220,144 @@ async def resolve_point_json_endpoint(req: Request):
     except Exception as e:
         logger.error(f"Error in /api/v1/resolve/point: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _internal_json_allowed(req: Request):
+    _context, error = _require_local_or_admin(req)
+    if error:
+        status_code = getattr(error, "status_code", 403) or 403
+        message = "Unauthorized" if status_code == 401 else "Forbidden"
+        return JSONResponse({"ok": False, "error": message}, status_code=status_code)
+    return error
+
+
+async def _json_body(req: Request) -> tuple[dict, JSONResponse | None]:
+    try:
+        body = await req.json()
+    except Exception:
+        return {}, JSONResponse({"ok": False, "error": "Invalid JSON request body"}, status_code=400)
+    if not isinstance(body, dict):
+        return {}, JSONResponse({"ok": False, "error": "JSON request body must be an object"}, status_code=400)
+    return body, None
+
+
+@router.get("/api/internal/reference/systems")
+async def list_reference_systems_endpoint(req: Request):
+    """List loc_id exchange systems discovered from the geometry catalog."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    try:
+        return JSONResponse(list_reference_systems())
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/systems: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/api/internal/reference/resolve")
+async def resolve_reference_endpoint(req: Request):
+    """Resolve one reference-system value into the loc_id universe."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    body, body_error = await _json_body(req)
+    if body_error:
+        return body_error
+    from_system = body.get("from_system") or body.get("system")
+    value = body.get("value")
+    if not from_system or value in (None, ""):
+        return JSONResponse({"ok": False, "error": "from_system and value are required"}, status_code=400)
+    try:
+        result = resolve_reference(
+            from_system=str(from_system),
+            value=str(value),
+            iso3=str(body.get("iso3") or "USA"),
+            target_admin_level=body.get("target_admin_level", "admin_2"),
+            bridge_vintage=body.get("bridge_vintage"),
+            min_share=body.get("min_share"),
+            limit=body.get("limit", 10),
+            country_hint=body.get("country_hint"),
+            admin_level_hint=body.get("admin_level_hint"),
+        )
+        return JSONResponse(result, status_code=200 if result.get("ok") else 404)
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/resolve: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/api/internal/reference/loc-id-references")
+async def loc_id_references_endpoint(req: Request):
+    """Return known references that point at a loc_id."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    body, body_error = await _json_body(req)
+    if body_error:
+        return body_error
+    loc_id = body.get("loc_id")
+    if not loc_id:
+        return JSONResponse({"ok": False, "error": "loc_id is required"}, status_code=400)
+    try:
+        result = loc_id_references(
+            str(loc_id),
+            systems=body.get("systems"),
+            iso3=body.get("iso3"),
+            target_admin_level=body.get("target_admin_level"),
+            min_share=body.get("min_share"),
+            limit_per_system=body.get("limit_per_system", 10),
+        )
+        return JSONResponse(result, status_code=200 if result.get("ok") else 404)
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/loc-id-references: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/api/internal/reference/convert")
+async def convert_reference_endpoint(req: Request):
+    """Convert between two reference systems through loc_id."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    body, body_error = await _json_body(req)
+    if body_error:
+        return body_error
+    from_system = body.get("from_system")
+    to_system = body.get("to_system")
+    value = body.get("value")
+    if not from_system or not to_system or value in (None, ""):
+        return JSONResponse({"ok": False, "error": "from_system, to_system, and value are required"}, status_code=400)
+    try:
+        result = convert_reference(
+            from_system=str(from_system),
+            value=str(value),
+            to_system=str(to_system),
+            iso3=str(body.get("iso3") or "USA"),
+            target_admin_level=body.get("target_admin_level", "admin_2"),
+            bridge_vintage=body.get("bridge_vintage"),
+            min_share=body.get("min_share"),
+            limit=body.get("limit", 10),
+        )
+        return JSONResponse(result, status_code=200 if result.get("ok") else 404)
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/convert: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/api/internal/reference/geometry")
+async def get_reference_geometry_endpoint(req: Request):
+    """Return geometry metadata, and optionally polygon, for a loc_id."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    body, body_error = await _json_body(req)
+    if body_error:
+        return body_error
+    loc_id = body.get("loc_id")
+    if not loc_id:
+        return JSONResponse({"ok": False, "error": "loc_id is required"}, status_code=400)
+    try:
+        result = get_geometry_reference(str(loc_id), include_polygon=bool(body.get("include_polygon", False)))
+        return JSONResponse(result, status_code=200 if result.get("ok") else 404)
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/geometry: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

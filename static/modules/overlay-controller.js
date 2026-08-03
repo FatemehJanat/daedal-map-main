@@ -456,6 +456,14 @@ const OVERLAY_ENDPOINTS = {
   }
 };
 
+const NWS_HISTORICAL_VARIANTS = {
+  nws_alerts_historical: { apiBase: '/api/wip/nws-alerts' },
+};
+
+function nwsHistoricalVariant(overlayId) {
+  return NWS_HISTORICAL_VARIANTS[overlayId] || null;
+}
+
 /**
  * Legacy event lifecycle compatibility for payloads that predate the prepared
  * display lifecycle fields. Published Explore event payloads provide
@@ -2765,7 +2773,7 @@ export const OverlayController = {
       // buckets and incrementally updates active alerts. Other timestamp
       // overlays retain the broad six-hour lifecycle throttle below.
       const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
-      if (activeOverlays.includes('nws_alerts_historical')) {
+      if (activeOverlays.some((overlayId) => nwsHistoricalVariant(overlayId))) {
         NwsAlertsOverlay.setHistoricalTime(time);
       }
       // Timestamp lane: lifecycle filtering at the continuous playhead.
@@ -3122,7 +3130,7 @@ export const OverlayController = {
       // The local historical NWS test is frame-backed, rather than a normal
       // catalog endpoint.  Refresh it at each throttled timestamp change so
       // warnings appear and expire during playback.
-      if (overlayId === 'nws_alerts_historical') {
+      if (nwsHistoricalVariant(overlayId)) {
         NwsAlertsOverlay.setHistoricalTime(timestamp);
         continue;
       }
@@ -3251,7 +3259,8 @@ export const OverlayController = {
     // instead of a normal event endpoint. Returning true lets the shared
     // default-load executor show the authored question + response for
     // ?source= deep-links and catalog presets.
-    if (overlayId === 'nws_alerts_historical') {
+    if (nwsHistoricalVariant(overlayId)) {
+      const variant = nwsHistoricalVariant(overlayId);
       const requestedStart = Number(startMs);
       const requestedEnd = Number(endMs);
       const requestedStartYear = Number.isFinite(requestedStart)
@@ -3267,7 +3276,7 @@ export const OverlayController = {
       // event in the requested playback span.
       if (!options.forceLargeDisplay && requestedStartYear && requestedEndYear) {
         const summary = await fetchMsgpack(
-          `/api/wip/nws-alerts/history?start_year=${requestedStartYear}&end_year=${requestedEndYear}&summary_only=true`
+          `${variant.apiBase}/history?start_year=${requestedStartYear}&end_year=${requestedEndYear}&summary_only=true`
         );
         const eventCount = Number(summary?.event_count) || 0;
         if (eventCount > 10000) {
@@ -3350,7 +3359,8 @@ export const OverlayController = {
       emitOverlayStatusMessage(overlayId, isActive, options);
       return;
     }
-    if (overlayId === 'nws_alerts_historical') {
+    if (nwsHistoricalVariant(overlayId)) {
+      const variant = nwsHistoricalVariant(overlayId);
       // The source owns its authored first-view contract. Explicit time bounds
       // supplied by chat, a URL, or a shared workspace always win; otherwise
       // use the compact 2024-2025 starting view.
@@ -3371,7 +3381,7 @@ export const OverlayController = {
       const history = await NwsAlertsOverlay.setHistoricalEnabled(
         isActive,
         isActive ? start : (TimeSlider?.currentTime || start),
-        { startYear, endYear }
+        { startYear, endYear, apiBase: variant.apiBase }
       );
       if (isActive && history) {
         // This is one held slice, not the merged slider span. Recording the
@@ -3408,7 +3418,7 @@ export const OverlayController = {
         TimeSlider?.setTime?.(start, 'api');
       }
       refreshTickerForOverlayState();
-      emitSourceDefaultStatusMessage('nws_alerts_historical', isActive, options);
+      emitSourceDefaultStatusMessage(overlayId, isActive, options);
       return;
     }
     // Reusable live point feeds (ocean buoys, weather stations, sensors): one
@@ -4475,7 +4485,7 @@ export const OverlayController = {
 
     for (const overlayId of activeOverlays) {
       if (overlayId === 'demographics') continue;
-      if (overlayId === 'nws_alerts_historical') {
+      if (nwsHistoricalVariant(overlayId)) {
         NwsAlertsOverlay.setHistoricalTime(TimeSlider?.currentTime);
         continue;
       }

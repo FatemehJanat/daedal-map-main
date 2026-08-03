@@ -15,7 +15,7 @@ class CountryGeometryRuntimeTests(unittest.TestCase):
     def test_get_country_sub_admin_levels_returns_declared_levels(self):
         crosswalk = {
             "sub_admin_levels": {
-                "admin_3": {"folder": "tract", "aliases": ["tract", "census tract"]},
+                "admin_3": {"folder": "tract", "aliases": ["tract", "census tract"], "spine_role": "strict_nested"},
                 "admin_4": {"folder": "blockgroup", "aliases": ["block group"]},
             }
         }
@@ -23,6 +23,18 @@ class CountryGeometryRuntimeTests(unittest.TestCase):
             self.assertEqual(set(get_country_sub_admin_levels("USA").keys()), {"admin_3", "admin_4"})
             self.assertEqual(get_country_level_config("USA", 3), crosswalk["sub_admin_levels"]["admin_3"])
             self.assertEqual(get_country_supported_deep_admin_levels("USA"), [3, 4])
+
+    def test_sidechain_role_is_not_returned_as_deep_admin_spine(self):
+        crosswalk = {
+            "sub_admin_levels": {
+                "admin_3": {"folder": "district", "aliases": ["district"], "spine_role": "strict_nested"},
+                "admin_4": {"folder": "postal_area", "aliases": ["postal area"], "spine_role": "sidechain"},
+            }
+        }
+        with patch("mapmover.runtime.country_geography.load_country_crosswalk", return_value=crosswalk):
+            self.assertEqual(set(get_country_sub_admin_levels("BRA").keys()), {"admin_3"})
+            self.assertIsNone(get_country_level_config("BRA", 4))
+            self.assertEqual(get_country_supported_deep_admin_levels("BRA"), [3])
 
     def test_build_country_geometry_alias_context_lines_formats_sections(self):
         crosswalk = {

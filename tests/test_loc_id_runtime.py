@@ -63,6 +63,7 @@ class LocIdRuntimeTests(unittest.TestCase):
             "DEU-DE27C": "regional_base",
             "USA-Z-22031": "overlay_zcta",
             "USA-AK-TRIBAL-6650": "overlay_tribal",
+            "USA-NWSZ-TXZ001": "overlay_nws_public_zone",
             "EEZ-USA": "marine_eez",
             "XSM": "water_body",
             "USA-FLOOD-DFO-9": "event_or_entity",

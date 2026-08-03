@@ -17,11 +17,18 @@ from mapmover.runtime.geometry_catalog import resolve_geometry_name
 
 class LocIdResolutionRuntimeTests(unittest.TestCase):
     def test_direct_loc_id_passthrough_normalizes_geometry_family_to_local(self):
-        resolved = resolve_admin_text_to_loc_id("USA-G125186-G215213")
+        resolved = resolve_admin_text_to_loc_id("USA-G125186-G282830")
         self.assertEqual(resolved["match_type"], "direct_loc_id")
         self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-059")
         self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
         self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-059")
+
+    def test_direct_loc_id_passthrough_preserves_legacy_fairfax_city_split(self):
+        resolved = resolve_admin_text_to_loc_id("USA-G125186-G215213")
+        self.assertEqual(resolved["match_type"], "direct_loc_id")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA-600")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+        self.assertEqual(resolved["matches"]["admin_2"]["loc_id"], "USA-VA-600")
 
     def test_event_loc_id_does_not_masquerade_as_admin_loc_id(self):
         resolved = resolve_admin_text_to_loc_id("USA-FLOOD-DFO-9")
@@ -202,7 +209,7 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
             "stack": [
                 {"loc_id": "USA", "name": "United States", "admin_level": 0},
                 {"loc_id": "USA-G125186", "name": "Virginia", "admin_level": 1},
-                {"loc_id": "USA-G125186-G215213", "name": "Fairfax County", "admin_level": 2},
+                {"loc_id": "USA-G125186-G282830", "name": "Fairfax County", "admin_level": 2},
                 {"loc_id": "USA-VA-059-452400-1-2001", "name": "Block 2001", "admin_level": 5},
             ],
         }

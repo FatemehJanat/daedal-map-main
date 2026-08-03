@@ -1085,6 +1085,168 @@ async def _execute_loc_id_hierarchy_tool(arguments: dict[str, Any], rpc_request_
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
+async def _execute_list_reference_systems_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "list_reference_systems")
+    request_id = str(payload.get("request_id") or "")
+    try:
+        from mapmover.runtime.reference_exchange import list_reference_systems
+
+        result = list_reference_systems()
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "reference_systems_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    return _jsonrpc_response(_tool_result({"request_id": request_id, **result}), rpc_request_id)
+
+
+async def _execute_resolve_reference_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "resolve_reference")
+    request_id = str(payload.get("request_id") or "")
+    from_system = str(payload.get("from_system") or payload.get("system") or "").strip()
+    value = str(payload.get("value") or "").strip()
+    if not from_system or not value:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "error": {"code": "invalid_reference_request", "message": "from_system and value are required"},
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.reference_exchange import resolve_reference
+
+        result = resolve_reference(
+            from_system=from_system,
+            value=value,
+            iso3=str(payload.get("iso3") or "USA"),
+            target_admin_level=payload.get("target_admin_level", "admin_2"),
+            bridge_vintage=payload.get("bridge_vintage"),
+            min_share=_normalize_bridge_share(payload.get("min_share")),
+            limit=_normalize_bridge_limit(payload.get("limit")) or 10,
+            country_hint=payload.get("country_hint"),
+            admin_level_hint=payload.get("admin_level_hint"),
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "resolve_reference_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "no loc_id match found for the reference"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_loc_id_references_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "loc_id_references")
+    request_id = str(payload.get("request_id") or "")
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    systems = payload.get("systems")
+    if systems is not None and not isinstance(systems, list):
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_systems", "message": "systems must be an array when provided"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.reference_exchange import loc_id_references
+
+        result = loc_id_references(
+            loc_id,
+            systems=systems,
+            iso3=payload.get("iso3"),
+            target_admin_level=payload.get("target_admin_level"),
+            min_share=_normalize_bridge_share(payload.get("min_share")),
+            limit_per_system=_normalize_bridge_limit(payload.get("limit_per_system")) or 10,
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "loc_id_references_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "no references found for loc_id"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_convert_reference_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "convert_reference")
+    request_id = str(payload.get("request_id") or "")
+    from_system = str(payload.get("from_system") or "").strip()
+    to_system = str(payload.get("to_system") or "").strip()
+    value = str(payload.get("value") or "").strip()
+    if not from_system or not to_system or not value:
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "error": {"code": "invalid_convert_request", "message": "from_system, value, and to_system are required"},
+                },
+                is_error=True,
+            ),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.reference_exchange import convert_reference
+
+        result = convert_reference(
+            from_system=from_system,
+            value=value,
+            to_system=to_system,
+            iso3=str(payload.get("iso3") or "USA"),
+            target_admin_level=payload.get("target_admin_level", "admin_2"),
+            bridge_vintage=payload.get("bridge_vintage"),
+            min_share=_normalize_bridge_share(payload.get("min_share")),
+            limit=_normalize_bridge_limit(payload.get("limit")) or 10,
+        )
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "convert_reference_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "reference conversion did not produce a match"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_get_geometry_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    payload = _ensure_request_id(arguments, "get_geometry")
+    request_id = str(payload.get("request_id") or "")
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.reference_exchange import get_geometry_reference
+
+        result = get_geometry_reference(loc_id, include_polygon=bool(payload.get("include_polygon", False)))
+    except Exception as exc:
+        return _jsonrpc_response(
+            _tool_result({"request_id": request_id, "error": {"code": "get_geometry_failed", "message": str(exc)}}, is_error=True),
+            rpc_request_id,
+        )
+    result = {"request_id": request_id, **result}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": f"no geometry found for loc_id '{loc_id}'"})
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
 def _normalize_bridge_limit(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -1111,6 +1273,10 @@ def _normalize_sidechain_source_loc_id(source_family: str, source_loc_id: str, i
     country = str(iso3 or "USA").strip().upper() or "USA"
     if family == "overlay_zcta" and value.isdigit() and len(value) == 5:
         return f"{country}-Z-{value}"
+    if family == "overlay_nws_public_zone" and len(value) == 6 and value[:2].isalpha() and value[2].upper() == "Z":
+        return f"{country}-NWSZ-{value.upper()}"
+    if family == "overlay_nws_fire_weather_zone" and len(value) == 6 and value[:2].isalpha() and value[2].upper() == "Z":
+        return f"{country}-NWSFZ-{value.upper()}"
     return value
 
 
@@ -1596,6 +1762,36 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_loc_id_info_tool(arguments, request_id)
+
+    if tool_name == "list_reference_systems":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_list_reference_systems_tool(arguments, request_id)
+
+    if tool_name == "resolve_reference":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_resolve_reference_tool(arguments, request_id)
+
+    if tool_name == "loc_id_references":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_loc_id_references_tool(arguments, request_id)
+
+    if tool_name == "convert_reference":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_convert_reference_tool(arguments, request_id)
+
+    if tool_name == "get_geometry":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_get_geometry_tool(arguments, request_id)
 
     if tool_name == "sidechain_to_admin":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)

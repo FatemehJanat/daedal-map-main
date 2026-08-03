@@ -20,6 +20,7 @@ const SRC_ID = 'nws-alerts-src';
 const FILL_ID = 'nws-alerts-fill';
 const LINE_ID = 'nws-alerts-line';
 const EXTREME_LINE_ID = 'nws-alerts-extreme-line';
+const POINT_FALLBACK_ID = 'nws-alerts-point-fallback';
 const POINT_ID = 'nws-alerts-point';
 const PIN_IMAGE_PREFIX = 'nws-alert-pin';
 const LEGEND_ID = 'nws-alerts-legend';
@@ -226,6 +227,7 @@ export const NwsAlertsOverlay = {
   _historicalHistories: new Map(),
   _historicalActiveKeys: new Set(),
   _historicalTimelineIndex: null,
+  _historicalApiBase: '/api/wip/nws-alerts',
   _historicalRenderToken: 0,
   _historicalPopupToken: 0,
   _legendEl: null,
@@ -296,17 +298,24 @@ export const NwsAlertsOverlay = {
     }
     const startYear = Number(range.startYear) || new Date(timestamp).getUTCFullYear();
     const endYear = Number(range.endYear) || startYear;
-    const historyKey = `${startYear}-${endYear}`;
+    const apiBase = String(range.apiBase || '/api/wip/nws-alerts').replace(/\/$/, '');
+    if (apiBase !== this._historicalApiBase) {
+      this._historicalApiBase = apiBase;
+      this._historicalActiveKeys.clear();
+      this._historicalHistory = null;
+      this._historicalTimelineIndex = null;
+    }
+    const historyKey = `${apiBase}|${startYear}-${endYear}`;
     if (!this._historicalHistories.has(historyKey)) {
       try {
-        this._historicalHistories.set(historyKey, await fetchMsgpack(`/api/wip/nws-alerts/history?start_year=${startYear}&end_year=${endYear}`));
+        this._historicalHistories.set(historyKey, await fetchMsgpack(`${apiBase}/history?start_year=${startYear}&end_year=${endYear}`));
       } catch (err) {
         // A yearly history payload is deliberately substantial. One automatic
         // retry covers a transient local-server/browser interruption without
         // turning a real failure into a misleading successful range load.
         console.warn('NwsAlertsOverlay: historical history fetch failed; retrying once', err);
         try {
-          this._historicalHistories.set(historyKey, await fetchMsgpack(`/api/wip/nws-alerts/history?start_year=${startYear}&end_year=${endYear}`));
+          this._historicalHistories.set(historyKey, await fetchMsgpack(`${apiBase}/history?start_year=${startYear}&end_year=${endYear}`));
         } catch (retryErr) {
           console.error('NwsAlertsOverlay: historical history fetch failed after retry', retryErr);
           throw retryErr;
@@ -544,7 +553,16 @@ export const NwsAlertsOverlay = {
       map.once('load', () => this._render(fc, options));
       return;
     }
-    await this._ensurePinImages(map);
+    // SVG pin images are the preferred marker.  A renderer-native circle is
+    // added below as a permanent fallback: browser image decoding must never
+    // make a historical alert's known location disappear.
+    let pinImagesReady = true;
+    try {
+      await this._ensurePinImages(map);
+    } catch (error) {
+      pinImagesReady = false;
+      console.warn('NwsAlertsOverlay: pin SVGs unavailable; using circle markers', error);
+    }
     if (options.historicalRenderToken && options.historicalRenderToken !== this._historicalRenderToken) {
       return;
     }
@@ -569,8 +587,22 @@ export const NwsAlertsOverlay = {
       paint: { 'line-color': FAMILY_LINE_COLOR, 'line-width': LINE_WIDTH, 'line-opacity': 0.95 }
     });
     map.addLayer({
+      id: POINT_FALLBACK_ID, type: 'circle', source: SRC_ID,
+      // `display` is explicitly set when the feature is built, and is more
+      // portable across MapLibre versions than a geometry-type expression.
+      filter: ['==', ['get', 'display'], 'marker'],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4.5, 4, 6, 8, 8],
+        'circle-color': FAMILY_FILL_COLOR,
+        'circle-opacity': 1,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1.5,
+        'circle-stroke-opacity': 0.95,
+      }
+    });
+    if (pinImagesReady) map.addLayer({
       id: POINT_ID, type: 'symbol', source: SRC_ID,
-      filter: ['==', ['geometry-type'], 'Point'],
+      filter: ['==', ['get', 'display'], 'marker'],
       layout: {
         'icon-image': [
           'match', ['get', 'alert_family'],
@@ -694,7 +726,8 @@ export const NwsAlertsOverlay = {
     };
     this._mouseenterHandler = () => { map.getCanvas().style.cursor = 'pointer'; };
     this._mouseleaveHandler = () => { map.getCanvas().style.cursor = ''; };
-    for (const layerId of [FILL_ID, LINE_ID, POINT_ID]) {
+    for (const layerId of [FILL_ID, LINE_ID, POINT_FALLBACK_ID, POINT_ID]) {
+      if (!map.getLayer(layerId)) continue;
       map.on('click', layerId, this._popupHandler);
       map.on('mouseenter', layerId, this._mouseenterHandler);
       map.on('mouseleave', layerId, this._mouseleaveHandler);
@@ -813,7 +846,7 @@ export const NwsAlertsOverlay = {
 
   _unbindPopup(map) {
     if (!this._clickBound || !map) return;
-    for (const layerId of [FILL_ID, LINE_ID, POINT_ID]) {
+    for (const layerId of [FILL_ID, LINE_ID, POINT_FALLBACK_ID, POINT_ID]) {
       if (this._popupHandler) map.off('click', layerId, this._popupHandler);
       if (this._mouseenterHandler) map.off('mouseenter', layerId, this._mouseenterHandler);
       if (this._mouseleaveHandler) map.off('mouseleave', layerId, this._mouseleaveHandler);
@@ -829,7 +862,7 @@ export const NwsAlertsOverlay = {
     if (!map) return;
     try {
       this._unbindPopup(map);
-      for (const id of [FILL_ID, EXTREME_LINE_ID, LINE_ID, POINT_ID]) {
+      for (const id of [FILL_ID, EXTREME_LINE_ID, LINE_ID, POINT_ID, POINT_FALLBACK_ID]) {
         if (map.getLayer(id)) map.removeLayer(id);
       }
       if (map.getSource(SRC_ID)) map.removeSource(SRC_ID);
