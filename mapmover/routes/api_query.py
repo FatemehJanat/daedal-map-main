@@ -1170,6 +1170,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                 limit=limit,
                 aggregate_dimension_columns=[dimension.column for dimension in selected_dimensions] if selected_dimensions else None,
                 aggregate_label_columns=label_columns or None,
+                require_any_non_null_columns=metric_columns if not selected_dimensions else None,
             )
     except QueryConcurrencyLimitError as exc:
         return error_response(

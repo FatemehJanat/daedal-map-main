@@ -114,7 +114,7 @@ def _pack_is_paid(pack_id: str | None) -> bool:
 
 def _hydrate_api_catalog_payload(payload: dict | None) -> dict:
     if not isinstance(payload, dict):
-        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "agent_catalog", "pack_count": 0, "packs": []}
 
     hydrated = deepcopy(payload)
     packs = hydrated.get("packs")
@@ -212,30 +212,52 @@ def _fetch_json_from_s3(relative_path: str) -> dict:
     return json.loads(obj["Body"].read())
 
 
-def _api_catalog_output_root() -> Path:
-    configured = str(os.environ.get("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT") or "").strip()
+def _agent_catalog_output_root() -> Path:
+    configured = str(
+        os.environ.get("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT")
+        or os.environ.get("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT")
+        or ""
+    ).strip()
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parents[2] / "api_catalog" / "output"
+    return Path(__file__).resolve().parents[2] / "agent_catalog" / "output"
 
 
-def _load_json_from_runtime_or_s3(relative_path: str, *, use_api_prefix: bool = False) -> dict | None:
+def _api_catalog_output_root() -> Path:
+    """Compatibility alias for older tests and local overrides."""
+    return _agent_catalog_output_root()
+
+
+def _load_json_from_runtime_or_s3(relative_path: str, *, use_agent_prefix: bool = False, use_api_prefix: bool = False) -> dict | None:
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
     if runtime_mode == "cloud":
-        s3_path = f"api_catalog/{relative_path}" if use_api_prefix else relative_path
-        try:
-            data = _fetch_json_from_s3(s3_path)
-            return data if isinstance(data, dict) else None
-        except Exception as e:
-            logger.warning(f"Failed to load {s3_path} from S3: {e}")
-            return None
+        use_discovery_prefix = use_agent_prefix or use_api_prefix
+        candidate_paths = (
+            [f"agent_catalog/{relative_path}", f"api_catalog/{relative_path}"]
+            if use_discovery_prefix
+            else [relative_path]
+        )
+        last_error = None
+        for s3_path in candidate_paths:
+            try:
+                data = _fetch_json_from_s3(s3_path)
+                return data if isinstance(data, dict) else None
+            except Exception as e:
+                last_error = e
+        logger.warning(f"Failed to load {candidate_paths[0]} from S3: {last_error}")
+        return None
 
-    local_path = _api_catalog_output_root() / relative_path
-    try:
-        if local_path.exists():
-            return json.loads(local_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"Failed to load local API discovery artifact {local_path}: {e}")
+    roots = [_agent_catalog_output_root()]
+    legacy_root = Path(__file__).resolve().parents[2] / "api_catalog" / "output"
+    if legacy_root not in roots:
+        roots.append(legacy_root)
+    for root in roots:
+        local_path = root / relative_path
+        try:
+            if local_path.exists():
+                return json.loads(local_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"Failed to load local Agent Catalog artifact {local_path}: {e}")
     return None
 
 
@@ -318,12 +340,12 @@ def load_api_catalog() -> dict:
     if _api_catalog_cache is not None and (now - _api_catalog_cache_time) < _API_CATALOG_TTL_SECONDS:
         return _api_catalog_cache
     if _api_catalog_cache is None and (now - _api_catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS:
-        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "agent_catalog", "pack_count": 0, "packs": []}
 
-    payload = _load_json_from_runtime_or_s3("api_catalog.json", use_api_prefix=True)
+    payload = _load_json_from_runtime_or_s3("api_catalog.json", use_agent_prefix=True)
     if payload is None:
         _api_catalog_missing_time = now
-        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "api_catalog", "pack_count": 0, "packs": []}
+        return {"catalog_version": "1.0", "generated_at": None, "source_mode": "agent_catalog", "pack_count": 0, "packs": []}
 
     payload = _hydrate_api_catalog_payload(payload)
     _api_catalog_cache = payload
@@ -340,7 +362,7 @@ def load_api_guide() -> dict:
     if _api_guide_cache is None and (now - _api_guide_missing_time) < _CATALOG_MISS_TTL_SECONDS:
         return {}
 
-    payload = _load_json_from_runtime_or_s3("guide.json", use_api_prefix=True)
+    payload = _load_json_from_runtime_or_s3("guide.json", use_agent_prefix=True)
     if payload is None:
         _api_guide_missing_time = now
         return {}
@@ -366,7 +388,7 @@ def load_api_pack_detail(pack_id: str) -> dict | None:
     if cached is None and (now - _api_pack_missing_time.get(pack_id, 0.0)) < _CATALOG_MISS_TTL_SECONDS:
         return None
 
-    payload = _load_json_from_runtime_or_s3(f"packs/{pack_id}.json", use_api_prefix=True)
+    payload = _load_json_from_runtime_or_s3(f"packs/{pack_id}.json", use_agent_prefix=True)
     if payload is None:
         _api_pack_missing_time[pack_id] = now
         return None
@@ -1042,7 +1064,7 @@ def clear_metadata_cache():
 
 
 def prewarm_api_catalog() -> None:
-    """Load agent/API discovery artifacts into cache at startup."""
+    """Load Agent Catalog discovery artifacts into cache at startup."""
     try:
         catalog = load_api_catalog()
         pack_count = len((catalog or {}).get("packs", []))
@@ -1051,13 +1073,13 @@ def prewarm_api_catalog() -> None:
             pack_id = pack.get("pack_id")
             if pack_id:
                 load_api_pack_detail(pack_id)
-        logger.info("API catalog prewarm complete: %d packs loaded", pack_count)
+        logger.info("Agent Catalog prewarm complete: %d packs loaded", pack_count)
     except Exception as exc:
-        logger.warning("API catalog prewarm failed: %s", exc)
+        logger.warning("Agent Catalog prewarm failed: %s", exc)
 
 
 def clear_api_discovery_cache():
-    """Clear the cached agent/API discovery artifacts."""
+    """Clear the cached Agent Catalog discovery artifacts."""
     global _api_catalog_cache, _api_catalog_cache_time, _api_catalog_missing_time
     global _api_guide_cache, _api_guide_cache_time, _api_guide_missing_time
     global _api_pack_cache, _api_pack_cache_time, _api_pack_missing_time
@@ -1071,7 +1093,7 @@ def clear_api_discovery_cache():
     _api_pack_cache = {}
     _api_pack_cache_time = {}
     _api_pack_missing_time = {}
-    logger.info("API discovery cache cleared")
+    logger.info("Agent Catalog cache cleared")
 
 
 def clear_catalog_cache():

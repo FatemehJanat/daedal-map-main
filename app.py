@@ -156,7 +156,7 @@ def _shared_runtime_rate_limit_for_path(path: str) -> tuple[int, int] | None:
 
 def _rate_limit_response(surface: str, retry_after: int):
     messages = {
-        "agent_api_discovery": "Too many agent API discovery requests. Please slow down and try again shortly.",
+        "agent_api_discovery": "Too many Agent Catalog discovery requests. Please slow down and try again shortly.",
         "human_app_catalog": "Too many catalog requests. Please slow down and try again shortly.",
         "agent_api_paid": "Too many paid API requests. Please wait a moment and try again.",
         "agent_api_mcp": "Too many MCP requests. Please wait a moment and try again.",

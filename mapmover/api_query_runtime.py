@@ -1516,6 +1516,7 @@ def execute_dataset_query(
     limit: int | None = None,
     aggregate_dimension_columns: list[str] | None = None,
     aggregate_label_columns: list[str] | None = None,
+    require_any_non_null_columns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     from .duckdb_helpers import _normalize_ts_for_duckdb
 
@@ -1664,10 +1665,21 @@ def execute_dataset_query(
             return []
         return df.to_dict("records")
 
+    normal_where_parts = list(where_parts)
+    required_non_null = [
+        str(col).strip()
+        for col in (require_any_non_null_columns or [])
+        if str(col).strip() in available_cols
+    ]
+    if required_non_null:
+        normal_where_parts.append(
+            "(" + " OR ".join(f"{quote_ident(col)} IS NOT NULL" for col in dict.fromkeys(required_non_null)) + ")"
+        )
+
     select_expr = ", ".join(quote_ident(col) for col in selected)
     sql = f"SELECT {select_expr} FROM read_parquet(?)"
-    if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
+    if normal_where_parts:
+        sql += " WHERE " + " AND ".join(normal_where_parts)
     if order_parts:
         sql += " ORDER BY " + ", ".join(order_parts)
 
