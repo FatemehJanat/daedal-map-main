@@ -319,6 +319,10 @@ function isSharedMetricOverlay(overlayId) {
   return config?.model === 'choropleth';
 }
 
+function isAdminLayersOverlay(overlayId) {
+  return overlayId === 'admin_layers';
+}
+
 function getOverlayDisplayContract(overlayId) {
   const contract = OverlaySelector?.getOverlayConfig?.(overlayId)?.displayContract;
   return contract && typeof contract === 'object' ? contract : null;
@@ -2870,11 +2874,11 @@ export const OverlayController = {
 
   captureFocusedOverlayIds(preferredOverlayIds = []) {
     const current = Array.isArray(OverlaySelector?.getActiveOverlays?.())
-      ? OverlaySelector.getActiveOverlays().filter((id) => id !== 'demographics')
+      ? OverlaySelector.getActiveOverlays().filter((id) => id !== 'demographics' && !isAdminLayersOverlay(id))
       : [];
     const merged = [...current];
     for (const overlayId of Array.isArray(preferredOverlayIds) ? preferredOverlayIds : []) {
-      if (!overlayId || overlayId === 'demographics' || merged.includes(overlayId)) continue;
+      if (!overlayId || overlayId === 'demographics' || isAdminLayersOverlay(overlayId) || merged.includes(overlayId)) continue;
       merged.push(overlayId);
     }
     return merged;
@@ -3007,7 +3011,7 @@ export const OverlayController = {
     const allowAutoFetch = source !== 'playback';
 
     for (const overlayId of activeOverlays) {
-      if (overlayId === 'demographics') continue;
+      if (overlayId === 'demographics' || isAdminLayersOverlay(overlayId)) continue;
       if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
         this.renderOpsSnapshotOverlay(overlayId) || this.renderCurrentData(overlayId);
         continue;
@@ -3121,7 +3125,7 @@ export const OverlayController = {
     const allowAutoFetch = source !== 'playback';
 
     for (const overlayId of activeOverlays) {
-      if (overlayId === 'demographics') continue;
+      if (overlayId === 'demographics' || isAdminLayersOverlay(overlayId)) continue;
       if (this._isOpsMode() && this._isOpsSnapshotManagedOverlay(overlayId)) {
         this.renderOpsSnapshotOverlay(overlayId) || this.renderCurrentData(overlayId);
         continue;
@@ -3483,8 +3487,30 @@ export const OverlayController = {
       }
     }
 
-    // Demographics controls choropleth visibility AND loads countries
-    // Note: Can coexist with geometry overlays (separate layer systems)
+    // Admin Layers controls viewport-loaded administrative geometry. Metric
+    // overlays remain data overlays, even when they use the same map layers.
+    if (isAdminLayersOverlay(overlayId)) {
+      if (isActive) {
+        const App = window.App;
+        const ViewportLoader = window.ViewportLoader;
+        if (ViewportLoader?.currentAdminLevel !== undefined) {
+          await ViewportLoader.load?.(ViewportLoader.currentAdminLevel);
+        } else if (App && typeof App.loadCountries === 'function') {
+          await App.loadCountries();
+        }
+        MapAdapter?.setChoroplethVisible?.(true);
+      } else {
+        const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+        const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
+        MapAdapter?.setChoroplethVisible?.(anyMetricActive);
+      }
+      refreshTickerForOverlayState();
+      emitOverlayStatusMessage(overlayId, isActive, options);
+      return;
+    }
+
+    // Demographics remains a legacy metric/control overlay. It can still
+    // bootstrap the shared region layer for older saved sessions.
     // Metric choropleth toggles (demographics, currency) share one choropleth
     // layer. Toggling one off must not hide another that is still on, so
     // visibility tracks whether ANY metric overlay is active.
@@ -3529,8 +3555,9 @@ export const OverlayController = {
       }
       const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
       const anyMetricActive = activeOverlays.some((id) => isSharedMetricOverlay(id));
+      const adminLayersActive = activeOverlays.some((id) => isAdminLayersOverlay(id));
       if (MapAdapter) {
-        MapAdapter.setChoroplethVisible(anyMetricActive);
+        MapAdapter.setChoroplethVisible(anyMetricActive || adminLayersActive);
       }
       refreshTickerForOverlayState();
       emitOverlayStatusMessage(overlayId, isActive, options);
@@ -4433,7 +4460,7 @@ export const OverlayController = {
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
 
     for (const overlayId of activeOverlays) {
-      if (overlayId !== 'demographics' && OVERLAY_ENDPOINTS[overlayId]) {
+      if (overlayId !== 'demographics' && !isAdminLayersOverlay(overlayId) && OVERLAY_ENDPOINTS[overlayId]) {
         await this.loadOverlay(overlayId);
       }
     }
@@ -4484,7 +4511,7 @@ export const OverlayController = {
     const activeOverlays = OverlaySelector?.getActiveOverlays() || [];
 
     for (const overlayId of activeOverlays) {
-      if (overlayId === 'demographics') continue;
+      if (overlayId === 'demographics' || isAdminLayersOverlay(overlayId)) continue;
       if (nwsHistoricalVariant(overlayId)) {
         NwsAlertsOverlay.setHistoricalTime(TimeSlider?.currentTime);
         continue;

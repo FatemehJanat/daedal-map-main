@@ -1307,6 +1307,7 @@ def _geometry_scope_codes(*values) -> set[str]:
 
 def _build_geometry_catalog_payload() -> dict:
     from mapmover.runtime.geometry_catalog import load_geometry_catalog
+    from mapmover.runtime.country_geography import load_country_geometry_profile
 
     catalog = load_geometry_catalog()
     banks = [item for item in (catalog.get("geometry_banks") or []) if isinstance(item, dict)]
@@ -1362,6 +1363,64 @@ def _build_geometry_catalog_payload() -> dict:
             }),
         })
 
+    admin_spine_coverage = []
+    for code in country_codes:
+        profile = load_country_geometry_profile(code)
+        local_system = profile.get("local_geometry_system") if isinstance(profile.get("local_geometry_system"), dict) else {}
+        sub_levels = profile.get("sub_admin_levels") if isinstance(profile.get("sub_admin_levels"), dict) else {}
+        strict_levels = {}
+        for level_key, info in sub_levels.items():
+            if not isinstance(info, dict):
+                continue
+            spine_role = str(info.get("spine_role") or "strict_nested").strip().lower()
+            if spine_role not in {"strict_nested", "admin_spine", "spine"}:
+                continue
+            strict_levels[str(level_key)] = {
+                "name": info.get("name"),
+                "display_name": info.get("display_name"),
+                "canonical_dataset_label": info.get("canonical_dataset_label"),
+                "status": info.get("status"),
+                "source_system": info.get("source_system"),
+                "geometry_path": info.get("geometry_path"),
+                "folder": info.get("folder"),
+            }
+        level_numbers = []
+        for level_key in strict_levels.keys():
+            try:
+                level_numbers.append(int(str(level_key).split("_", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+        country_assets = [
+            asset for asset in assets
+            if code in _geometry_scope_codes(
+                asset.get("scope"),
+                asset.get("local_probe_path"),
+                asset.get("cloud_probe_path"),
+                asset.get("asset_id"),
+            )
+        ]
+        admin_spine_assets = [
+            asset for asset in country_assets
+            if str(asset.get("family") or "").strip() in {"country_admin_geometry", "country_admin_extension"}
+        ]
+        if not strict_levels and not admin_spine_assets:
+            continue
+        max_depth = max(level_numbers) if level_numbers else 2
+        admin_spine_coverage.append({
+            "country_code": code,
+            "source_system": local_system.get("source_system"),
+            "runtime_path": local_system.get("runtime_path"),
+            "max_admin_level": f"admin_{max_depth}",
+            "max_admin_depth": max_depth,
+            "strict_nested_levels": strict_levels,
+            "asset_count": len(admin_spine_assets),
+            "feature_count": sum(
+                int(asset.get("feature_count") or asset.get("row_count") or 0)
+                for asset in admin_spine_assets
+            ),
+        })
+    admin_spine_coverage.sort(key=lambda item: (item["country_code"], item["max_admin_depth"]))
+
     return {
         "catalog_family": "geometry",
         "catalog_path": "geometry/geometry_catalog.json",
@@ -1378,6 +1437,7 @@ def _build_geometry_catalog_payload() -> dict:
         "named_group_count": len(groups),
         "country_count": len(country_codes),
         "country_codes": country_codes,
+        "admin_spine_coverage": admin_spine_coverage,
         "families": family_cards,
         "banks": [
             {

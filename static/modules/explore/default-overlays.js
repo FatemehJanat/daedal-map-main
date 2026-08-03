@@ -13,11 +13,11 @@ export function getExploreDefaultOverlayIds() {
     'floods',
     'tornadoes',
     'risk',
+    'admin_layers',
 
     // Published country/region indicator families.  These IDs are overlay
     // paths from the catalog, rather than individual source or pack IDs.
     'economy',
-    'demographics',
     'distributed_manufacturing',
     'cejst',
     'usa_industrial_activity',

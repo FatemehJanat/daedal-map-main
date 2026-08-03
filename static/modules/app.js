@@ -1048,7 +1048,7 @@ export const App = {
     // Setup keyboard handler for debug mode
     this.setupKeyboardHandler();
 
-    // Don't load countries at startup - wait for demographics overlay to be enabled
+    // Don't load countries at startup - wait for Admin Layers to be enabled
     // This keeps the map clean until user selects what they want to see
 
     // Initialize viewport-based navigation with current viewport area
@@ -1056,7 +1056,7 @@ export const App = {
     ViewportLoader.currentAdminLevel = ViewportLoader.getAdminLevelForViewport(bounds);
     console.log('Viewport navigation ready (area-based thresholds)');
 
-    // Force initial geometry load if demographics was restored as active.
+    // Force initial geometry load if Admin Layers was restored as active.
     // onMoveEnd fires during MapAdapter.init() but onViewportChange only loads on level
     // *changes* - since currentAdminLevel starts at 0 and world zoom maps to 0, no
     // load is ever triggered. Kick it manually here after overlay state is set.
@@ -1070,7 +1070,10 @@ export const App = {
       || routeIntent.event_id
       || (Array.isArray(routeIntent.pack_ids) && routeIntent.pack_ids.length)
     );
-    if (!researchStartup && !hasExploreDeepLink && OverlaySelector.getActiveOverlays().includes('demographics')) {
+    const startupAdminLayersActive = OverlaySelector.getActiveOverlays().some((id) => (
+      id === 'admin_layers' || id === 'demographics'
+    ));
+    if (!researchStartup && !hasExploreDeepLink && startupAdminLayersActive) {
       ViewportLoader.load(ViewportLoader.currentAdminLevel);
     }
 
@@ -1726,7 +1729,7 @@ export const App = {
     if (preserveOverlayState && OverlaySelector?.getActiveOverlays && OverlayController?.hideOverlay) {
       const activeOverlays = OverlaySelector.getActiveOverlays() || [];
       for (const overlayId of activeOverlays) {
-        if (!overlayId || overlayId === 'demographics') continue;
+        if (!overlayId || overlayId === 'demographics' || overlayId === 'admin_layers') continue;
         try {
           OverlayController.hideOverlay(overlayId);
         } catch (error) {
@@ -3099,12 +3102,13 @@ export const App = {
       console.log(`Time range: ${temporalPayload.timeRange.min} - ${temporalPayload.timeRange.max}`);
       console.log('DEBUG app.js: metric ranges from response:', temporalPayload.metricTimeRanges);
 
-      // Auto-enable demographics overlay for demographic data from chat orders
-      // This ensures viewport-based admin level filtering works
+      // Auto-enable Admin Layers for metric data from chat orders. This keeps
+      // viewport-based admin level filtering available without coupling the
+      // geometry viewer to the demographics metric overlay.
       const OverlaySelector = window.OverlaySelector;
-      if (ChatManager?.mode === 'explore' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
-        console.log('Auto-enabling demographics overlay for chat order data');
-        OverlaySelector.setActive('demographics', true);
+      if (ChatManager?.mode === 'explore' && OverlaySelector && !OverlaySelector.isActive('admin_layers')) {
+        console.log('Auto-enabling Admin Layers overlay for chat order data');
+        OverlaySelector.setActive('admin_layers', true);
       }
 
       // Hide any existing slider/legend first
@@ -3175,9 +3179,9 @@ export const App = {
           }
         }
 
-        if (ChatManager?.mode === 'explore' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('demographics')) {
-          console.log('Auto-enabling demographics overlay for chat order data');
-          OverlaySelector.setActive('demographics', true);
+        if (ChatManager?.mode === 'explore' && data.data_type === 'metrics' && OverlaySelector && !OverlaySelector.isActive('admin_layers')) {
+          console.log('Auto-enabling Admin Layers overlay for chat order data');
+          OverlaySelector.setActive('admin_layers', true);
         }
 
         if (data.data_type === 'metrics') {
@@ -3314,7 +3318,10 @@ export const App = {
     this.pendingCanvasMode = 'explore';
     if (!MapAdapter?.map) return;
     ViewportLoader.orderMode = false;
-    MapAdapter.setChoroplethVisible?.(OverlaySelector?.isActive?.('demographics') === true);
+    MapAdapter.setChoroplethVisible?.(
+      OverlaySelector?.isActive?.('admin_layers') === true
+      || OverlaySelector?.isActive?.('demographics') === true
+    );
     this.clearResearchDisplayInteractions();
     this.currentResearchDisplay = null;
     this.currentResearchLayerOptions = null;
@@ -3631,5 +3638,6 @@ if (document.readyState === 'loading') {
 if (typeof window !== 'undefined') {
   window.App = App;
   window.OverlayController = OverlayController;  // For debugging: OverlayController.getCacheStats()
+  window.ViewportLoader = ViewportLoader;
   window.TimeSlider = TimeSlider;  // For settings to update live timezone
 }

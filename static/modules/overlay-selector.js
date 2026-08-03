@@ -87,6 +87,7 @@ function getOverlayModel(overlayId, sources = [], fallbackDataType = 'metrics') 
 
 // Icon mapping for overlay types
 const OVERLAY_ICONS = {
+  'admin_layers': 'A',
   'demographics': 'D',
   'disasters': '!',
   'climate': 'C',
@@ -485,12 +486,32 @@ function getCategoryDisplayLabel(category) {
   return category.label || '';
 }
 
+function buildAdminLayersOverlay() {
+  return {
+    id: 'admin_layers',
+    label: 'Admin Layers',
+    description: 'Canonical administrative geometry spine',
+    default: false,
+    locked: false,
+    model: 'admin-layers',
+    icon: 'A',
+    hasYearFilter: false,
+    alwaysVisible: true
+  };
+}
+
 /**
  * Build CATEGORIES from overlay_tree fetched from API.
  * @param {Object} overlayTree - The overlay_tree from catalog
  */
 function buildCategoriesFromTree(overlayTree) {
-  const categories = [];
+  const categories = [{
+    id: 'admin_layers',
+    label: 'Admin Layers',
+    icon: 'A',
+    isCategory: false,
+    overlay: buildAdminLayersOverlay()
+  }];
   const globalIndicatorOverlays = [];
   const usContextOverlays = [];
 
@@ -934,6 +955,7 @@ export function applyOverlayCatalogResponse(response = {}) {
     // contract.  Keep them testable in Explore/Research WIP, but never let a
     // broad WIP source response turn them into apparent live Ops feeds.
     const OPS_EXPLORE_ONLY_WIP_OVERLAYS = new Set([
+      'admin_layers',
       'demographics',
       'geography',
       'zip_codes',
@@ -1201,6 +1223,13 @@ export const OverlaySelector = {
       console.error('OverlaySelector: Failed to load from API, using fallback', err);
       // Fallback to minimal hardcoded categories
       ALL_CATEGORIES = [
+        {
+          id: 'admin_layers',
+          label: 'Admin Layers',
+          icon: 'A',
+          isCategory: false,
+          overlay: buildAdminLayersOverlay()
+        },
         {
           id: 'global_indicators',
           label: 'Global Indicators',

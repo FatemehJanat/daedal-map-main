@@ -980,20 +980,41 @@ def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=N
     admin1_local = translate_geometry_id_to_local_id(admin1_row.get("loc_id")) if admin1_row is not None else None
     admin2_local = translate_geometry_id_to_local_id(admin2_row.get("loc_id")) if admin2_row is not None else None
 
-    state_abbrev = None
-    if isinstance(admin1_local, str):
-        parts = admin1_local.split("-")
-        if len(parts) >= 2:
-            state_abbrev = parts[1]
+    state_abbrev = _state_code_from_row(admin2_row) or _state_code_from_row(admin1_row)
+    if not state_abbrev:
+        for local_value in (admin2_local, admin1_local):
+            if isinstance(local_value, str):
+                parts = local_value.split("-")
+                if len(parts) >= 2:
+                    state_abbrev = parts[1]
+                    break
 
     deepest_match = None
     parent_scope = admin2_local or admin1_local
 
     for admin_level in deep_levels:
-        df = load_subcounty_geometry(
-            iso3, admin_level=admin_level, state_abbrev=state_abbrev,
-            bbox=(lon, lat, lon, lat),
-        )
+        level_config = get_country_level_config(iso3, admin_level) or {}
+        if str(level_config.get("folder") or "").strip() == ".":
+            df = load_subcounty_geometry(
+                iso3, admin_level=admin_level,
+                bbox=(lon, lat, lon, lat),
+            )
+        else:
+            df = load_subcounty_geometry(
+                iso3, admin_level=admin_level, state_abbrev=state_abbrev,
+                bbox=(lon, lat, lon, lat),
+            )
+            if (df is None or df.empty) and not state_abbrev:
+                regions = get_regions_in_bbox(iso3, lon, lat, lon, lat)
+                frames = []
+                for region_code in regions:
+                    region_df = load_subcounty_geometry(
+                        iso3, admin_level=admin_level, state_abbrev=region_code,
+                        bbox=(lon, lat, lon, lat),
+                    )
+                    if region_df is not None and not region_df.empty:
+                        frames.append(region_df)
+                df = pd.concat(frames, ignore_index=True) if frames else None
         if df is None or df.empty:
             continue
 
@@ -1783,6 +1804,52 @@ def _read_subcounty_geometry(
     )
 
 
+def _apply_subcounty_filters(
+    df: pd.DataFrame,
+    *,
+    loc_ids: list[str] | None = None,
+    parent_loc_id: str | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columns or None)
+
+    filtered = df
+    if loc_ids and "loc_id" in filtered.columns:
+        wanted = {canonicalize_loc_id(value) for value in loc_ids if value}
+        filtered = filtered[filtered["loc_id"].astype(str).str.upper().isin(wanted)]
+    if parent_loc_id and "parent_id" in filtered.columns:
+        parent = canonicalize_loc_id(parent_loc_id)
+        filtered = filtered[filtered["parent_id"].astype(str).str.upper() == parent]
+    if bbox and all(column in filtered.columns for column in ("bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat")):
+        min_lon, min_lat, max_lon, max_lat = bbox
+        filtered = filtered[
+            (filtered["bbox_max_lon"] >= min_lon)
+            & (filtered["bbox_min_lon"] <= max_lon)
+            & (filtered["bbox_max_lat"] >= min_lat)
+            & (filtered["bbox_min_lat"] <= max_lat)
+        ]
+    if columns:
+        available = [column for column in columns if column in filtered.columns]
+        filtered = filtered[available]
+    return filtered
+
+
+def _state_code_from_row(row) -> str | None:
+    if row is None:
+        return None
+    for field in ("loc_id", "parent_id"):
+        value = str(row.get(field) or "").strip().upper()
+        parts = value.split("-")
+        if len(parts) >= 2 and parts[0].isalpha() and len(parts[1]) <= 3 and not parts[1].startswith("G"):
+            return parts[1]
+    iso_3166_2 = str(row.get("iso_3166_2") or "").strip().upper()
+    if "-" in iso_3166_2:
+        return iso_3166_2.rsplit("-", 1)[-1]
+    return None
+
+
 def load_subcounty_geometry(
     iso3: str,
     admin_level: int,
@@ -1825,6 +1892,16 @@ def load_subcounty_geometry(
         return None
 
     geom_type = level_config.get("folder") or level_config.get("name")
+    if str(geom_type or "").strip() == ".":
+        df = load_country_parquet(iso3, admin_level=admin_level)
+        return _apply_subcounty_filters(
+            df,
+            loc_ids=loc_ids,
+            parent_loc_id=parent_loc_id,
+            bbox=bbox,
+            columns=columns,
+        )
+
     is_partitioned = bool(state_abbrev or iso3 == "USA")
 
     if not is_partitioned:

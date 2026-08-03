@@ -16,6 +16,37 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(result["matches"]["admin_3"]["loc_id"], "USA-CA-071-010424")
         self.assertEqual(result["matches"]["admin_4"]["loc_id"], "USA-CA-071-010424-3")
 
+    def test_australia_point_resolves_to_declared_admin6_spine(self):
+        result = resolve_point_to_loc_id_stack(139.827059, -27.604202, include_geometry=False)
+
+        self.assertEqual(result["deepest_resolved_admin_level"], "admin_6")
+        self.assertEqual(
+            result["deepest_resolved_loc_id"],
+            "AUS-SA-406-40602-406021141-40602114107-40215189900",
+        )
+        self.assertEqual(result["matches"]["admin_2"]["loc_id"], "AUS-SA-406")
+        self.assertEqual(result["matches"]["admin_6"]["name"], "40215189900")
+
+    def test_canada_point_resolves_to_declared_admin5_spine(self):
+        result = resolve_point_to_loc_id_stack(-122.849, 49.191, include_geometry=False)
+
+        self.assertEqual(result["deepest_resolved_admin_level"], "admin_5")
+        self.assertEqual(
+            result["deepest_resolved_loc_id"],
+            "CAN-BC-5915004-59152203-59152203020",
+        )
+        self.assertEqual(result["matches"]["admin_2"]["loc_id"], "CAN-BC-5915")
+
+    def test_brazil_bairro_point_resolves_to_declared_admin5_spine(self):
+        result = resolve_point_to_loc_id_stack(-48.12994234942419, -22.793495497153657, include_geometry=False)
+
+        self.assertEqual(result["deepest_resolved_admin_level"], "admin_5")
+        self.assertEqual(
+            result["deepest_resolved_loc_id"],
+            "BRA-G114911670B46470234103867-G256859067B93211874574950-350230905-35023090500-3502309003",
+        )
+        self.assertEqual(result["matches"]["admin_5"]["name"], "Jardim Nova Anhembi")
+
     def test_resolve_point_to_location_prefers_admin2_without_series_truthiness(self):
         class _Frame:
             empty = False

@@ -91,6 +91,19 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(store.kwargs["Key"], "published/geometry/geometry_catalog.json")
         geometry_catalog.clear_geometry_catalog_cache()
 
+    def test_geometry_catalog_exposes_country_admin_spine_depth(self) -> None:
+        response = self.client.get("/api/v1/geometry/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        coverage = {
+            item["country_code"]: item
+            for item in response.json().get("admin_spine_coverage") or []
+        }
+        self.assertEqual(coverage["AUS"]["max_admin_level"], "admin_6")
+        self.assertEqual(coverage["CAN"]["max_admin_level"], "admin_5")
+        self.assertEqual(coverage["BRA"]["max_admin_level"], "admin_5")
+        self.assertIn("admin_6", coverage["AUS"]["strict_nested_levels"])
+
 
 if __name__ == "__main__":
     unittest.main()

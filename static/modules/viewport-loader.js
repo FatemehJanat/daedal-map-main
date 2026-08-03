@@ -14,6 +14,12 @@ let NavigationManager = null;
 let App = null;
 let TimeSlider = null;
 
+function isAdminLayersActive() {
+  const OverlaySelector = window.OverlaySelector;
+  const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
+  return activeOverlays.includes('admin_layers') || activeOverlays.includes('demographics');
+}
+
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
   NavigationManager = deps.NavigationManager;
@@ -93,22 +99,24 @@ export const ViewportLoader = {
   // Area roughly corresponds to zoom: zoom 10 ~ 1-2 sq deg, zoom 14 ~ 0.01 sq deg
   //
   // Navigation layers (contiguous, smooth zoom):
-  //   0: Countries, 1: States, 2: Counties, 3: Tracts, 4: Block Groups, 5: Blocks
+  //   0: Countries, 1: States, 2: Counties, 3: Tracts, 4: Block Groups,
+  //   5: Blocks / comparable local detail, 6: source-native micro areas.
   //
   // This is the canonical admin path. Parallel geometry tracks such as ZCTA,
   // tribal, watersheds, and parks are handled separately through overlays /
   // special geometry sources, not by reinterpreting admin levels.
   //
-  // Deep admin navigation is currently strongest in USA Census geometry; other
-  // countries fall back gracefully to their deepest available canonical admin layer.
+  // Country deep profiles can extend the spine differently. The loader asks
+  // for the next canonical depth and falls back gracefully when that country
+  // has no rows at the requested level.
   areaThresholds: {
     level0: 3000,   // > 3000 sq deg = countries (world/continent view, zoom ~2-4)
     level1: 300,    // > 300 sq deg = states (large country view, zoom ~4-6)
     level2: 30,     // > 30 sq deg = counties (state/region view, zoom ~6-8)
     level3: 3,      // > 3 sq deg = census tracts (single county view, zoom ~9)
     level4: 0.3,    // > 0.3 sq deg = block groups (city/district view, zoom ~12-13)
-    level5: 0.001   // Reserved for a future level below blocks
-                    // < 0.001 sq deg = (reserved for future deeper levels)
+    level5: 0.001   // > 0.001 sq deg = blocks / comparable local detail
+                    // < 0.001 sq deg = source-native micro areas
   },
 
   /**
@@ -150,7 +158,8 @@ export const ViewportLoader = {
    *   2 = Counties
    *   3 = Census Tracts
    *   4 = Block Groups
-   *   5 = Blocks
+   *   5 = Blocks / comparable local detail
+   *   6 = Source-native micro areas where a strict-nested country spine has them
    *
    * These are canonical admin levels only. Cities/places, tribal lands,
    * ZCTAs, watersheds, and similar geometries live on separate overlay tracks.
@@ -163,7 +172,8 @@ export const ViewportLoader = {
     if (area > this.areaThresholds.level2) return 2;  // Counties
     if (area > this.areaThresholds.level3) return 3;  // Census Tracts
     if (area > this.areaThresholds.level4) return 4;  // Block Groups
-    return 5;  // Blocks (deepest navigation level)
+    if (area > this.areaThresholds.level5) return 5;  // Blocks / comparable local detail
+    return 6;  // Source-native micro areas
   },
 
   /**
@@ -179,6 +189,7 @@ export const ViewportLoader = {
       case 3: return 15;      // Census Tracts: 3-30 sq deg, target ~15
       case 4: return 1.5;     // Block Groups: 0.3-3 sq deg, target ~1.5
       case 5: return 0.15;    // Blocks: < 0.3 sq deg, target ~0.15
+      case 6: return 0.0005;  // Source-native micro areas: < 0.001 sq deg
       default: return 15;     // Fallback to tracts
     }
   },
@@ -495,12 +506,10 @@ export const ViewportLoader = {
   onMoveEnd() {
     if (!MapAdapter?.map) return;
 
-    // Demographics overlay must be active for any viewport-based loading or filtering
-    // Chat orders automatically enable demographics overlay when displaying demographic data
-    const OverlaySelector = window.OverlaySelector;
-    const activeOverlays = OverlaySelector?.getActiveOverlays?.() || [];
-    if (!activeOverlays.includes('demographics')) {
-      return;  // Skip if demographics not enabled
+    // Admin Layers owns viewport-based spine loading/filtering. Keep
+    // demographics as a legacy alias so older restored sessions still work.
+    if (!isAdminLayersActive()) {
+      return;
     }
 
     const currentZoom = MapAdapter.map.getZoom();
