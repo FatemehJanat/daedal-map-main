@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 
 from mapmover.auth_context import get_authenticated_user
 from mapmover.catalog_surface import request_can_use_wip_catalog
-from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, select_rows
+from mapmover.duckdb_helpers import is_cloud_mode, parquet_available, path_to_uri, run_df, run_rows, select_rows
 from mapmover.geometry_handlers import get_selection_geometries
 from mapmover.paths import GLOBAL_DIR
 from .helpers import msgpack_error, msgpack_response
@@ -42,6 +42,15 @@ def _available_years() -> list[int]:
 
 def _playback_years() -> list[int]:
     """Return continuous event-playback coverage, independent of detail text."""
+    if is_cloud_mode():
+        rows = run_rows(
+            "SELECT DISTINCT CAST(substr(start_time, 1, 4) AS INTEGER) AS year "
+            "FROM read_parquet(?) "
+            "WHERE start_time IS NOT NULL "
+            "ORDER BY year",
+            [path_to_uri(EVENTS)],
+        )
+        return [int(row[0]) for row in rows if row and row[0] is not None]
     events = _load_events()
     timestamps = events.get("_start_at")
     if timestamps is None:
@@ -60,6 +69,54 @@ def _load_events() -> pd.DataFrame:
         _events_df["_start_at"] = pd.to_datetime(_events_df["start_time"], utc=True, errors="coerce")
         _events_df["_end_at"] = pd.to_datetime(_events_df["end_time"], utc=True, errors="coerce")
     return _events_df
+
+
+def _timestamp_utc_text(value: pd.Timestamp) -> str:
+    return value.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _prepare_events_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        frame = frame.copy()
+        frame["_start_at"] = pd.Series(dtype="datetime64[ns, UTC]")
+        frame["_end_at"] = pd.Series(dtype="datetime64[ns, UTC]")
+        return frame
+    frame = frame.copy()
+    frame["_start_at"] = pd.to_datetime(frame["start_time"], utc=True, errors="coerce")
+    frame["_end_at"] = pd.to_datetime(frame["end_time"], utc=True, errors="coerce")
+    return frame
+
+
+def _query_cloud_events(where_sql: str, params: list) -> pd.DataFrame:
+    uri = path_to_uri(EVENTS)
+    frame = run_df(f"SELECT * FROM read_parquet(?) WHERE {where_sql}", [uri] + params)
+    return _prepare_events_frame(frame)
+
+
+def _events_for_range(start_year: int, end_year: int) -> pd.DataFrame:
+    range_start = pd.Timestamp(f"{start_year}-01-01T00:00:00Z")
+    range_end = pd.Timestamp(f"{end_year + 1}-01-01T00:00:00Z")
+    if is_cloud_mode():
+        return _query_cloud_events(
+            "start_time < ? AND end_time >= ? AND end_time > start_time",
+            [_timestamp_utc_text(range_end), _timestamp_utc_text(range_start)],
+        )
+    df = _load_events()
+    return df[
+        (df["_start_at"] < range_end)
+        & (df["_end_at"] >= range_start)
+        & (df["_end_at"] > df["_start_at"])
+    ].copy()
+
+
+def _events_active_at(moment: pd.Timestamp) -> pd.DataFrame:
+    if is_cloud_mode():
+        return _query_cloud_events(
+            "start_time <= ? AND end_time > ?",
+            [_timestamp_utc_text(moment), _timestamp_utc_text(moment)],
+        )
+    df = _load_events()
+    return df[(df["_start_at"] <= moment) & (df["_end_at"] > moment)].copy()
 
 
 def _load_v2_events() -> pd.DataFrame:
@@ -212,8 +269,7 @@ async def _active_historical_nws_alerts(req: Request, at: str, *, require_wip: b
     moment = pd.to_datetime(at, utc=True, errors="coerce")
     if pd.isna(moment):
         return msgpack_error("at must be an ISO timestamp", 400)
-    df = _load_events()
-    active = df[(df["_start_at"] <= moment) & (df["_end_at"] > moment)].copy()
+    active = _events_active_at(moment)
     needed = sorted({loc for value in active.get("affected_loc_ids", []) for loc in str(value or "").split("|") if loc})
     county = get_selection_geometries(needed) if needed else {"features": []}
     county_by_id = {(f.get("properties") or {}).get("loc_id"): f.get("geometry") for f in county.get("features", [])}
@@ -267,7 +323,6 @@ async def _historical_nws_alerts(
         return msgpack_error("Requested NWS history is outside the installed 1986-2025 event coverage.", 404)
     cache_key = (start_year, end_year)
     if cache_key not in _history_payloads:
-        df = _load_events()
         range_start = pd.Timestamp(f"{start_year}-01-01T00:00:00Z")
         range_end = pd.Timestamp(f"{end_year + 1}-01-01T00:00:00Z")
         # The archive contains a small number of cancelled/partial products
@@ -277,11 +332,7 @@ async def _historical_nws_alerts(
         # before their start and leave them permanently active.  Exclude them
         # at the source boundary so summary counts, geometry, and animation
         # all describe the same valid event set.
-        frame = df[
-            (df["_start_at"] < range_end)
-            & (df["_end_at"] >= range_start)
-            & (df["_end_at"] > df["_start_at"])
-        ]
+        frame = _events_for_range(start_year, end_year)
         if summary_only:
             return msgpack_response({
                 "event_count": int(len(frame)),
