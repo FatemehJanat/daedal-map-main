@@ -134,6 +134,14 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         history.assert_not_called()
         self.assertEqual("nws-indexed", frame["geojson"]["features"][0]["properties"]["alert_id"])
 
+    def test_nws_timeline_frame_accepts_published_hash_key(self):
+        key = "timeline_frames/" + ("a" * 64) + ".json"
+        with patch.object(ops_orchestrator_runtime, "_read_json_object", return_value={"collector": "usa_nws_alerts"}) as reader:
+            frame = ops_orchestrator_runtime.load_current_state_timeline_frame("usa_nws_alerts", key)
+
+        self.assertEqual({"collector": "usa_nws_alerts"}, frame)
+        reader.assert_called_once_with("usa_nws_alerts/" + key)
+
     def test_requested_sources_replace_cached_watch_feeds(self):
         cache = DummyCache()
         cache.map_state["ops_watch"] = {

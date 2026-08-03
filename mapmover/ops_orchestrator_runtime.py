@@ -1014,7 +1014,7 @@ def load_current_state_timeline_frame(collector_name: str, frame_key: object) ->
     if (
         not collector
         or not re.fullmatch(r"[A-Za-z0-9_-]+", collector)
-        or not re.fullmatch(r"timeline_frames/[a-f0-9]{64}\\.json", key)
+        or not re.fullmatch(r"timeline_frames/[a-f0-9]{64}\.json", key)
     ):
         return None
     return _read_json_object(f"{collector}/{key}")
