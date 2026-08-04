@@ -23,12 +23,14 @@ from mapmover.ops_orchestrator_runtime import (
     load_current_state_snapshot,
     load_current_state_timeline_frame,
     load_current_state_timeline_index,
+    load_nws_recent_timeline_bundle,
 )
 from mapmover.ops_ticker import (
     build_cached_aurora_payload,
     build_cached_aurora_frames_payload,
     build_cached_nws_alerts_payload,
     build_nws_alerts_payload_for_snapshot,
+    _nws_alert_loc_ids,
     build_cached_ticker_payload,
 )
 from mapmover.ops_point_feeds import (
@@ -681,6 +683,28 @@ async def local_ops_timeline_nws_frames_endpoint(req: Request):
         return msgpack_response({"type": "local_ops_nws_frames", "frames": _local_nws_timeline_frames_at(values)})
     except Exception as exc:
         logger.exception("Local Ops NWS timeline batch error")
+        return msgpack_error(str(exc), 500)
+
+
+@router.post("/api/local/ops/timeline/nws-bundle")
+async def local_ops_timeline_nws_bundle_endpoint(req: Request):
+    """Return the compact 72-hour NWS lifecycle projection in one request."""
+    try:
+        # Decode so the endpoint remains inside the normal authenticated/request
+        # codec boundary even though the projection itself needs no parameters.
+        await decode_request_body(req)
+        bundle = load_nws_recent_timeline_bundle()
+        if bundle is None:
+            return msgpack_error("NWS playback bundle is not available yet", 404)
+        # The compactor preserves source SAME codes; convert them once at the
+        # API boundary to the reusable browser geometry-cache namespace.
+        definitions = bundle.get("definitions") if isinstance(bundle.get("definitions"), dict) else {}
+        for definition in definitions.values():
+            if isinstance(definition, dict) and "loc_ids" not in definition:
+                definition["loc_ids"] = _nws_alert_loc_ids(definition.get("same"))
+        return msgpack_response({"type": "local_ops_nws_bundle", "bundle": bundle})
+    except Exception as exc:
+        logger.exception("Local Ops NWS timeline bundle error")
         return msgpack_error(str(exc), 500)
 
 

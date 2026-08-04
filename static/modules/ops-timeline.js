@@ -38,6 +38,29 @@ function frameCacheKey(frame, overlayId = '') {
   return `${prefix}${String(frame?.start_at || '')}:${String(frame?.payload_hash || '')}`;
 }
 
+function buildNwsLifecycleFrame(bundle, ms) {
+  const definitions = bundle?.definitions && typeof bundle.definitions === 'object' ? bundle.definitions : {};
+  const features = [];
+  const county_geometry_references = [];
+  for (const interval of bundle?.intervals || []) {
+    const start = toMs(interval?.start_at);
+    const end = toMs(interval?.end_at);
+    if (start === null || start > ms || (end !== null && ms >= end)) continue;
+    const alert = definitions[interval.definition];
+    if (!alert) continue;
+    const props = {
+      alert_id: alert.alert_id, event: alert.event, severity: alert.severity,
+      urgency: alert.urgency, certainty: alert.certainty, headline: alert.headline,
+      area: alert.area, issued_at: alert.issued_at, expires: alert.expires,
+      detail_available: Boolean(alert.detail_available),
+    };
+    if (alert.geometry?.type) features.push({ type: 'Feature', geometry: alert.geometry, properties: { ...props, display: 'polygon' } });
+    else if (Array.isArray(alert.loc_ids) && alert.loc_ids.length) county_geometry_references.push({ loc_ids: alert.loc_ids, properties: { ...props, display: 'county' } });
+    if (Array.isArray(alert.point) && alert.point.length >= 2) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: alert.point }, properties: { ...props, display: 'marker' } });
+  }
+  return { type: 'FeatureCollection', features, county_geometry_references, detail_at: new Date(ms).toISOString() };
+}
+
 export const OpsTimeline = {
   enabled: false,
   element: null,
@@ -48,6 +71,7 @@ export const OpsTimeline = {
   selectedMs: null,
   externalProviders: new Map(),
   nwsFrameCache: new Map(),
+  nwsLifecycleBundle: null,
   nwsInteractiveRequestedAt: 0,
   nwsFrameRequestInFlight: false,
   nwsPendingFrameRequest: null,
@@ -78,6 +102,7 @@ export const OpsTimeline = {
     this.timeline = null;
     this.selectedMs = null;
     this.nwsFrameCache.clear();
+    this.nwsLifecycleBundle = null;
     this.nwsFrameRequestInFlight = false;
     this.nwsPendingFrameRequest = null;
     this.pointFrameCache.clear();
@@ -262,6 +287,7 @@ export const OpsTimeline = {
       }
       if (selected?.timeline_provider === 'nws_alerts') {
         if (ms > this.timeline.currentMs) void NwsAlertsOverlay.setOpsTimelineFrame?.({ type: 'FeatureCollection', features: [] });
+        else if (this.nwsLifecycleBundle) void NwsAlertsOverlay.setOpsTimelineFrame?.(buildNwsLifecycleFrame(this.nwsLifecycleBundle, ms));
         else void this._loadNwsFrame(selected, ms);
       } else if (selected?.timeline_provider === 'live_point') {
         const pointOverlay = getLivePointOverlay(selected.overlay_id);
@@ -431,6 +457,19 @@ export const OpsTimeline = {
   },
 
   async _preloadNwsFrames(frames, timeline, run, declaredBatchSize = NWS_BACKGROUND_BATCH_SIZE) {
+    if (!this.nwsLifecycleBundle) {
+      try {
+        const response = await postMsgpack('/api/local/ops/timeline/nws-bundle', {}, { silent: true });
+        if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;
+        if (response?.bundle?.intervals && response?.bundle?.definitions) {
+          this.nwsLifecycleBundle = response.bundle;
+          this._renderSelectedFrame(this.selectedMs || timeline.currentMs, { preserveCurrent: true });
+          return;
+        }
+      } catch (_) {
+        // Old deployments use the existing bounded per-frame fallback below.
+      }
+    }
     const batchSize = Math.max(1, Math.min(24, Number(declaredBatchSize) || NWS_BACKGROUND_BATCH_SIZE));
     for (let index = 0; index < frames.length; index += batchSize) {
       if (run !== this.backgroundPrefetchRun || timeline !== this.timeline) return;

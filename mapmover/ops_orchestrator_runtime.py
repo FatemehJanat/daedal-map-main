@@ -34,6 +34,11 @@ except ImportError:
     boto3 = None
 
 try:
+    import msgpack
+except ImportError:
+    msgpack = None
+
+try:
     from botocore.config import Config as BotocoreConfig
 except ImportError:
     BotocoreConfig = None
@@ -1018,6 +1023,26 @@ def load_current_state_timeline_frame(collector_name: str, frame_key: object) ->
     ):
         return None
     return _read_json_object(f"{collector}/{key}")
+
+
+def load_nws_recent_timeline_bundle() -> dict | None:
+    """Load the VPS-compacted, bounded NWS playback projection."""
+    cached = _get_live_state_cache("usa_nws_alerts", "timeline_bundle")
+    if isinstance(cached, dict):
+        return cached
+    client = _build_object_store_client()
+    if client is None or msgpack is None:
+        return None
+    try:
+        key = f"{_live_state_prefix()}/usa_nws_alerts/recent_72h.msgpack.gz"
+        raw = client.get_object(Bucket=_object_store_bucket(), Key=key)["Body"].read()
+        payload = msgpack.unpackb(gzip.decompress(raw), raw=False)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("intervals"), list):
+        return None
+    _set_live_state_cache("usa_nws_alerts", "timeline_bundle", payload)
+    return payload
 
 
 def load_aurora_frame_bundle() -> dict:
