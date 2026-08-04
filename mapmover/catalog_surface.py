@@ -16,7 +16,8 @@ CATALOG_FILE_SURFACES = {"published", "wip"}
 # separate: it means the same API-ready source has passed the optional public
 # MCP/discovery release gate. It is not an app view, but using the shared
 # surface vocabulary keeps catalog filtering and release tooling consistent.
-CATALOG_PRODUCT_SURFACES = {"explore", "research", "api", "mcp", "downloadable"}
+CATALOG_PRODUCT_SURFACE_ORDER = ("api", "research", "explore", "mcp", "downloadable")
+CATALOG_PRODUCT_SURFACES = set(CATALOG_PRODUCT_SURFACE_ORDER)
 DEFAULT_RELEASED_CATALOG_SURFACES = ("explore", "research")
 LOCAL_RUNTIME_LANES = {"explore", "ops", "research"}
 
@@ -60,9 +61,10 @@ def normalize_catalog_surfaces(value, *, default: tuple[str, ...] | None = DEFAU
         seen.add(surface)
         surfaces.append(surface)
 
-    if surfaces:
-        return sorted(surfaces)
-    return sorted(default or ())
+    if not surfaces:
+        surfaces = [surface for surface in (default or ()) if surface in CATALOG_PRODUCT_SURFACES]
+    selected = set(surfaces)
+    return [surface for surface in CATALOG_PRODUCT_SURFACE_ORDER if surface in selected]
 
 
 def catalog_surface_values(record: dict | None) -> list[str]:
