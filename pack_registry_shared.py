@@ -343,25 +343,21 @@ PACK_REGISTRY: dict[str, dict] = {
             "get_pack",
             "list_reference_systems",
             "resolve_reference",
-            "loc_id_references",
             "convert_reference",
+            "check_geometry",
             "get_geometry",
             "resolve_point",
-            "get_boundary",
-            "loc_id_hierarchy",
             "loc_id_info",
-            "sidechain_to_admin",
-            "admin_to_sidechain",
         ),
         "mcp_name": "com.daedalmap/geocoding",
         "mcp_title": "DaedalMap Geography Tools (loc_id)",
-        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine. Use the reference-exchange tools to list supported systems, resolve outside geography codes into loc_id, list references for a loc_id, and convert one reference system to another through loc_id. Also includes point reverse geocoding, boundaries, hierarchy, and compatibility bridge tools. A utility tool family, not a queryable dataset pack. No payment required.",
+        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine. Use the reference-exchange tools to list supported systems, resolve outside geography codes into loc_id, enrich loc_ids with metadata/hierarchy/references, and convert one reference system to another through loc_id. Also includes point reverse geocoding, geometry availability, and bbox/polygon lookup. A utility tool family, not a queryable dataset pack. No payment required.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
                 "Catalog-backed reference exchange: external geography systems <-> DaedalMap loc_id",
                 "Convert ZIP/ZCTA, tribal, NWS public zones, and NWS fire weather zones through the same loc_id spine",
-                "Reverse geocoding: latitude/longitude to administrative loc_id chain",
+                "Reverse geocoding: latitude/longitude to administrative loc_id chain, one point or a small batch",
                 "Boundary and bounding-box lookup for any loc_id",
                 "Walk the loc_id hierarchy up and down to clip to any admin level",
             ],
@@ -372,15 +368,11 @@ PACK_REGISTRY: dict[str, dict] = {
         "tool_summaries": (
             {"name": "list_reference_systems", "summary": "discover exchangeable geography systems, bridge vintages, counts, and licenses"},
             {"name": "resolve_reference", "summary": "external/admin/named reference -> ranked DaedalMap loc_id matches"},
-            {"name": "loc_id_references", "summary": "loc_id -> known external references and side-chain overlaps"},
             {"name": "convert_reference", "summary": "reference system X -> loc_id -> reference system Y"},
-            {"name": "get_geometry", "summary": "loc_id -> geometry metadata, bbox, centroid, and optional polygon"},
-            {"name": "resolve_point", "summary": "lat/lon -> deepest loc_id plus the full ancestor chain"},
-            {"name": "get_boundary", "summary": "loc_id -> bounding box and centroid (optional full polygon)"},
-            {"name": "loc_id_hierarchy", "summary": "loc_id -> parent, ancestors, and child summary"},
-            {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
-            {"name": "sidechain_to_admin", "summary": "compatibility alias: side-chain loc_id -> ranked admin matches with overlap shares"},
-            {"name": "admin_to_sidechain", "summary": "compatibility alias: admin loc_id -> ranked side-chain overlaps"},
+            {"name": "check_geometry", "summary": "loc_id or loc_ids -> available/missing shape preflight"},
+            {"name": "get_geometry", "summary": "loc_id or loc_ids -> geometry metadata, bbox, centroid, and optional polygon"},
+            {"name": "resolve_point", "summary": "one point or point batch -> deepest loc_ids plus ancestor chains"},
+            {"name": "loc_id_info", "summary": "loc_id or loc_ids -> metadata, optional hierarchy, optional external references"},
         ),
     },
     "reverse-geocoding": {
@@ -390,25 +382,26 @@ PACK_REGISTRY: dict[str, dict] = {
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point"),
         "mcp_name": "com.daedalmap/reverse-geocoding",
         "mcp_title": "DaedalMap Reverse Geocoding (coordinates to loc_id)",
-        "mcp_description": "Reverse geocoding: convert latitude/longitude into administrative areas and a hierarchical loc_id chain.",
+        "mcp_description": "Reverse geocoding: convert one latitude/longitude point or a small point batch into administrative areas and hierarchical loc_id chains.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
                 "Latitude/longitude to the deepest administrative loc_id",
+                "Small point batches in one MCP call for table cleanup",
                 "Full parent chain so you can clip to any admin level",
                 "Free; maps coordinates onto the shared loc_id spine",
             ],
         },
         "routing": {"preferred_tool": "resolve_point"},
         "tool_summaries": (
-            {"name": "resolve_point", "summary": "lat/lon -> deepest loc_id plus the full ancestor chain"},
+            {"name": "resolve_point", "summary": "one point or point batch -> deepest loc_ids plus ancestor chains"},
         ),
     },
     "boundaries": {
         "display_name": "Boundaries",
         "kind": "tool_family_alias",
         "pricing": "free",
-        "mcp_tool_allowlist": ("get_catalog", "get_pack", "get_boundary", "loc_id_info"),
+        "mcp_tool_allowlist": ("get_catalog", "get_pack", "check_geometry", "get_geometry", "loc_id_info"),
         "mcp_name": "com.daedalmap/boundaries",
         "mcp_title": "DaedalMap Administrative Boundaries (loc_id to polygon)",
         "mcp_description": "Boundaries: a loc_id to its bounding box, centroid, and polygon, plus name and admin level.",
@@ -420,10 +413,11 @@ PACK_REGISTRY: dict[str, dict] = {
                 "Clip or index your own grid/raster data against administrative areas",
             ],
         },
-        "routing": {"preferred_tool": "get_boundary"},
+        "routing": {"preferred_tool": "get_geometry"},
         "tool_summaries": (
-            {"name": "get_boundary", "summary": "loc_id -> bounding box, centroid, and optional polygon"},
-            {"name": "loc_id_info", "summary": "loc_id -> name, admin level, centroid, bbox, child counts"},
+            {"name": "check_geometry", "summary": "loc_id or loc_ids -> available/missing shape preflight"},
+            {"name": "get_geometry", "summary": "loc_id or loc_ids -> bounding box, centroid, and optional polygon"},
+            {"name": "loc_id_info", "summary": "loc_id or loc_ids -> metadata, optional hierarchy, optional external references"},
         ),
     },
 }
@@ -488,9 +482,9 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "loc_id is the reserve identifier: generic conversions should flow X -> loc_id -> Y.",
             "Use list_reference_systems for live catalog-backed availability instead of assuming a fixed list of systems.",
             "Use resolve_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, NWS fire weather-zone, admin-name, and named-geometry inputs.",
-            "Use loc_id_references for reverse lookup from an existing loc_id to overlapping or equivalent external references.",
-            "Use get_geometry or get_boundary only when geometry metadata, bbox, centroid, or polygon is needed.",
-            "sidechain_to_admin and admin_to_sidechain remain compatibility aliases; prefer the generic exchange tools for new workflows.",
+            "Use loc_id_info with include_references=true for reverse lookup from an existing loc_id to overlapping or equivalent external references.",
+            "Use get_geometry only when geometry metadata, bbox, centroid, or polygon is needed.",
+            "Use convert_reference for both side-chain-to-admin and admin-to-side-chain conversions.",
         ]
     elif preferred_tool == "resolve_point":
         first_arguments = {"lat": 34.0522, "lon": -118.2437}
@@ -503,15 +497,14 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "These are free utility tools, not a query_dataset pack.",
             "Coordinates must be WGS84 decimal degrees.",
             "resolve_point returns the deepest loc_id plus the full ancestor chain.",
-            "get_boundary returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
-            "Use sidechain_to_admin for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001. For NWS public zones, source_family is overlay_nws_public_zone and source_loc_id is a canonical id such as USA-NWSZ-TXZ001. For NWS fire weather zones, source_family is overlay_nws_fire_weather_zone and source_loc_id is a canonical id such as USA-NWSFZ-TXZ001.",
-            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs, tribal areas, NWS public zones, or NWS fire weather zones.",
-            "Bridge tools return primary_match and overlaps. source_area_share ranks side-chain to admin results; target_area_share ranks admin to side-chain results.",
+            "get_geometry returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
+            "Use convert_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone conversions in either direction.",
+            "Use loc_id_info with include_references=true when you already have a loc_id and want attached or overlapping references.",
         ]
-    elif preferred_tool == "get_boundary":
+    elif preferred_tool == "get_geometry":
         first_arguments = {"loc_id": "USA-CA-037"}
         start_here = [
-            "Call get_boundary when you already have a loc_id and need its extent.",
+            "Call get_geometry when you already have a loc_id and need its extent.",
             "Use bbox and centroid for lightweight indexing and clipping.",
             "Request include_polygon only when you need the exact perimeter.",
         ]
@@ -519,8 +512,8 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "These are free utility tools, not a query_dataset pack.",
             "Use canonical loc_ids such as USA, CAN-BC, or USA-CA-037.",
             "BBox/centroid is the default response shape because full polygons can be large.",
-            "Use sidechain_to_admin for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone to admin conversions. For ZCTAs, source_family is overlay_zcta and source_loc_id can be either USA-Z-10001 or 10001. For NWS public zones, source_family is overlay_nws_public_zone and source_loc_id is a canonical id such as USA-NWSZ-TXZ001. For NWS fire weather zones, source_family is overlay_nws_fire_weather_zone and source_loc_id is a canonical id such as USA-NWSFZ-TXZ001.",
-            "Use admin_to_sidechain for reverse lookup from an admin loc_id to overlapping ZCTAs, tribal areas, NWS public zones, or NWS fire weather zones.",
+            "Use check_geometry first for larger shape lists, then get_geometry for the available loc_ids.",
+            "Use loc_id_info with include_references=true when you need non-geometry identifiers attached to the same loc_id.",
         ]
     else:
         first_arguments = {"loc_id": "USA-CA-037"}
@@ -558,9 +551,10 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             },
             {
                 "question": "Which NWS fire weather zones overlap this county?",
-                "tool": "loc_id_references",
+                "tool": "loc_id_info",
                 "arguments": {
                     "loc_id": "USA-AK-282",
+                    "include_references": True,
                     "systems": ["nws_fire"],
                     "target_admin_level": "county",
                     "limit_per_system": 5,

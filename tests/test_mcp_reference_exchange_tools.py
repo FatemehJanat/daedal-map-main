@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mapmover.routes.mcp import router as mcp_router
+from mapmover.runtime.reference_exchange import get_geometry_availability
+from mapmover.routes.mcp import _tool_rate_limit_for_tier, router as mcp_router
 
 
 def _mcp_call(client: TestClient, method: str, params: dict | None = None, *, path: str = "/mcp/geography") -> dict:
@@ -39,11 +41,276 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         self.assertIn("list_reference_systems", tool_names)
         self.assertIn("resolve_reference", tool_names)
-        self.assertIn("loc_id_references", tool_names)
         self.assertIn("convert_reference", tool_names)
+        self.assertIn("check_geometry", tool_names)
         self.assertIn("get_geometry", tool_names)
-        self.assertIn("sidechain_to_admin", tool_names)
-        self.assertIn("admin_to_sidechain", tool_names)
+        self.assertIn("resolve_point", tool_names)
+        self.assertIn("loc_id_info", tool_names)
+        self.assertNotIn("check_geometries", tool_names)
+        self.assertNotIn("resolve_points", tool_names)
+        self.assertNotIn("loc_id_references", tool_names)
+        self.assertNotIn("get_boundary", tool_names)
+        self.assertNotIn("loc_id_hierarchy", tool_names)
+        self.assertNotIn("sidechain_to_admin", tool_names)
+        self.assertNotIn("admin_to_sidechain", tool_names)
+
+    def test_reverse_geocoding_facade_lists_multipurpose_point_tool(self) -> None:
+        envelope = _mcp_call(self.client, "tools/list", path="/mcp/reverse-geocoding")
+        tool_names = {tool["name"] for tool in envelope["result"]["tools"]}
+
+        self.assertIn("resolve_point", tool_names)
+        self.assertNotIn("resolve_points", tool_names)
+        self.assertNotIn("get_boundary", tool_names)
+
+    def test_boundaries_facade_lists_geometry_preflight_tools(self) -> None:
+        envelope = _mcp_call(self.client, "tools/list", path="/mcp/boundaries")
+        tool_names = {tool["name"] for tool in envelope["result"]["tools"]}
+
+        self.assertIn("check_geometry", tool_names)
+        self.assertNotIn("check_geometries", tool_names)
+        self.assertIn("get_geometry", tool_names)
+        self.assertNotIn("get_boundary", tool_names)
+        self.assertNotIn("resolve_points", tool_names)
+
+    def test_resolve_point_tool_accepts_point_batch(self) -> None:
+        def fake_resolve(lon, lat, include_geometry=False):
+            return {
+                "point": {"lon": lon, "lat": lat},
+                "matched": {"loc_id": f"TEST-{lat}-{lon}", "iso3": "USA"},
+                "deepest_resolved_loc_id": f"TEST-{lat}-{lon}",
+                "deepest_resolved_admin_level": "admin_2",
+                "stack": [{"loc_id": "USA"}, {"loc_id": f"TEST-{lat}-{lon}"}],
+            }
+
+        with (
+            mock.patch("mapmover.runtime.loc_id_resolution.resolve_point_to_loc_id_stack", side_effect=fake_resolve),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_point",
+                {
+                    "request_id": "mcp-bulk-test",
+                    "batch_id": "batch-1",
+                    "points": [
+                        {"row_index": 10, "lon": -123.1, "lat": 49.2},
+                        {"row_index": 11, "lon": -122.9, "lat": 49.1},
+                    ],
+                },
+            )
+
+        self.assertEqual(payload["batch_id"], "batch-1")
+        self.assertEqual(payload["point_count"], 2)
+        self.assertEqual(payload["resolved_count"], 2)
+        self.assertEqual(payload["results"][0]["row_index"], 10)
+        self.assertEqual(payload["results"][0]["deepest_resolved_loc_id"], "TEST-49.2--123.1")
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["capability_id"], "point_lookup")
+        self.assertEqual(analytics["pack_id"], "geography_tools")
+        self.assertEqual(analytics["source_id"], "resolve_point")
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "free_preview")
+        self.assertEqual(analytics["row_count"], 2)
+        self.assertEqual(analytics["query_granularity"], "bulk_2")
+        self.assertEqual(analytics["metadata"]["surface"], "agent_api_mcp")
+        self.assertEqual(analytics["metadata"]["event"], "point_lookup")
+        self.assertEqual(analytics["metadata"]["tool_mode"], "bulk")
+        self.assertEqual(analytics["metadata"]["quantity"], 2)
+        self.assertEqual(analytics["metadata"]["batch_id"], "batch-1")
+
+    def test_resolve_point_tool_rejects_point_batch_over_limit(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "resolve_point",
+                {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+            )
+
+        self.assertEqual(payload["limit"], 25)
+        self.assertEqual(payload["error"]["code"], "too_many_points")
+
+    def test_resolve_point_tool_uses_per_tool_batch_limit_override(self) -> None:
+        with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):
+            with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+                payload = _tool_call(
+                    self.client,
+                    "resolve_point",
+                    {"points": [{"lon": 0, "lat": 0} for _ in range(3)]},
+                )
+
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["error"]["code"], "too_many_points")
+
+    def test_check_geometry_tool_accepts_loc_id_batch(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.get_geometry_availability",
+                return_value={
+                    "ok": True,
+                    "requested": 3,
+                    "available": 2,
+                    "missing": 1,
+                    "items": [
+                        {"loc_id": "USA-CA-037", "has_shape": True},
+                        {"loc_id": "USA-CA-075", "has_shape": True},
+                        {"loc_id": "USA-NOPE", "has_shape": False, "error": "no geometry found"},
+                    ],
+                    "results": [
+                        {"loc_id": "USA-CA-037", "has_shape": True},
+                        {"loc_id": "USA-CA-075", "has_shape": True},
+                        {"loc_id": "USA-NOPE", "has_shape": False, "error": "no geometry found"},
+                    ],
+                },
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "check_geometry",
+                {"batch_id": "shapes-1", "loc_ids": ["USA-CA-037", "USA-CA-075", "USA-NOPE"]},
+            )
+
+        self.assertEqual(payload["batch_id"], "shapes-1")
+        self.assertEqual(payload["requested"], 3)
+        self.assertEqual(payload["available"], 2)
+        self.assertEqual(payload["missing"], 1)
+        self.assertEqual(payload["items"][2]["has_shape"], False)
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["capability_id"], "geometry_availability")
+        self.assertEqual(analytics["pack_id"], "geography_tools")
+        self.assertEqual(analytics["source_id"], "check_geometry")
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "free_preview")
+        self.assertEqual(analytics["row_count"], 3)
+        self.assertEqual(analytics["query_granularity"], "bulk_3")
+        self.assertEqual(analytics["metadata"]["event"], "geometry_availability")
+        self.assertEqual(analytics["metadata"]["tool_mode"], "bulk")
+        self.assertEqual(analytics["metadata"]["quantity"], 3)
+        self.assertEqual(analytics["metadata"]["available_count"], 2)
+        self.assertEqual(analytics["metadata"]["missing_count"], 1)
+
+    def test_geometry_availability_uses_one_bulk_geometry_fetch(self) -> None:
+        feature_payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "local_loc_id": "USA-CA-037",
+                        "name": "Los Angeles County",
+                        "admin_level": 2,
+                        "centroid_lon": -118.25,
+                        "centroid_lat": 34.05,
+                        "bbox_min_lon": -119.0,
+                        "bbox_min_lat": 33.0,
+                        "bbox_max_lon": -117.0,
+                        "bbox_max_lat": 35.0,
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": []},
+                }
+            ],
+        }
+        with mock.patch("mapmover.runtime.reference_exchange.get_selection_geometries", return_value=feature_payload) as fetch_mock:
+            payload = get_geometry_availability(["USA-CA-037", "USA-NOPE"])
+
+        fetch_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"])
+        self.assertEqual(payload["requested"], 2)
+        self.assertEqual(payload["available"], 1)
+        self.assertEqual(payload["missing"], 1)
+        self.assertEqual(payload["items"][0]["has_shape"], True)
+        self.assertEqual(payload["items"][1]["has_shape"], False)
+
+    def test_check_geometry_tool_uses_per_tool_batch_limit_override(self) -> None:
+        with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_CHECK_GEOMETRY": "2"}):
+            with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+                payload = _tool_call(
+                    self.client,
+                    "check_geometry",
+                    {"loc_ids": ["USA", "CAN", "MEX"]},
+                )
+
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["error"]["code"], "too_many_loc_ids")
+
+    def test_get_geometry_tool_accepts_loc_id_batch(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.get_geometry_references",
+                return_value={
+                    "ok": True,
+                    "requested": 2,
+                    "items": [
+                        {"ok": True, "loc_id": "USA-CA-037", "bbox": [-119, 33, -117, 35]},
+                        {"ok": False, "loc_id": "USA-NOPE", "error": {"code": "not_found"}},
+                    ],
+                },
+            ) as geometry_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "get_geometry",
+                {"batch_id": "geo-1", "loc_ids": ["USA-CA-037", "USA-NOPE"]},
+            )
+
+        geometry_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"], include_polygon=False, include_info=True)
+        self.assertEqual(payload["batch_id"], "geo-1")
+        self.assertEqual(payload["requested"], 2)
+        self.assertEqual(payload["items"][0]["loc_id"], "USA-CA-037")
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["source_id"], "get_geometry")
+        self.assertEqual(analytics["capability_id"], "geometry_lookup")
+        self.assertEqual(analytics["row_count"], 2)
+        self.assertEqual(analytics["query_granularity"], "bulk_2")
+        self.assertEqual(analytics["metadata"]["tool_mode"], "bulk")
+        self.assertEqual(analytics["metadata"]["quantity"], 2)
+
+    def test_loc_id_info_can_include_references(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.geometry_handlers.get_location_info",
+                return_value={
+                    "loc_id": "USA-AK-282",
+                    "name": "Yakutat",
+                    "admin_level": 2,
+                    "parent_id": "USA-AK",
+                    "family": "admin",
+                    "iso3": "USA",
+                    "centroid": {"lon": -140, "lat": 59},
+                    "bbox": [-142, 58, -138, 60],
+                    "children_count": 0,
+                    "children_by_level": "{}",
+                    "descendants_count": 0,
+                },
+            ),
+            mock.patch(
+                "mapmover.runtime.reference_exchange.loc_id_references",
+                return_value={"ok": True, "references": [{"system": "overlay_nws_fire_weather_zone", "value": "USA-NWSFZ-AKZ317"}]},
+            ) as references_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "loc_id_info",
+                {"loc_id": "USA-AK-282", "include_references": True, "systems": ["nws_fire"]},
+            )
+
+        references_mock.assert_called_once()
+        self.assertEqual(payload["loc_id"], "USA-AK-282")
+        self.assertEqual(payload["reference_count"], 1)
+        self.assertEqual(payload["references"]["references"][0]["system"], "overlay_nws_fire_weather_zone")
+
+    def test_tool_rate_limit_uses_per_tool_override(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "MCP_LIVE_TOOL_RATE_LIMIT": "10",
+                "MCP_TOOL_RATE_LIMIT_RESOLVE_POINT": "4",
+                "MCP_TOOL_RATE_WINDOW_SECONDS_RESOLVE_POINT": "30",
+                "MCP_TOOL_RATE_LIMIT_RESOLVE_POINT_PLUS": "40",
+            },
+        ):
+            self.assertEqual(_tool_rate_limit_for_tier("resolve_point", "free"), (4, 30))
+            self.assertEqual(_tool_rate_limit_for_tier("resolve_point", "plus"), (40, 30))
 
     def test_get_pack_geography_prefers_reference_exchange(self) -> None:
         payload = _tool_call(self.client, "get_pack", {"pack_id": "geography"})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any
 
@@ -28,6 +29,7 @@ from mapmover.routes.disasters.related import (
     search_disaster_link_chains,
 )
 from mapmover.security import get_allowed_origins, get_client_ip, rate_limiter
+from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event, logger
 
 
 router = APIRouter()
@@ -196,6 +198,22 @@ def _parse_env_int(name: str, default: int) -> int:
         return default
 
 
+def _parse_env_int_optional(name: str) -> int | None:
+    import os
+
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
+
+
+def _tool_env_suffix(tool_name: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in str(tool_name or "").upper()).strip("_")
+
+
 # Verified account plan_id -> rate tier. Anonymous callers and free plans map to
 # the default free tier; a paid subscription plan raises the limit. Billing that
 # sets plan_id lives on the account/control plane (Stripe); the runtime only
@@ -221,17 +239,28 @@ def _resolve_caller_rate_tier(request: Request) -> str:
     return "free"
 
 
-def _tool_rate_limit_for_tier(tier: str) -> tuple[int, int]:
-    window_seconds = _parse_env_int("MCP_LIVE_TOOL_RATE_WINDOW_SECONDS", 60)
-    free_limit = _parse_env_int("MCP_LIVE_TOOL_RATE_LIMIT", 10)
+def _tool_rate_limit_for_tier(tool_name: str, tier: str) -> tuple[int, int]:
+    suffix = _tool_env_suffix(tool_name)
+    window_seconds = (
+        _parse_env_int_optional(f"MCP_TOOL_RATE_WINDOW_SECONDS_{suffix}")
+        or _parse_env_int("MCP_LIVE_TOOL_RATE_WINDOW_SECONDS", 60)
+    )
+    free_limit = (
+        _parse_env_int_optional(f"MCP_TOOL_RATE_LIMIT_{suffix}")
+        or _parse_env_int("MCP_LIVE_TOOL_RATE_LIMIT", 10)
+    )
     if tier == "plus":
-        return _parse_env_int("MCP_TOOL_RATE_LIMIT_PLUS", max(free_limit, 120)), window_seconds
+        plus_limit = (
+            _parse_env_int_optional(f"MCP_TOOL_RATE_LIMIT_{suffix}_PLUS")
+            or _parse_env_int("MCP_TOOL_RATE_LIMIT_PLUS", max(free_limit, 120))
+        )
+        return plus_limit, window_seconds
     return free_limit, window_seconds
 
 
 def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id: Any) -> JSONResponse | None:
     tier = _resolve_caller_rate_tier(request)
-    limit, window_seconds = _tool_rate_limit_for_tier(tier)
+    limit, window_seconds = _tool_rate_limit_for_tier(tool_name, tier)
     caller = get_client_ip(request) or "unknown"
     allowed, retry_after = rate_limiter.check(
         f"mcp-tool:{tool_name}:{tier}:{caller}",
@@ -255,6 +284,100 @@ def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id:
     )
     response.headers["Retry-After"] = str(retry_after)
     return response
+
+
+def _tool_batch_item_limit(tool_name: str, *, default: int, fallback_env_names: tuple[str, ...] = ()) -> int:
+    suffix = _tool_env_suffix(tool_name)
+    for env_name in (f"MCP_TOOL_BATCH_LIMIT_{suffix}", *fallback_env_names):
+        value = _parse_env_int_optional(env_name)
+        if value is not None:
+            return value
+    return max(1, default)
+
+
+def _batch_error_payload(
+    *,
+    request_id: str,
+    batch_id: str | None,
+    code: str,
+    message: str,
+    limit: int | None = None,
+    point_count: int | None = None,
+    loc_id_count: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "batch_id": batch_id,
+        "error": {"code": code, "message": message},
+    }
+    if limit is not None:
+        payload["limit"] = limit
+    if point_count is not None:
+        payload["point_count"] = point_count
+    if loc_id_count is not None:
+        payload["loc_id_count"] = loc_id_count
+    return payload
+
+
+def _stamp_mcp_tool_analytics(request: Request, **metadata: Any) -> None:
+    request.state.analytics_metadata = {
+        **getattr(request.state, "analytics_metadata", {}),
+        **{key: value for key, value in metadata.items() if value is not None},
+    }
+
+
+def _json_size_bytes(payload: Any) -> int | None:
+    try:
+        return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except Exception:
+        return None
+
+
+def _log_mcp_tool_usage_event(
+    request: Request,
+    *,
+    request_id: str,
+    tool_name: str,
+    capability_id: str,
+    decision: str,
+    started_at: float,
+    row_count: int,
+    query_granularity: str,
+    response_payload: Any | None = None,
+    error_code: str | None = None,
+    payment_rail: str | None = "free_preview",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    merged_metadata = {
+        **getattr(request.state, "analytics_metadata", {}),
+        "surface": "agent_api_mcp",
+        "mcp_tool_name": tool_name,
+        **(metadata or {}),
+    }
+    request.state.analytics_pack_id = "geography_tools"
+    request.state.analytics_source_id = tool_name
+    request.state.analytics_metadata = {key: value for key, value in merged_metadata.items() if value is not None}
+    try:
+        log_api_query_event(
+            request_id=request_id or f"mcp-{tool_name}-{uuid.uuid4().hex[:12]}",
+            capability_id=capability_id,
+            pack_id="geography_tools",
+            source_id=tool_name,
+            decision=decision,
+            payment_rail=payment_rail,
+            auth_user_id=getattr(request.state, "auth_user_id", None),
+            ip_hash=hash_ip_for_analytics(get_client_ip(request)),
+            user_agent=request.headers.get("user-agent", "").strip() or None,
+            execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+            row_count=row_count,
+            response_size_bytes=_json_size_bytes(response_payload),
+            status_code=200,
+            error_code=error_code,
+            query_granularity=query_granularity,
+            metadata=request.state.analytics_metadata,
+        )
+    except Exception as exc:
+        logger.warning("MCP tool usage analytics failed for %s: %s", tool_name, exc)
 
 
 def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
@@ -905,26 +1028,234 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
     }
 
 
-async def _execute_resolve_point_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "resolve_point")
     request_id = str(payload.get("request_id") or "")
+    if "points" in payload:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        points = payload.get("points")
+        if not isinstance(points, list):
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="reject",
+                error_code="invalid_points",
+            )
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="invalid_points", message="points must be a list")
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_points",
+                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": 0, "point_count": 0, "batch_id": batch_id},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        limit = _tool_batch_item_limit("resolve_point", default=25, fallback_env_names=("POINT_LOOKUP_BATCH_LIMIT",))
+        if len(points) > limit:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="reject",
+                error_code="too_many_points",
+                point_count=len(points),
+                batch_limit=limit,
+            )
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_points",
+                message=f"points must contain at most {limit} items",
+                limit=limit,
+                point_count=len(points),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(points),
+                query_granularity=f"bulk_{len(points)}",
+                response_payload=error_payload,
+                error_code="too_many_points",
+                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+
+        include_geometry = bool(payload.get("include_geometry", False))
+        results: list[dict[str, Any]] = []
+        resolved_count = 0
+        unresolved_count = 0
+        try:
+            from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+        except Exception as exc:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="error",
+                error_code="resolve_failed",
+                point_count=len(points),
+                batch_limit=limit,
+            )
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="resolve_failed", message=str(exc))
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(points),
+                query_granularity=f"bulk_{len(points)}",
+                response_payload=error_payload,
+                error_code="resolve_failed",
+                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+
+        for index, point in enumerate(points):
+            if not isinstance(point, dict):
+                unresolved_count += 1
+                results.append({"index": index, "error": {"code": "invalid_point", "message": "point must be an object"}})
+                continue
+            row_index = point.get("row_index", index)
+            caller_point_id = point.get("id")
+            try:
+                lat = float(point.get("lat"))
+                lon = float(point.get("lon"))
+            except (TypeError, ValueError):
+                unresolved_count += 1
+                item = {"index": index, "row_index": row_index, "error": {"code": "invalid_point", "message": "lat and lon are required numbers"}}
+                if caller_point_id is not None:
+                    item["id"] = caller_point_id
+                results.append(item)
+                continue
+            if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+                unresolved_count += 1
+                item = {
+                    "index": index,
+                    "row_index": row_index,
+                    "point": {"lat": lat, "lon": lon},
+                    "error": {"code": "invalid_point", "message": "lat must be within -90..90 and lon within -180..180"},
+                }
+                if caller_point_id is not None:
+                    item["id"] = caller_point_id
+                results.append(item)
+                continue
+            try:
+                raw = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
+                shaped = _shape_resolve_point_payload(raw, request_id)
+                shaped.pop("request_id", None)
+            except Exception as exc:
+                shaped = {"point": {"lat": lat, "lon": lon}, "error": {"code": "resolve_failed", "message": str(exc)}}
+            if shaped.get("error"):
+                unresolved_count += 1
+            else:
+                resolved_count += 1
+            item = {"index": index, "row_index": row_index, **shaped}
+            if caller_point_id is not None:
+                item["id"] = caller_point_id
+            results.append(item)
+
+        _stamp_mcp_tool_analytics(
+            request,
+            event="mcp_tool",
+            tool_mode="bulk",
+            batch_id=batch_id,
+            decision="allow",
+            point_count=len(points),
+            resolved_count=resolved_count,
+            unresolved_count=unresolved_count,
+            batch_limit=limit,
+        )
+        result_payload = {
+            "request_id": request_id,
+            "batch_id": batch_id,
+            "limit": limit,
+            "point_count": len(points),
+            "resolved_count": resolved_count,
+            "unresolved_count": unresolved_count,
+            "results": results,
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="resolve_point",
+            capability_id="point_lookup",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(points),
+            query_granularity=f"bulk_{len(points)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "point_lookup",
+                "tool_mode": "bulk",
+                "quantity": len(points),
+                "batch_id": batch_id,
+                "point_count": len(points),
+                "resolved_count": resolved_count,
+                "unresolved_count": unresolved_count,
+                "batch_limit": limit,
+            },
+        )
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+
     try:
         lat = float(payload.get("lat"))
         lon = float(payload.get("lon"))
     except (TypeError, ValueError):
+        error_payload = {"request_id": request_id, "error": {"code": "invalid_point", "message": "lat and lon are required numbers"}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="resolve_point",
+            capability_id="point_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="invalid_point",
+            metadata={"event": "point_lookup", "tool_mode": "single", "quantity": 1, "point_count": 1, "resolved_count": 0, "unresolved_count": 1},
+        )
         return _jsonrpc_response(
-            _tool_result(
-                {"request_id": request_id, "error": {"code": "invalid_point", "message": "lat and lon are required numbers"}},
-                is_error=True,
-            ),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        error_payload = {
+            "request_id": request_id,
+            "error": {"code": "invalid_point", "message": "lat must be within -90..90 and lon within -180..180"},
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="resolve_point",
+            capability_id="point_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="invalid_point",
+            metadata={"event": "point_lookup", "tool_mode": "single", "quantity": 1, "point_count": 1, "resolved_count": 0, "unresolved_count": 1},
+        )
         return _jsonrpc_response(
-            _tool_result(
-                {"request_id": request_id, "error": {"code": "invalid_point", "message": "lat must be within -90..90 and lon within -180..180"}},
-                is_error=True,
-            ),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
     try:
@@ -932,29 +1263,47 @@ async def _execute_resolve_point_tool(arguments: dict[str, Any], rpc_request_id:
 
         raw = resolve_point_to_loc_id_stack(lon, lat)
     except Exception as exc:  # surface a clean tool error, never a 500
+        error_payload = {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="resolve_point",
+            capability_id="point_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="resolve_failed",
+            metadata={"event": "point_lookup", "tool_mode": "single", "quantity": 1, "point_count": 1, "resolved_count": 0, "unresolved_count": 1},
+        )
         return _jsonrpc_response(
-            _tool_result(
-                {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}},
-                is_error=True,
-            ),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
-    return _jsonrpc_response(_tool_result(_shape_resolve_point_payload(raw, request_id)), rpc_request_id)
-
-
-def _geo_selection_feature(loc_id: str) -> dict[str, Any] | None:
-    from mapmover.geometry_handlers import get_selection_geometries
-
-    payload = get_selection_geometries([loc_id])
-    features = (payload or {}).get("features") or []
-    return features[0] if features else None
-
-
-def _bbox_from_props(props: dict[str, Any]) -> list[float] | None:
-    keys = ("bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat")
-    if all(props.get(key) is not None for key in keys):
-        return [props[keys[0]], props[keys[1]], props[keys[2]], props[keys[3]]]
-    return None
+    result = _shape_resolve_point_payload(raw, request_id)
+    resolved = not bool(result.get("error"))
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="resolve_point",
+        capability_id="point_lookup",
+        decision="allow" if resolved else "deny",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result,
+        error_code=None if resolved else "resolve_failed",
+        metadata={
+            "event": "point_lookup",
+            "tool_mode": "single",
+            "quantity": 1,
+            "point_count": 1,
+            "resolved_count": 1 if resolved else 0,
+            "unresolved_count": 0 if resolved else 1,
+        },
+    )
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
 def _parse_children_by_level(value: Any) -> Any:
@@ -966,75 +1315,74 @@ def _parse_children_by_level(value: Any) -> Any:
     return value
 
 
-async def _execute_get_boundary_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "get_boundary")
-    request_id = str(payload.get("request_id") or "")
-    loc_id = str(payload.get("loc_id") or "").strip()
-    if not loc_id:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
-            rpc_request_id,
-        )
-    include_polygon = bool(payload.get("include_polygon"))
-    try:
-        feature = _geo_selection_feature(loc_id)
-    except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "boundary_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    if not feature:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "loc_id": loc_id, "error": {"code": "not_found", "message": f"no geometry found for loc_id '{loc_id}'"}}, is_error=True),
-            rpc_request_id,
-        )
-    props = feature.get("properties") or {}
-    result = {
-        "request_id": request_id,
-        "loc_id": props.get("local_loc_id") or loc_id,
-        "name": props.get("name"),
-        "admin_level": props.get("admin_level"),
-        "bbox": _bbox_from_props(props),
-        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
-        "has_polygon": bool(props.get("has_polygon")),
-    }
-    if include_polygon:
-        result["geometry"] = feature.get("geometry")
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
-
-
 async def _execute_loc_id_info_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "loc_id_info")
     request_id = str(payload.get("request_id") or "")
+    batch_id = str(payload.get("batch_id") or "").strip() or None
+    if "loc_ids" in payload:
+        raw_loc_ids = payload.get("loc_ids")
+        if not isinstance(raw_loc_ids, list):
+            return _jsonrpc_response(
+                _tool_result({"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_loc_ids", "message": "loc_ids must be a list"}}, is_error=True),
+                rpc_request_id,
+            )
+        loc_ids = [str(value or "").strip() for value in raw_loc_ids if str(value or "").strip()]
+        limit = _tool_batch_item_limit("loc_id_info", default=100, fallback_env_names=("LOC_ID_INFO_BATCH_LIMIT",))
+        if len(loc_ids) > limit:
+            return _jsonrpc_response(
+                _tool_result(
+                    _batch_error_payload(
+                        request_id=request_id,
+                        batch_id=batch_id,
+                        code="too_many_loc_ids",
+                        message=f"loc_id_info accepts at most {limit} loc_ids per call",
+                        limit=limit,
+                        loc_id_count=len(loc_ids),
+                    ),
+                    is_error=True,
+                ),
+                rpc_request_id,
+            )
+        results = [_loc_id_info_item(loc_id, payload) for loc_id in loc_ids]
+        return _jsonrpc_response(
+            _tool_result(
+                {
+                    "request_id": request_id,
+                    "batch_id": batch_id,
+                    "limit": limit,
+                    "loc_id_count": len(loc_ids),
+                    "results": results,
+                    "found_count": sum(1 for item in results if not item.get("error")),
+                    "missing_count": sum(1 for item in results if item.get("error")),
+                }
+            ),
+            rpc_request_id,
+        )
     loc_id = str(payload.get("loc_id") or "").strip()
     if not loc_id:
         return _jsonrpc_response(
             _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
             rpc_request_id,
         )
+    result = {"request_id": request_id, **_loc_id_info_item(loc_id, payload)}
+    if result.get("error"):
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from mapmover.geometry_handlers import get_location_info
 
         info = get_location_info(loc_id)
     except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "info_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
+        return {"loc_id": loc_id, "error": {"code": "info_failed", "message": str(exc)}}
     if not isinstance(info, dict) or info.get("error"):
-        return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "loc_id": loc_id,
-                    "error": {"code": "not_found", "message": str((info or {}).get("error") or f"no record found for loc_id '{loc_id}'")},
-                },
-                is_error=True,
-            ),
-            rpc_request_id,
-        )
+        return {
+            "loc_id": loc_id,
+            "error": {"code": "not_found", "message": str((info or {}).get("error") or f"no record found for loc_id '{loc_id}'")},
+        }
     result = {
-        "request_id": request_id,
         "loc_id": info.get("loc_id") or loc_id,
         "name": info.get("name"),
         "admin_level": info.get("admin_level"),
@@ -1047,42 +1395,39 @@ async def _execute_loc_id_info_tool(arguments: dict[str, Any], rpc_request_id: A
         "children_by_level": _parse_children_by_level(info.get("children_by_level")),
         "descendants_count": info.get("descendants_count"),
     }
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+    if bool(payload.get("include_hierarchy")):
+        try:
+            from mapmover.runtime.admin_hierarchy import get_ancestors, get_parent_loc_id, infer_admin_level_from_loc_id
 
+            result["hierarchy"] = {
+                "parent": get_parent_loc_id(str(result["loc_id"])),
+                "ancestors": get_ancestors(str(result["loc_id"])),
+                "admin_level": infer_admin_level_from_loc_id(str(result["loc_id"])),
+            }
+        except Exception as exc:
+            result["hierarchy_error"] = {"code": "hierarchy_failed", "message": str(exc)}
+    if bool(payload.get("include_references")):
+        systems = payload.get("systems")
+        if systems is not None and not isinstance(systems, list):
+            result["references_error"] = {"code": "invalid_systems", "message": "systems must be an array when provided"}
+        else:
+            try:
+                from mapmover.runtime.reference_exchange import loc_id_references
 
-async def _execute_loc_id_hierarchy_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "loc_id_hierarchy")
-    request_id = str(payload.get("request_id") or "")
-    loc_id = str(payload.get("loc_id") or "").strip()
-    if not loc_id:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
-            rpc_request_id,
-        )
-    try:
-        from mapmover.runtime.admin_hierarchy import get_ancestors, get_parent_loc_id, infer_admin_level_from_loc_id
-
-        ancestors = get_ancestors(loc_id)
-        parent = get_parent_loc_id(loc_id)
-        admin_level = infer_admin_level_from_loc_id(loc_id)
-        feature = _geo_selection_feature(loc_id)
-    except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "hierarchy_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    props = (feature or {}).get("properties") or {}
-    result = {
-        "request_id": request_id,
-        "loc_id": loc_id,
-        "admin_level": admin_level,
-        "name": props.get("name"),
-        "parent": parent,
-        "ancestors": ancestors,
-        "children_count": props.get("children_count"),
-        "children_by_level": _parse_children_by_level(props.get("children_by_level")),
-    }
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+                references = loc_id_references(
+                    str(result["loc_id"]),
+                    systems=systems,
+                    iso3=payload.get("iso3"),
+                    target_admin_level=payload.get("target_admin_level"),
+                    min_share=_normalize_bridge_share(payload.get("min_share")),
+                    limit_per_system=_normalize_bridge_limit(payload.get("limit_per_system")) or 10,
+                )
+                result["references"] = references
+                if isinstance(references.get("references"), list):
+                    result["reference_count"] = len(references.get("references") or [])
+            except Exception as exc:
+                result["references_error"] = {"code": "loc_id_references_failed", "message": str(exc)}
+    return result
 
 
 async def _execute_list_reference_systems_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
@@ -1142,44 +1487,6 @@ async def _execute_resolve_reference_tool(arguments: dict[str, Any], rpc_request
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
-async def _execute_loc_id_references_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "loc_id_references")
-    request_id = str(payload.get("request_id") or "")
-    loc_id = str(payload.get("loc_id") or "").strip()
-    if not loc_id:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
-            rpc_request_id,
-        )
-    systems = payload.get("systems")
-    if systems is not None and not isinstance(systems, list):
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_systems", "message": "systems must be an array when provided"}}, is_error=True),
-            rpc_request_id,
-        )
-    try:
-        from mapmover.runtime.reference_exchange import loc_id_references
-
-        result = loc_id_references(
-            loc_id,
-            systems=systems,
-            iso3=payload.get("iso3"),
-            target_admin_level=payload.get("target_admin_level"),
-            min_share=_normalize_bridge_share(payload.get("min_share")),
-            limit_per_system=_normalize_bridge_limit(payload.get("limit_per_system")) or 10,
-        )
-    except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "loc_id_references_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    result = {"request_id": request_id, **result}
-    if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "no references found for loc_id"})
-        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
-
-
 async def _execute_convert_reference_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "convert_reference")
     request_id = str(payload.get("request_id") or "")
@@ -1222,29 +1529,386 @@ async def _execute_convert_reference_tool(arguments: dict[str, Any], rpc_request
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
-async def _execute_get_geometry_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "get_geometry")
     request_id = str(payload.get("request_id") or "")
+    include_polygon = bool(payload.get("include_polygon", False))
+    if "loc_ids" in payload:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        loc_ids = payload.get("loc_ids")
+        if not isinstance(loc_ids, list):
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="invalid_loc_ids", message="loc_ids must be a list", loc_id_count=0)
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="get_geometry",
+                capability_id="geometry_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_loc_ids",
+                metadata={"event": "geometry_lookup", "tool_mode": "bulk", "quantity": 0, "loc_id_count": 0, "batch_id": batch_id, "include_polygon": include_polygon},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        loc_ids = [str(value or "").strip() for value in loc_ids if str(value or "").strip()]
+        limit = (
+            _parse_env_int_optional("MCP_TOOL_POLYGON_BATCH_LIMIT_GET_GEOMETRY")
+            if include_polygon
+            else None
+        ) or _tool_batch_item_limit("get_geometry", default=10 if include_polygon else 100, fallback_env_names=("GEOMETRY_GET_BATCH_LIMIT",))
+        if len(loc_ids) > limit:
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_loc_ids",
+                message=f"get_geometry accepts at most {limit} loc_ids per call",
+                limit=limit,
+                loc_id_count=len(loc_ids),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="get_geometry",
+                capability_id="geometry_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(loc_ids),
+                query_granularity=f"bulk_{len(loc_ids)}",
+                response_payload=error_payload,
+                error_code="too_many_loc_ids",
+                metadata={"event": "geometry_lookup", "tool_mode": "bulk", "quantity": len(loc_ids), "loc_id_count": len(loc_ids), "batch_id": batch_id, "include_polygon": include_polygon, "batch_limit": limit},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        try:
+            from mapmover.runtime.reference_exchange import get_geometry_references
+
+            result = get_geometry_references(loc_ids, include_polygon=include_polygon, include_info=True)
+        except Exception as exc:
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="get_geometry_failed", message=str(exc), loc_id_count=len(loc_ids))
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="get_geometry",
+                capability_id="geometry_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(loc_ids),
+                query_granularity=f"bulk_{len(loc_ids)}",
+                response_payload=error_payload,
+                error_code="get_geometry_failed",
+                metadata={"event": "geometry_lookup", "tool_mode": "bulk", "quantity": len(loc_ids), "loc_id_count": len(loc_ids), "batch_id": batch_id, "include_polygon": include_polygon},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        result_payload = {"request_id": request_id, "batch_id": batch_id, "limit": limit, **result}
+        items = result_payload.get("items") or result_payload.get("results") or []
+        available_count = sum(1 for item in items if item.get("has_shape") or item.get("ok"))
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="get_geometry",
+            capability_id="geometry_lookup",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(loc_ids),
+            query_granularity=f"bulk_{len(loc_ids)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "geometry_lookup",
+                "tool_mode": "bulk",
+                "quantity": len(loc_ids),
+                "loc_id_count": len(loc_ids),
+                "available_count": available_count,
+                "missing_count": max(0, len(loc_ids) - available_count),
+                "batch_id": batch_id,
+                "include_polygon": include_polygon,
+                "batch_limit": limit,
+            },
+        )
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
     loc_id = str(payload.get("loc_id") or "").strip()
     if not loc_id:
+        error_payload = {"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="get_geometry",
+            capability_id="geometry_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="invalid_loc_id",
+            metadata={"event": "geometry_lookup", "tool_mode": "single", "quantity": 0, "loc_id_count": 0},
+        )
         return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
     try:
         from mapmover.runtime.reference_exchange import get_geometry_reference
 
-        result = get_geometry_reference(loc_id, include_polygon=bool(payload.get("include_polygon", False)))
+        result = get_geometry_reference(loc_id, include_polygon=include_polygon)
     except Exception as exc:
+        error_payload = {"request_id": request_id, "error": {"code": "get_geometry_failed", "message": str(exc)}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="get_geometry",
+            capability_id="geometry_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="get_geometry_failed",
+            metadata={"event": "geometry_lookup", "tool_mode": "single", "quantity": 1, "loc_id": loc_id, "loc_id_count": 1, "include_polygon": include_polygon},
+        )
         return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "get_geometry_failed", "message": str(exc)}}, is_error=True),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
     result = {"request_id": request_id, **result}
     if not result.get("ok"):
         result.setdefault("error", {"code": "not_found", "message": f"no geometry found for loc_id '{loc_id}'"})
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="get_geometry",
+            capability_id="geometry_lookup",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=result,
+            error_code=str((result.get("error") or {}).get("code") or "not_found"),
+            metadata={"event": "geometry_lookup", "tool_mode": "single", "quantity": 1, "loc_id": loc_id, "loc_id_count": 1, "has_shape": False, "include_polygon": include_polygon},
+        )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="get_geometry",
+        capability_id="geometry_lookup",
+        decision="allow",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result,
+        metadata={
+            "event": "geometry_lookup",
+            "tool_mode": "single",
+            "quantity": 1,
+            "loc_id": loc_id,
+            "loc_id_count": 1,
+            "has_shape": True,
+            "include_polygon": include_polygon,
+        },
+    )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+async def _execute_check_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
+    payload = _ensure_request_id(arguments, "check_geometry")
+    request_id = str(payload.get("request_id") or "")
+    if "loc_ids" in payload:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        loc_ids = payload.get("loc_ids")
+        if not isinstance(loc_ids, list):
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="reject",
+                error_code="invalid_loc_ids",
+            )
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="invalid_loc_ids", message="loc_ids must be a list")
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="check_geometry",
+                capability_id="geometry_availability",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_loc_ids",
+                metadata={"event": "geometry_availability", "tool_mode": "bulk", "quantity": 0, "loc_id_count": 0, "batch_id": batch_id},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        limit = _tool_batch_item_limit("check_geometry", default=100, fallback_env_names=("GEOMETRY_CHECK_BATCH_LIMIT",))
+        if len(loc_ids) > limit:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="reject",
+                error_code="too_many_loc_ids",
+                loc_id_count=len(loc_ids),
+                batch_limit=limit,
+            )
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_loc_ids",
+                message=f"loc_ids must contain at most {limit} items",
+                limit=limit,
+                loc_id_count=len(loc_ids),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="check_geometry",
+                capability_id="geometry_availability",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(loc_ids),
+                query_granularity=f"bulk_{len(loc_ids)}",
+                response_payload=error_payload,
+                error_code="too_many_loc_ids",
+                metadata={"event": "geometry_availability", "tool_mode": "bulk", "quantity": len(loc_ids), "batch_id": batch_id, "loc_id_count": len(loc_ids), "batch_limit": limit},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        try:
+            from mapmover.runtime.reference_exchange import get_geometry_availability
+
+            result = get_geometry_availability([str(loc_id) for loc_id in loc_ids])
+        except Exception as exc:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="error",
+                error_code="check_geometry_failed",
+                loc_id_count=len(loc_ids),
+                batch_limit=limit,
+            )
+            error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="check_geometry_failed", message=str(exc))
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="check_geometry",
+                capability_id="geometry_availability",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(loc_ids),
+                query_granularity=f"bulk_{len(loc_ids)}",
+                response_payload=error_payload,
+                error_code="check_geometry_failed",
+                metadata={"event": "geometry_availability", "tool_mode": "bulk", "quantity": len(loc_ids), "batch_id": batch_id, "loc_id_count": len(loc_ids), "batch_limit": limit},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        available = int(result.get("available") or 0)
+        missing = int(result.get("missing") or 0)
+        _stamp_mcp_tool_analytics(
+            request,
+            event="mcp_tool",
+            tool_mode="bulk",
+            batch_id=batch_id,
+            decision="allow",
+            loc_id_count=len(loc_ids),
+            available_count=available,
+            missing_count=missing,
+            batch_limit=limit,
+        )
+        result_payload = {"request_id": request_id, "batch_id": batch_id, "limit": limit, **result}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="check_geometry",
+            capability_id="geometry_availability",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(loc_ids),
+            query_granularity=f"bulk_{len(loc_ids)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "geometry_availability",
+                "tool_mode": "bulk",
+                "quantity": len(loc_ids),
+                "batch_id": batch_id,
+                "loc_id_count": len(loc_ids),
+                "available_count": available,
+                "missing_count": missing,
+                "batch_limit": limit,
+            },
+        )
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+
+    loc_id = str(payload.get("loc_id") or "").strip()
+    if not loc_id:
+        error_payload = {"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="check_geometry",
+            capability_id="geometry_availability",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="invalid_loc_id",
+            metadata={"event": "geometry_availability", "tool_mode": "single", "quantity": 0, "loc_id_count": 0},
+        )
+        return _jsonrpc_response(
+            _tool_result(error_payload, is_error=True),
+            rpc_request_id,
+        )
+    try:
+        from mapmover.runtime.reference_exchange import get_geometry_availability
+
+        result = get_geometry_availability([loc_id])
+    except Exception as exc:
+        error_payload = {"request_id": request_id, "error": {"code": "check_geometry_failed", "message": str(exc)}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="check_geometry",
+            capability_id="geometry_availability",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="check_geometry_failed",
+            metadata={"event": "geometry_availability", "tool_mode": "single", "quantity": 1, "loc_id": loc_id, "loc_id_count": 1},
+        )
+        return _jsonrpc_response(
+            _tool_result(error_payload, is_error=True),
+            rpc_request_id,
+        )
+    items = result.get("items") or result.get("results") or []
+    item = items[0] if items else {"loc_id": loc_id, "has_shape": False, "error": "no geometry found"}
+    result_payload = {"request_id": request_id, **item}
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="check_geometry",
+        capability_id="geometry_availability",
+        decision="allow",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result_payload,
+        metadata={
+            "event": "geometry_availability",
+            "tool_mode": "single",
+            "quantity": 1,
+            "loc_id": loc_id,
+            "loc_id_count": 1,
+            "has_shape": bool(item.get("has_shape")),
+        },
+    )
+    return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
 def _normalize_bridge_limit(value: Any) -> int | None:
@@ -1265,107 +1929,6 @@ def _normalize_bridge_share(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return max(0.0, min(share, 1.0))
-
-
-def _normalize_sidechain_source_loc_id(source_family: str, source_loc_id: str, iso3: str) -> str:
-    value = str(source_loc_id or "").strip()
-    family = str(source_family or "").strip().lower()
-    country = str(iso3 or "USA").strip().upper() or "USA"
-    if family == "overlay_zcta" and value.isdigit() and len(value) == 5:
-        return f"{country}-Z-{value}"
-    if family == "overlay_nws_public_zone" and len(value) == 6 and value[:2].isalpha() and value[2].upper() == "Z":
-        return f"{country}-NWSZ-{value.upper()}"
-    if family == "overlay_nws_fire_weather_zone" and len(value) == 6 and value[:2].isalpha() and value[2].upper() == "Z":
-        return f"{country}-NWSFZ-{value.upper()}"
-    return value
-
-
-async def _execute_sidechain_to_admin_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "sidechain_to_admin")
-    request_id = str(payload.get("request_id") or "")
-    source_family = str(payload.get("source_family") or "").strip().lower()
-    iso3 = str(payload.get("iso3") or "USA").strip().upper() or "USA"
-    source_loc_id = _normalize_sidechain_source_loc_id(source_family, str(payload.get("source_loc_id") or ""), iso3)
-    target_admin_level = payload.get("target_admin_level")
-    if not source_family or not source_loc_id or target_admin_level in (None, ""):
-        return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "error": {
-                        "code": "invalid_bridge_request",
-                        "message": "source_family, source_loc_id, and target_admin_level are required",
-                    },
-                },
-                is_error=True,
-            ),
-            rpc_request_id,
-        )
-    try:
-        from mapmover.runtime.sidechain_admin_bridge import resolve_sidechain_to_admin
-
-        result = resolve_sidechain_to_admin(
-            source_loc_id,
-            source_family=source_family,
-            target_admin_level=target_admin_level,
-            iso3=iso3,
-            min_source_area_share=_normalize_bridge_share(payload.get("min_source_area_share")),
-            limit=_normalize_bridge_limit(payload.get("limit")),
-        )
-    except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "bridge_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    result = {"request_id": request_id, **result}
-    if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "no bridge rows matched the request"})
-        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
-
-
-async def _execute_admin_to_sidechain_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "admin_to_sidechain")
-    request_id = str(payload.get("request_id") or "")
-    target_loc_id = str(payload.get("target_loc_id") or "").strip()
-    source_family = str(payload.get("source_family") or "").strip().lower()
-    iso3 = str(payload.get("iso3") or "USA").strip().upper() or "USA"
-    target_admin_level = payload.get("target_admin_level")
-    if not target_loc_id or not source_family or target_admin_level in (None, ""):
-        return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "error": {
-                        "code": "invalid_bridge_request",
-                        "message": "target_loc_id, source_family, and target_admin_level are required",
-                    },
-                },
-                is_error=True,
-            ),
-            rpc_request_id,
-        )
-    try:
-        from mapmover.runtime.sidechain_admin_bridge import resolve_admin_to_sidechains
-
-        result = resolve_admin_to_sidechains(
-            target_loc_id,
-            source_family=source_family,
-            target_admin_level=target_admin_level,
-            iso3=iso3,
-            min_target_area_share=_normalize_bridge_share(payload.get("min_target_area_share")),
-            limit=_normalize_bridge_limit(payload.get("limit")),
-        )
-    except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "bridge_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    result = {"request_id": request_id, **result}
-    if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "no bridge rows matched the request"})
-        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
 async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
@@ -1743,19 +2306,7 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_resolve_point_tool(arguments, request_id)
-
-    if tool_name == "get_boundary":
-        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
-        if rate_limit_response:
-            return rate_limit_response
-        return await _execute_get_boundary_tool(arguments, request_id)
-
-    if tool_name == "loc_id_hierarchy":
-        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
-        if rate_limit_response:
-            return rate_limit_response
-        return await _execute_loc_id_hierarchy_tool(arguments, request_id)
+        return await _execute_resolve_point_tool(request, arguments, request_id)
 
     if tool_name == "loc_id_info":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
@@ -1775,35 +2326,23 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return rate_limit_response
         return await _execute_resolve_reference_tool(arguments, request_id)
 
-    if tool_name == "loc_id_references":
-        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
-        if rate_limit_response:
-            return rate_limit_response
-        return await _execute_loc_id_references_tool(arguments, request_id)
-
     if tool_name == "convert_reference":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
         return await _execute_convert_reference_tool(arguments, request_id)
 
+    if tool_name == "check_geometry":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_check_geometry_tool(request, arguments, request_id)
+
     if tool_name == "get_geometry":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_get_geometry_tool(arguments, request_id)
-
-    if tool_name == "sidechain_to_admin":
-        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
-        if rate_limit_response:
-            return rate_limit_response
-        return await _execute_sidechain_to_admin_tool(arguments, request_id)
-
-    if tool_name == "admin_to_sidechain":
-        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
-        if rate_limit_response:
-            return rate_limit_response
-        return await _execute_admin_to_sidechain_tool(arguments, request_id)
+        return await _execute_get_geometry_tool(request, arguments, request_id)
 
     if tool_name == "get_disaster_links_for_event":
         return await _execute_disaster_links_for_event_tool(arguments, request_id)

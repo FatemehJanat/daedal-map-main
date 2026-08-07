@@ -411,17 +411,20 @@ def convert_reference(
     })
 
 
-def get_geometry_reference(loc_id: str, *, include_polygon: bool = False) -> dict[str, Any]:
-    """Return geometry metadata, and optionally polygon, for an exchange loc_id."""
+def _shape_geometry_reference(
+    loc_id: str,
+    feature: dict[str, Any] | None,
+    *,
+    include_polygon: bool = False,
+    include_info: bool = True,
+) -> dict[str, Any]:
     canonical = canonicalize_loc_id(loc_id)
-    feature_payload = get_selection_geometries([canonical])
-    features = (feature_payload or {}).get("features") or []
-    if not features:
-        return {"ok": False, "loc_id": canonical, "error": "no geometry found"}
-    feature = features[0]
+    if not feature:
+        return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
     props = feature.get("properties") or {}
     payload = {
         "ok": True,
+        "has_shape": True,
         "loc_id": props.get("local_loc_id") or canonical,
         "name": props.get("name"),
         "family": classify_loc_id_family(canonical),
@@ -433,8 +436,69 @@ def get_geometry_reference(loc_id: str, *, include_polygon: bool = False) -> dic
             props.get("bbox_max_lon"),
             props.get("bbox_max_lat"),
         ],
-        "info": get_location_info(canonical),
     }
+    if include_info:
+        payload["info"] = get_location_info(canonical)
     if include_polygon:
         payload["geometry"] = feature.get("geometry")
     return _clean_json(payload)
+
+
+def get_geometry_references(
+    loc_ids: list[str],
+    *,
+    include_polygon: bool = False,
+    include_info: bool = True,
+) -> dict[str, Any]:
+    """Return geometry metadata for one or more loc_ids using one geometry fetch pipeline."""
+    canonical_ids = [canonicalize_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
+    feature_payload = get_selection_geometries(canonical_ids)
+    features = (feature_payload or {}).get("features") or []
+    by_loc_id: dict[str, dict[str, Any]] = {}
+    for feature in features:
+        props = feature.get("properties") or {}
+        feature_loc_id = props.get("local_loc_id") or props.get("loc_id")
+        if feature_loc_id:
+            by_loc_id[canonicalize_loc_id(str(feature_loc_id))] = feature
+    results = [
+        _shape_geometry_reference(loc_id, by_loc_id.get(loc_id), include_polygon=include_polygon, include_info=include_info)
+        for loc_id in canonical_ids
+    ]
+    available = sum(1 for result in results if result.get("has_shape"))
+    return _clean_json(
+        {
+            "ok": bool(results),
+            "requested": len(canonical_ids),
+            "available": available,
+            "missing": len(canonical_ids) - available,
+            "results": results,
+        }
+    )
+
+
+def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
+    """Return a lightweight shape-availability preflight for one or more loc_ids."""
+    payload = get_geometry_references(loc_ids, include_polygon=False, include_info=False)
+    items = []
+    for result in payload.get("results") or []:
+        item = {
+            "loc_id": result.get("loc_id"),
+            "has_shape": bool(result.get("has_shape")),
+            "family": result.get("family"),
+            "admin_level": result.get("admin_level"),
+            "centroid": result.get("centroid") if result.get("has_shape") else None,
+            "bbox": result.get("bbox") if result.get("has_shape") else None,
+        }
+        if not item["has_shape"]:
+            item["error"] = result.get("error") or "no geometry found"
+        items.append(item)
+    return _clean_json({**payload, "items": items, "results": items})
+
+
+def get_geometry_reference(loc_id: str, *, include_polygon: bool = False) -> dict[str, Any]:
+    """Return geometry metadata, and optionally polygon, for an exchange loc_id."""
+    payload = get_geometry_references([loc_id], include_polygon=include_polygon, include_info=True)
+    results = payload.get("results") or []
+    if not results:
+        return {"ok": False, "loc_id": canonicalize_loc_id(loc_id), "has_shape": False, "error": "no geometry found"}
+    return results[0]
