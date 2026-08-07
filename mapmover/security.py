@@ -71,10 +71,14 @@ def get_allowed_origins() -> list[str]:
     defaults = [
         "http://localhost:7000",
         "http://localhost:8080",
+        "http://localhost:8091",
+        "http://localhost:8093",
         "http://localhost:8000",
         "http://localhost:8001",
         "http://127.0.0.1:7000",
         "http://127.0.0.1:8080",
+        "http://127.0.0.1:8091",
+        "http://127.0.0.1:8093",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:8001",
     ]

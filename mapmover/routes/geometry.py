@@ -1,10 +1,14 @@
 """Geometry API router endpoints."""
 
+import os
+import time
 import msgpack
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mapmover import logger
+from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
+from mapmover.security import get_client_ip
 from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
@@ -29,6 +33,13 @@ from mapmover.runtime.reference_exchange import (
 
 router = APIRouter()
 MAX_SELECTION_LOC_IDS = 1_000
+
+
+def _point_lookup_batch_limit() -> int:
+    try:
+        return max(1, int(str(os.getenv("POINT_LOOKUP_BATCH_LIMIT", "25")).strip() or "25"))
+    except ValueError:
+        return 25
 
 
 async def decode_request_body(request: Request) -> dict:
@@ -220,6 +231,102 @@ async def resolve_point_json_endpoint(req: Request):
     except Exception as e:
         logger.error(f"Error in /api/v1/resolve/point: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/api/v1/resolve/points")
+async def resolve_points_json_endpoint(req: Request):
+    """Resolve a small batch of lon/lat points to containing loc_ids as JSON."""
+    started_at = time.perf_counter()
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON request body"}, status_code=400)
+
+    points = body.get("points")
+    if not isinstance(points, list):
+        return JSONResponse({"error": "points must be a list"}, status_code=400)
+
+    limit = _point_lookup_batch_limit()
+    if len(points) > limit:
+        return JSONResponse({"error": f"points must contain at most {limit} items", "limit": limit}, status_code=413)
+
+    include_geometry = bool(body.get("include_geometry", False))
+    source = str(body.get("source") or "").strip()[:80] or "unknown"
+    batch_id = str(body.get("batch_id") or "").strip()[:120] or None
+    results = []
+    resolved_count = 0
+    unresolved_count = 0
+
+    for index, point in enumerate(points):
+        if not isinstance(point, dict):
+            unresolved_count += 1
+            results.append({"index": index, "error": "point must be an object"})
+            continue
+        lon = point.get("lon")
+        lat = point.get("lat")
+        row_index = point.get("row_index", index)
+        if lon is None or lat is None:
+            unresolved_count += 1
+            results.append({"index": index, "row_index": row_index, "error": "lon and lat are required"})
+            continue
+        try:
+            result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
+            if result.get("error"):
+                unresolved_count += 1
+            elif result.get("deepest_resolved_loc_id") or (result.get("matched") or {}).get("loc_id"):
+                resolved_count += 1
+            else:
+                unresolved_count += 1
+            results.append({"index": index, "row_index": row_index, **result})
+        except Exception as exc:
+            unresolved_count += 1
+            results.append({"index": index, "row_index": row_index, "error": str(exc)})
+
+    status_code = 200
+    payload = {
+        "batch_id": batch_id,
+        "source": source,
+        "limit": limit,
+        "point_count": len(points),
+        "resolved_count": resolved_count,
+        "unresolved_count": unresolved_count,
+        "results": results,
+    }
+
+    req.state.analytics_request_id = batch_id
+    req.state.analytics_pack_id = "geography_tools"
+    req.state.analytics_source_id = "resolve_points"
+    req.state.analytics_metadata = {
+        "surface": "test_data" if source == "try_dataset" else source,
+        "event": "point_lookup_batch",
+        "batch_id": batch_id,
+        "point_count": len(points),
+        "resolved_count": resolved_count,
+        "unresolved_count": unresolved_count,
+        "limit": limit,
+    }
+
+    try:
+        log_api_query_event(
+            request_id=batch_id or f"point-batch-{int(time.time() * 1000)}",
+            capability_id="point_lookup_batch",
+            pack_id="geography_tools",
+            source_id="resolve_points",
+            decision="allow",
+            payment_rail="free_preview",
+            auth_user_id=None,
+            ip_hash=hash_ip_for_analytics(get_client_ip(req)),
+            user_agent=req.headers.get("user-agent", "").strip() or None,
+            execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+            row_count=len(points),
+            status_code=status_code,
+            query_granularity=f"bulk_{len(points)}",
+            metadata=req.state.analytics_metadata,
+        )
+    except Exception as exc:
+        logger.warning(f"Point lookup batch analytics failed: {exc}")
+
+    return JSONResponse(payload, status_code=status_code)
 
 
 def _internal_json_allowed(req: Request):

@@ -8,7 +8,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from app import app, _classify_route_surface
+from app import app, _classify_route_surface, _rate_limit_config_for_surface
 from mapmover.runtime import geometry_catalog
 
 
@@ -62,6 +62,54 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             "/api/v1/feeds/catalog",
         ):
             self.assertEqual(_classify_route_surface(path), "agent_api_discovery")
+
+    def test_point_lookup_routes_have_dedicated_rate_limit_surface(self) -> None:
+        self.assertEqual(_classify_route_surface("/geometry/resolve-point"), "point_lookup")
+        self.assertEqual(_classify_route_surface("/api/v1/resolve/point"), "point_lookup")
+        self.assertEqual(_classify_route_surface("/api/v1/resolve/points"), "point_lookup")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_rate_limit_config_for_surface("point_lookup"), (25, 60))
+
+    def test_point_lookup_batch_endpoint_returns_one_bulk_payload(self) -> None:
+        def fake_resolve(lon, lat, include_geometry=False):
+            return {
+                "deepest_resolved_loc_id": f"TEST-{lat}-{lon}",
+                "matched": {"loc_id": f"TEST-{lat}-{lon}"},
+            }
+
+        with mock.patch(
+            "mapmover.routes.geometry.resolve_point_to_loc_id_stack",
+            side_effect=fake_resolve,
+        ), mock.patch(
+            "mapmover.routes.geometry.log_api_query_event",
+        ):
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={
+                    "source": "try_dataset",
+                    "batch_id": "test-bulk-2",
+                    "points": [
+                        {"row_index": 10, "lon": -123.1, "lat": 49.2},
+                        {"row_index": 11, "lon": -122.9, "lat": 49.1},
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["batch_id"], "test-bulk-2")
+        self.assertEqual(payload["point_count"], 2)
+        self.assertEqual(payload["resolved_count"], 2)
+        self.assertEqual(payload["results"][0]["row_index"], 10)
+
+    def test_point_lookup_batch_endpoint_rejects_over_limit(self) -> None:
+        response = self.client.post(
+            "/api/v1/resolve/points",
+            json={"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()["limit"], 25)
 
     def test_geometry_catalog_loads_from_object_store_in_cloud_mode(self) -> None:
         class FakeObjectStore:

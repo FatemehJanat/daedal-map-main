@@ -105,6 +105,8 @@ def _classify_route_surface(path: str) -> str:
     path = str(path or "").strip()
     if path.startswith("/mcp-private/"):
         return "private_mcp"
+    if path in {"/geometry/resolve-point", "/api/v1/resolve/point", "/api/v1/resolve/points"}:
+        return "point_lookup"
     if path == "/api/v1/query/dataset":
         return "agent_api_paid"
     if path == "/mcp" or path.startswith("/mcp/"):
@@ -136,6 +138,11 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
             _parse_env_int("APP_CATALOG_RATE_LIMIT", 60),
             _parse_env_int("APP_CATALOG_RATE_WINDOW_SECONDS", 10),
         )
+    if surface == "point_lookup":
+        return (
+            _parse_env_int("POINT_LOOKUP_RATE_LIMIT", 25),
+            _parse_env_int("POINT_LOOKUP_RATE_WINDOW_SECONDS", 60),
+        )
     if surface == "agent_api_paid":
         return (
             _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
@@ -163,6 +170,7 @@ def _rate_limit_response(surface: str, retry_after: int):
     messages = {
         "agent_api_discovery": "Too many Agent Catalog discovery requests. Please slow down and try again shortly.",
         "human_app_catalog": "Too many catalog requests. Please slow down and try again shortly.",
+        "point_lookup": "Too many point lookup requests. Free testing allows a small burst; please wait a moment and try again.",
         "agent_api_paid": "Too many paid API requests. Please wait a moment and try again.",
         "agent_api_mcp": "Too many MCP requests. Please wait a moment and try again.",
     }
@@ -208,6 +216,11 @@ def _apply_surface_headers(response, request: Request, surface: str) -> None:
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin, MCP-Protocol-Version"
         return
+    if surface == "point_lookup":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin"
+        return
     if surface == "private_mcp":
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
@@ -244,12 +257,13 @@ async def lifespan(app: FastAPI):
     # the first user requests.
     try:
         from mapmover.data_loading import prewarm_api_catalog
+        from mapmover.default_load_prewarm import prewarm_catalog_default_loads
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
         tasks = ["public_pack_catalog", "api_catalog"]
         if is_cloud_mode():
-            tasks.extend(["disasters", "geometry"])
+            tasks.extend(["disasters", "catalog_default_loads", "geometry"])
         begin_prewarm(tasks)
         t_public_catalog = threading.Thread(
             target=run_prewarm_task,
@@ -274,6 +288,14 @@ async def lifespan(app: FastAPI):
             )
             t_disaster.start()
 
+            t_default_loads = threading.Thread(
+                target=run_prewarm_task,
+                args=("catalog_default_loads", prewarm_catalog_default_loads),
+                daemon=True,
+                name="prewarm-catalog-default-loads",
+            )
+            t_default_loads.start()
+
             t_geom = threading.Thread(
                 target=run_prewarm_task,
                 args=("geometry", prewarm_geometry),
@@ -282,7 +304,7 @@ async def lifespan(app: FastAPI):
             )
             t_geom.start()
 
-            logger.info("Pre-warmers started: public-pack-catalog + api-catalog + disasters + geometry")
+            logger.info("Pre-warmers started: public-pack-catalog + api-catalog + disasters + catalog-default-loads + geometry")
         else:
             logger.info("Pre-warmers started: public-pack-catalog + api-catalog")
     except Exception as exc:
