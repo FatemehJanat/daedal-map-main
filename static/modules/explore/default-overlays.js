@@ -15,12 +15,20 @@ export function getExploreDefaultOverlayIds() {
     'risk',
     'admin_layers',
 
-    // Published country/region indicator families.  These IDs are overlay
-    // paths from the catalog, rather than individual source or pack IDs.
+    // Published country/region indicator families. During catalog-surface QA
+    // this list is intentionally broad: it keeps the tray populated even when
+    // the anonymous overlay tree is empty but pack defaults are available.
     'economy',
+    'currency',
+    'worldpop',
+    'nri',
     'distributed_manufacturing',
     'cejst',
     'usa_industrial_activity',
+    'usa_opportunity_zones',
+    'world_factbook',
+    'un_wpp',
+    'world_bank_wdi',
 
     // Runtime-owned historical raster layers.  They remain distinct from the
     // catalog tree because their frame services are shared with Ops.

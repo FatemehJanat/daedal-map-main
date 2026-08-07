@@ -106,6 +106,15 @@ const OVERLAY_ICONS = {
   'landslides': 'L',
   'drought': 'D',
   'risk': 'R',
+  'nri': 'N',
+  'worldpop': 'P',
+  'world_factbook': 'F',
+  'un_wpp': 'U',
+  'world_bank_wdi': 'W',
+  'distributed_manufacturing': 'M',
+  'cejst': 'C',
+  'usa_industrial_activity': 'I',
+  'usa_opportunity_zones': 'O',
   'storms': 'S',
   'fema': 'F',
   'desinventar': 'I',
@@ -178,6 +187,7 @@ let PACK_DEFAULTS = {};
 // default_response}) for ?source= deep-links, including sources with no overlay.
 let SOURCE_DEFAULTS = {};
 let opsEffectiveFeeds = [];
+let accountOverlayPolicyEnabled = true;
 const laneShownAdjustments = new Map();
 
 function deriveOverlaySourceIds(sources = []) {
@@ -426,8 +436,12 @@ function getProfileLaneOverlayDefaults(profile, fieldName, mode) {
 function getBaseShownOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
   const normalizedMode = String(mode || getCurrentOverlayLaneMode()).trim().toLowerCase() || 'explore';
   const profile = getCurrentProfile();
-  const accountShown = getProfileLaneOverlayDefaults(profile, 'default_shown_by_lane', normalizedMode);
-  const accountOpsFeeds = getAccountOpsFeedSelection(profile);
+  const accountShown = accountOverlayPolicyEnabled
+    ? getProfileLaneOverlayDefaults(profile, 'default_shown_by_lane', normalizedMode)
+    : [];
+  const accountOpsFeeds = accountOverlayPolicyEnabled
+    ? getAccountOpsFeedSelection(profile)
+    : [];
   // Keep the two Ops lanes distinct. Anonymous/default-watch visitors see the
   // curated public default set. An account with saved ops_feeds sees every
   // feed it selected, even when an older tray-layout preference lists fewer.
@@ -446,7 +460,9 @@ function getBaseShownOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
 function getBaseEnabledOverlayIdsForMode(mode = getCurrentOverlayLaneMode()) {
   const normalizedMode = String(mode || getCurrentOverlayLaneMode()).trim().toLowerCase() || 'explore';
   const profile = getCurrentProfile();
-  const accountEnabled = getProfileLaneOverlayDefaults(profile, 'default_enabled_by_lane', normalizedMode);
+  const accountEnabled = accountOverlayPolicyEnabled
+    ? getProfileLaneOverlayDefaults(profile, 'default_enabled_by_lane', normalizedMode)
+    : [];
   if (accountEnabled.length) {
     return accountEnabled;
   }
@@ -498,6 +514,13 @@ function buildAdminLayersOverlay() {
     hasYearFilter: false,
     alwaysVisible: true
   };
+}
+
+function pushOverlayIfMissing(overlays, overlay) {
+  if (!overlay?.id || !Array.isArray(overlays)) return;
+  if (!overlays.some((candidate) => candidate?.id === overlay.id)) {
+    overlays.push(overlay);
+  }
 }
 
 /**
@@ -620,6 +643,37 @@ function buildCategoriesFromTree(overlayTree) {
     }
   }
 
+  const historicalDisasterOverlays = [
+    { id: 'earthquakes', label: 'Earthquakes', description: 'Historical seismic events', default: false, locked: false, model: 'point-radius', icon: 'E', hasYearFilter: true, sourceIds: ['earthquakes'], packIds: ['earthquakes'] },
+    { id: 'hurricanes', label: 'Hurricanes', description: 'Historical storm tracks', default: false, locked: false, model: 'track', icon: 'H', hasYearFilter: true, sourceIds: ['hurricanes'], packIds: ['hurricanes'] },
+    { id: 'volcanoes', label: 'Volcanoes', description: 'Historical volcanic eruptions', default: false, locked: false, model: 'point-radius', icon: 'V', hasYearFilter: true, sourceIds: ['volcanoes'], packIds: ['volcanoes'] },
+    { id: 'wildfires', label: 'Wildfires', description: 'Historical wildfire events', default: false, locked: false, model: 'point-radius', icon: 'W', hasYearFilter: true, sourceIds: ['wildfires'], packIds: ['wildfires'] },
+    { id: 'tsunamis', label: 'Tsunamis', description: 'Historical tsunami events', default: false, locked: false, model: 'point-radius', icon: 'T', hasYearFilter: true, sourceIds: ['tsunamis'], packIds: ['tsunamis'] },
+    { id: 'tornadoes', label: 'Tornadoes', description: 'Historical tornado events', default: false, locked: false, model: 'point-radius', icon: 'T', hasYearFilter: true, sourceIds: ['tornadoes'], packIds: ['tornadoes'] },
+    { id: 'floods', label: 'Floods', description: 'Historical flood events', default: false, locked: false, model: 'point-radius', icon: 'F', hasYearFilter: true, sourceIds: ['floods'], packIds: ['floods'] }
+  ];
+  const laneMode = getCurrentOverlayLaneMode();
+  const disastersCategory = categories.find((cat) => cat.id === 'disasters' && cat.isCategory);
+  if (laneMode !== 'ops') {
+    if (disastersCategory?.overlays) {
+      const existingIds = new Set(disastersCategory.overlays.map((overlay) => overlay.id));
+      for (const overlay of historicalDisasterOverlays) {
+        if (!existingIds.has(overlay.id)) {
+          disastersCategory.overlays.push(overlay);
+        }
+      }
+    } else {
+      categories.push({
+        id: 'disasters',
+        label: 'Disasters',
+        icon: '!',
+        isCategory: true,
+        expanded: true,
+        overlays: historicalDisasterOverlays
+      });
+    }
+  }
+
   // Ops uses a separate live hurricane overlay id so it cannot collide with
   // the historical IBTrACS hurricane overlay/cache used in Explore.
   const liveHurricaneOverlay = {
@@ -635,10 +689,10 @@ function buildCategoriesFromTree(overlayTree) {
     sourceIds: ['hurricanes_live'],
     packIds: ['hurricanes']
   };
-  const disastersCategory = categories.find((cat) => cat.id === 'disasters' && cat.isCategory);
-  if (disastersCategory) {
-    if (!disastersCategory.overlays.some((overlay) => overlay.id === 'hurricanes_live')) {
-      disastersCategory.overlays.push(liveHurricaneOverlay);
+  const activeDisastersCategory = categories.find((cat) => cat.id === 'disasters' && cat.isCategory);
+  if (activeDisastersCategory) {
+    if (!activeDisastersCategory.overlays.some((overlay) => overlay.id === 'hurricanes_live')) {
+      activeDisastersCategory.overlays.push(liveHurricaneOverlay);
     }
   } else {
     categories.push({
@@ -782,7 +836,7 @@ function buildCategoriesFromTree(overlayTree) {
   // Global indicator overlays - the shared choropleth (global.csv country fills, etc.).
   // The toggle controls choropleth visibility, so dense global layers like the
   // currency choropleth can be hidden to see point/area feeds underneath.
-  globalIndicatorOverlays.push({
+  pushOverlayIfMissing(globalIndicatorOverlays, {
     id: 'currency',
     label: 'Currency',
     description: 'Global currency choropleth',
@@ -790,7 +844,54 @@ function buildCategoriesFromTree(overlayTree) {
     locked: false,
     model: 'choropleth',
     icon: '$',
-    hasYearFilter: false
+    hasYearFilter: false,
+    sourceIds: ['fx_usd_historical_monthly', 'fx_usd_latest'],
+    packIds: ['currency']
+  });
+  const qaIndicatorOverlays = [
+    { id: 'worldpop', label: 'WorldPop', description: 'Population estimates and projections', icon: 'P', sourceIds: ['worldpop'], packIds: ['worldpop'] },
+    { id: 'un_wpp', label: 'UN Population', description: 'UN World Population Prospects', icon: 'U', sourceIds: ['un_wpp'], packIds: ['un_wpp'] },
+    { id: 'world_factbook', label: 'World Factbook', description: 'Country indicators from the World Factbook', icon: 'F', sourceIds: ['world_factbook', 'world_factbook_static'], packIds: ['world_factbook'] },
+    { id: 'world_bank_wdi', label: 'World Bank WDI', description: 'World Development Indicators', icon: 'W', sourceIds: ['world_bank_wdi'], packIds: ['world_bank_wdi'] },
+    { id: 'distributed_manufacturing', label: 'Distributed Manufacturing', description: 'Maker spaces and fabrication sites', icon: 'M', sourceIds: ['distributed_manufacturing'], packIds: ['distributed_manufacturing'] }
+  ];
+  for (const overlay of qaIndicatorOverlays) {
+    pushOverlayIfMissing(globalIndicatorOverlays, {
+      ...overlay,
+      default: false,
+      locked: false,
+      model: 'choropleth',
+      hasYearFilter: false
+    });
+  }
+
+  const qaUsContextOverlays = [
+    { id: 'nri', label: 'Natural Risk Index', description: 'FEMA natural hazard risk', icon: 'N', sourceIds: ['fema_nri'], packIds: ['nri'] },
+    { id: 'cejst', label: 'CEJST', description: 'Climate and economic justice screening', icon: 'C', sourceIds: ['cejst_classification', 'cejst_burdens'], packIds: ['cejst'] },
+    { id: 'usa_industrial_activity', label: 'Industrial Activity', description: 'US industrial activity indicators', icon: 'I', sourceIds: ['usa_industrial_activity'], packIds: ['usa_industrial_activity'] },
+    { id: 'usa_opportunity_zones', label: 'Opportunity Zones', description: 'US opportunity zone status', icon: 'O', sourceIds: ['usa_opportunity_zones'], packIds: ['usa_opportunity_zones'] }
+  ];
+  for (const overlay of qaUsContextOverlays) {
+    pushOverlayIfMissing(usContextOverlays, {
+      ...overlay,
+      default: false,
+      locked: false,
+      model: 'choropleth',
+      hasYearFilter: false
+    });
+  }
+
+  pushOverlayIfMissing(usContextOverlays, {
+    id: 'risk',
+    label: 'Risk',
+    description: 'US hazard risk overlays',
+    default: false,
+    locked: false,
+    model: 'choropleth',
+    icon: 'R',
+    hasYearFilter: false,
+    sourceIds: ['fema_nri'],
+    packIds: ['nri']
   });
 
   if (globalIndicatorOverlays.length) {
@@ -1196,6 +1297,7 @@ export const OverlaySelector = {
    */
   async init(options = {}) {
     const restoreState = options.restoreState !== false;
+    accountOverlayPolicyEnabled = options.accountOverlayPolicy !== false;
     this.currentLaneMode = getCurrentOverlayLaneMode();
     // A catalog-surface change may remove a draft overlay that is currently
     // rendered. Preserve this set so the normal listener path can explicitly
@@ -1821,6 +1923,19 @@ export const OverlaySelector = {
 
   promoteOverlay(overlayId, mode = this.currentLaneMode) {
     return this.showOverlay(overlayId, mode);
+  },
+
+  applyAccountOverlayPolicy(mode = this.currentLaneMode) {
+    accountOverlayPolicyEnabled = true;
+    const normalizedMode = String(mode || this.currentLaneMode || 'explore').trim().toLowerCase() || 'explore';
+    this.currentLaneMode = normalizedMode;
+    const accountEnabled = getBaseEnabledOverlayIdsForMode(normalizedMode);
+    for (const overlayId of accountEnabled) {
+      this.showOverlay(overlayId, normalizedMode);
+      this.activeOverlays.add(overlayId);
+    }
+    this._rememberCurrentLaneState();
+    this.refreshVisibility();
   },
 
   /**

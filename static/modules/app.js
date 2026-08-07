@@ -16,7 +16,12 @@ import { ChoroplethManager, setDependencies as setChoroDeps } from './choropleth
 import { ResizeManager, SidebarResizer } from './sidebar.js';
 import { SelectionManager, setDependencies as setSelectionDeps } from './selection-manager.js';
 import { HurricaneHandler, setDependencies as setHurricaneDeps } from './hurricane-handler.js';
-import { OverlaySelector, setDependencies as setOverlayDeps } from './overlay-selector.js';
+import {
+  OverlaySelector,
+  resolveOverlayIdFromPackId,
+  resolveOverlayIdFromSourceId,
+  setDependencies as setOverlayDeps
+} from './overlay-selector.js';
 import { ModelRegistry } from './models/model-registry.js';
 import { PointCollectionModel, setDependencies as setPointCollectionDeps } from './models/model-point-collection.js';
 import { OverlayController, setDependencies as setOverlayControllerDeps } from './overlay-controller.js';
@@ -609,7 +614,12 @@ export const App = {
       const config = overlaySelector?.getOverlayConfig?.(overlayId);
       return config?.model === 'choropleth';
     });
-    MapAdapter?.setChoroplethVisible?.(anyMetricActive);
+    const hasCurrentMetricData = Boolean(
+      this.currentData?.data_type === 'metrics'
+      && Array.isArray(this.currentData?.geojson?.features)
+      && this.currentData.geojson.features.length
+    );
+    MapAdapter?.setChoroplethVisible?.(anyMetricActive || hasCurrentMetricData);
   },
 
   async ensureMetricLevelLoaded(level, options = {}) {
@@ -879,8 +889,15 @@ export const App = {
     // so it can host the cross-mode selector.
     normalizeBootUrl(startupMode);
     setLaneTitle(startupMode);
+    const routeIntent = parseRouteIntent();
     const researchStartup = startupMode === 'research';
-    await OverlaySelector.init({ restoreState: !researchStartup });
+    await OverlaySelector.init({
+      restoreState: !researchStartup,
+      // Boot order is: public defaults -> explicit URL additions -> account
+      // policy -> data loads. Auth/profile is already available here, so keep
+      // it out of the first selector pass deliberately.
+      accountOverlayPolicy: false
+    });
     OverlayController.init({ enableExploreRuntime: !researchStartup });
 
     // Initialize map
@@ -908,8 +925,19 @@ export const App = {
         if (!handledShareState) {
           console.warn('[ShareState] Route share state did not resolve to a load:', routeIntent.share_state);
         }
-        emitRouteMessage();
-        return;
+        const hasAdditionalRouteLoad = Boolean(
+          routeIntent?.view_id
+          || routeIntent?.pack_id
+          || routeIntent?.source_id
+          || routeIntent?.feed_id
+          || routeIntent?.event_id
+          || (Array.isArray(routeIntent?.pack_ids) && routeIntent.pack_ids.length)
+          || (Array.isArray(routeIntent?.feed_ids) && routeIntent.feed_ids.length)
+        );
+        if (!hasAdditionalRouteLoad) {
+          emitRouteMessage();
+          return;
+        }
       }
       const handled = await ChatManager.applyRouteIntent?.(routeIntent || {}, {
         mode: lane,
@@ -1002,23 +1030,6 @@ export const App = {
       console.warn(`Could not seed ${startupMode} conversation after map init:`, error);
     }
 
-    // Replay any overlays that were made active before the map was ready.
-    // OverlaySelector may already hold current-session lane state or default
-    // overlays before MapAdapter.init() runs, so re-trigger them now.
-    if (!researchStartup) {
-      for (const overlayId of OverlaySelector.activeOverlays) {
-        // The Ops watch was already fetched above. Replay only its existing
-        // rendered payload after MapLibre becomes ready; do not turn each
-        // default overlay into a second freshness request that can replace a
-        // hurricane scene during bootstrap.
-        OverlayController.handleOverlayChange(overlayId, true, {
-          allowDefaultLoad: false,
-          suppressStatusMessage: true,
-          systemTransition: true,
-        });
-      }
-    }
-
     // Shift the map's logical center to account for the sidebar width.
     // The map container covers the full viewport but the sidebar overlays it on the left,
     // so without padding the "center" is visually offset. MapLibre's padding option
@@ -1033,10 +1044,66 @@ export const App = {
       attributeFilter: ['class', 'style']
     });
 
-    // Declarative deep-links are additive entry adjustments. First establish the
-    // base lane state (public defaults for anon, account defaults/watch for
-    // signed-in), then widen that session with the route intent.
-    const routeIntent = parseRouteIntent();
+    const primeExplicitRouteOverlays = (lane, intent = {}) => {
+      const overlayIds = new Set();
+      const addOverlay = (overlayId) => {
+        const normalized = String(overlayId || '').trim();
+        if (normalized) overlayIds.add(normalized);
+      };
+      const addPack = (packId) => {
+        const normalized = String(packId || '').trim();
+        if (!normalized) return;
+        addOverlay(resolveOverlayIdFromPackId(normalized) || normalized);
+      };
+      const addSource = (sourceId) => {
+        const normalized = String(sourceId || '').trim();
+        if (!normalized) return;
+        addOverlay(
+          resolveOverlayIdFromSourceId(normalized)
+          || resolveOverlayIdFromPackId(normalized)
+          || normalized
+        );
+      };
+
+      for (const overlayId of uniqueStrings(intent?.share_state?.overlays || [])) {
+        addOverlay(overlayId);
+      }
+      addPack(intent?.pack_id);
+      for (const packId of uniqueStrings(intent?.pack_ids || [])) {
+        addPack(packId);
+      }
+      addSource(intent?.source_id);
+      for (const overlayId of overlayIds) {
+        OverlaySelector?.showOverlay?.(overlayId, lane);
+        if (OverlaySelector && !OverlaySelector.isActive(overlayId)) {
+          OverlaySelector.setActive(overlayId, true);
+        }
+      }
+      return overlayIds;
+    };
+
+    // Declarative deep-links are additive entry adjustments. Establish the
+    // public tray first, promote explicit URL targets second, apply account
+    // policy third, and only then touch the data loaders.
+    const routePromotedOverlayIds = primeExplicitRouteOverlays(startupMode, routeIntent);
+    OverlaySelector.applyAccountOverlayPolicy?.(startupMode);
+    ChatManager.applyModeUiState?.();
+
+    // Replay any overlays that are active after URL + account policy. This is
+    // the first boot-time data touch for selector-driven overlays.
+    if (!researchStartup) {
+      for (const overlayId of OverlaySelector.activeOverlays) {
+        if (routePromotedOverlayIds.has(overlayId)) {
+          continue;
+        }
+        OverlayController.handleOverlayChange(overlayId, true, {
+          allowDefaultLoad: false,
+          suppressStatusMessage: true,
+          systemTransition: true,
+        });
+      }
+    }
+
     await applyRouteIntentLoad(startupMode, routeIntent);
 
     ChatManager.applyModeUiState?.();

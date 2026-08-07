@@ -918,7 +918,7 @@ export const ChatManager = {
       ...((Array.isArray(routeIntent?.pack_ids) ? routeIntent.pack_ids : []))
     ].map((value) => String(value || '').trim()).filter(Boolean)));
 
-    if (lane === 'explore' && !packIds.length && !sourceId && !eventId) {
+    if (lane === 'explore' && !routeIntent?.view_id && !packIds.length && !sourceId && !eventId) {
       return false;
     }
     if (lane === 'ops' && !feedIds.length && !eventId) {
@@ -957,11 +957,32 @@ export const ChatManager = {
       eventId && lane === 'explore' && (packId || sourceId)
     );
 
-    if (lane === 'explore' && routeIntent?.view_id && !sourceId && !eventId && packIds.length > 1) {
+    if (lane === 'explore' && routeIntent?.view_id && !sourceId && !eventId) {
       return this.runDefaultLoad(
         { presetId: `explore:${routeIntent.view_id}` },
         { ...options, mode: lane, suppressResultMessage: true, skipEntityReflection: true }
       );
+    }
+
+    if (lane === 'explore' && !sourceId && !eventId && packIds.length > 1) {
+      let successCount = 0;
+      for (const routePackId of packIds) {
+        const result = await this.runDefaultLoad(
+          { packId: routePackId },
+          {
+            ...options,
+            mode: lane,
+            suppressResultMessage: true,
+            skipEntityReflection: true
+          }
+        );
+        if (result && (typeof result !== 'object' || result.ok !== false)) {
+          successCount += 1;
+        }
+      }
+      return successCount > 0
+        ? { ok: true, successCount, total: packIds.length }
+        : false;
     }
 
     const handled = await this.runDefaultLoad(

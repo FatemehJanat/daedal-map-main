@@ -84,6 +84,16 @@ function buildConfirmedOrderFromDefaultLoad(defaultLoad, fallbackSummary = '') {
   };
 }
 
+function getAuthoredDefaultCopy(sourceEntry) {
+  const defaultLoad = sourceEntry?.default_load && typeof sourceEntry.default_load === 'object'
+    ? sourceEntry.default_load
+    : {};
+  const question = String(sourceEntry?.default_question || '').trim();
+  const response = String(sourceEntry?.default_response || '').trim();
+  const summary = String(defaultLoad.summary || response || question || '').trim();
+  return { question, response, summary };
+}
+
 function resolveOverlayRangeYears(defaultLoad) {
   if (!defaultLoad || typeof defaultLoad !== 'object') return null;
 
@@ -118,6 +128,7 @@ function buildOverlayRangeLoadAction(defaultLoad, sourceEntry) {
   const years = resolveOverlayRangeYears(defaultLoad);
   if (!years) return null;
 
+  const authored = getAuthoredDefaultCopy(sourceEntry);
   return {
     type: 'overlay_range_load',
     overlayId,
@@ -126,8 +137,9 @@ function buildOverlayRangeLoadAction(defaultLoad, sourceEntry) {
     params: defaultLoad.params && typeof defaultLoad.params === 'object'
       ? cloneJsonSafe(defaultLoad.params)
       : null,
-    message: String(sourceEntry?.default_response || '').trim(),
-    question: String(sourceEntry?.default_question || '').trim()
+    summary: authored.summary,
+    message: authored.response || authored.summary,
+    question: authored.question
   };
 }
 
@@ -140,11 +152,13 @@ function buildOverlayActivationLoadAction(defaultLoad, sourceEntry) {
     ? defaultLoad.overlay_ids.map((value) => String(value || '').trim()).filter(Boolean)
     : [String(defaultLoad.overlay_id || '').trim()].filter(Boolean);
   if (!overlayIds.length) return null;
+  const authored = getAuthoredDefaultCopy(sourceEntry);
   return {
     type: 'overlay_activation',
     overlayIds,
-    message: String(sourceEntry?.default_response || defaultLoad.summary || '').trim(),
-    question: String(sourceEntry?.default_question || '').trim()
+    summary: authored.summary,
+    message: authored.response || authored.summary,
+    question: authored.question
   };
 }
 
@@ -158,14 +172,16 @@ function getSourceDefaultLoadAction(sourceEntry) {
   }
   const defaultLoad = buildConfirmedOrderFromDefaultLoad(
     sourceEntry.default_load,
-    sourceEntry.default_response || sourceEntry.default_question || ''
+    getAuthoredDefaultCopy(sourceEntry).summary
   );
   if (!defaultLoad) return null;
+  const authored = getAuthoredDefaultCopy(sourceEntry);
   return {
     type: 'confirmed_order',
     order: defaultLoad,
-    message: String(sourceEntry.default_response || '').trim(),
-    question: String(sourceEntry.default_question || '').trim()
+    summary: authored.summary,
+    message: authored.response || authored.summary,
+    question: authored.question
   };
 }
 
@@ -268,14 +284,15 @@ function buildPresetActionFromPackDefaults(packIds, fallbackSummary = '') {
   };
 }
 
-function buildExploreTenYearDisasterAction() {
+function buildExploreDisasterRangeAction(relativeYears = 10) {
   // This is intentionally not a pack-default expansion. Explore's seven-
   // disaster button is one bounded global event request per overlay, using the
   // same endpoint defaults as the one-year overlay controls and Railway's
   // startup prewarm. Pack defaults can include aggregates and regional source
   // variants, which makes this particular UI action unexpectedly expensive.
+  const yearsBack = Math.max(1, Math.trunc(Number(relativeYears) || 10));
   const endYear = getCurrentUtcYear();
-  const startYear = Math.max(1900, endYear - 9);
+  const startYear = Math.max(1900, endYear - yearsBack + 1);
   const startMs = Date.UTC(startYear, 0, 1, 0, 0, 0, 0);
   const endMs = Date.UTC(endYear, 11, 31, 23, 59, 59, 999);
   const overlayIds = [
@@ -296,14 +313,14 @@ function buildExploreTenYearDisasterAction() {
       startMs,
       endMs,
       // null means use OVERLAY_ENDPOINTS[overlayId].params. Keeping those
-      // defaults authoritative makes the one-year overlay and this ten-year
+      // defaults authoritative makes the one-year overlay and this range
       // preset send identical threshold filters.
       params: null
     })),
     summary:
       `Showing seven global disaster event layers for ${startYear}-${endYear}: ` +
       'earthquakes (M5.5+), hurricanes (Cat1+), volcanoes (VEI 3+), ' +
-      'wildfires (500 km²+), all recorded tsunami events, tornadoes (EF2+), and floods (severity 2+). ' +
+      'wildfires (500 km2+), all recorded tsunami events, tornadoes (EF2+), and floods (severity 2+). ' +
       'Use the timeline to move through the available history, or ask to narrow by place, time, or event.',
     // This preset owns its bounded Explore timeline. The range must not be
     // inherited from an earlier overlay/chat load (for example 1970-2026).
@@ -319,6 +336,10 @@ function buildExploreTenYearDisasterAction() {
     },
     _requestedPackCount: overlayIds.length
   };
+}
+
+function buildExploreTenYearDisasterAction() {
+  return buildExploreDisasterRangeAction(10);
 }
 
 export function resolveOverlayIdForOrderResult(response, order = null) {
@@ -514,8 +535,17 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
     );
     if (presetAction) return presetAction;
   }
-  if (normalizedPresetId === 'explore:disasters_2020_2025') {
+  if (
+    normalizedPresetId === 'explore:disasters_2020_2025'
+    || normalizedPresetId === 'explore:disasters_10_years'
+  ) {
     return buildExploreTenYearDisasterAction();
+  }
+  if (
+    normalizedPresetId === 'explore:disasters_5_years'
+    || normalizedPresetId === 'explore:disasters_2022_2026'
+  ) {
+    return buildExploreDisasterRangeAction(5);
   }
 
   const exactEventAction = buildExactEventLoadAction({
@@ -549,6 +579,13 @@ export function resolveDefaultLoadAction({ lane = 'explore', overlayId = '', pac
   if (normalizedLane === 'explore' && normalizedSourceId) {
     const sourceAction = buildSourceDefaultLoadAction(normalizedSourceId, normalizedPackId);
     if (sourceAction) return sourceAction;
+    // Some published packs use the same id for the pack and its primary
+    // source. If the anonymous catalog has no source row/default for a
+    // ?source= link, still allow the authored pack default to satisfy the
+    // deep link. This keeps /explore?source=world_factbook equivalent to the
+    // working /explore?pack=world_factbook starter view.
+    const sourceAsPackAction = buildPackDefaultLoadAction(normalizedSourceId);
+    if (sourceAsPackAction) return sourceAsPackAction;
     const order = buildSourceDefaultLoadOrder(normalizedSourceId);
     if (order) {
       return {

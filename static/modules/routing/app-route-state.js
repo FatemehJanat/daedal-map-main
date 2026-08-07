@@ -16,7 +16,7 @@ const LANES = ['explore', 'research', 'ops'];
 const DEFAULT_LANE = 'explore';
 import { resolveRouteViewPreset } from './view-presets.js';
 
-const ROUTE_INTENT_PARAMS = ['view', 'pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'msg', 'state', 'ov', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
+const ROUTE_INTENT_PARAMS = ['view', 'pack', 'packs', 'source', 'feed', 'event_id', 'storm_id', 'focus', 'q', 'msg', 'state', 'ov', 'overlay', 'overlays', 'bbox', 'c', 'z', 'br', 'pi', 'tm', 'tp', 't0', 't1', 'live', 'hw'];
 const SHARE_STATE_VERSION = 1;
 
 const LANE_TITLES = {
@@ -403,7 +403,12 @@ function encodeSimpleShareStateQuery(shareState) {
 function decodeSimpleShareState(params, lane) {
   const normalizedLane = normalizeLane(lane);
   if (!normalizedLane) return null;
-  const overlays = String(params.get('ov') || '')
+  const overlayValue = [
+    ...params.getAll('ov'),
+    ...params.getAll('overlay'),
+    ...params.getAll('overlays')
+  ].join(',');
+  const overlays = String(overlayValue || '')
     .split(',')
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -501,6 +506,18 @@ export function parseRouteIntent(loc = window.location) {
     }
     return values;
   };
+  const pickListFromKeys = (...keys) => {
+    const values = [];
+    const seen = new Set();
+    for (const key of keys) {
+      for (const value of pickList(key)) {
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        values.push(value);
+      }
+    }
+    return values;
+  };
   const genericEventId = pick('event_id');
   const stormId = pick('storm_id');
   const normalizedExactId = genericEventId || stormId || null;
@@ -508,8 +525,9 @@ export function parseRouteIntent(loc = window.location) {
   const shareStateFromQuery = decodeSimpleShareState(params, lane || DEFAULT_LANE);
   const viewId = pick('view');
   const viewPreset = resolveRouteViewPreset(lane || DEFAULT_LANE, viewId);
-  const explicitPackId = pick('pack');
-  const explicitPackIds = pickList('packs');
+  const explicitPackValues = pickListFromKeys('pack', 'packs');
+  const explicitPackId = explicitPackValues.length === 1 ? explicitPackValues[0] : null;
+  const explicitPackIds = explicitPackValues.length > 1 ? explicitPackValues : pickList('packs');
   const explicitSourceId = pick('source');
   const explicitFeedIds = pickList('feed');
   const explicitFeedId = explicitFeedIds[0] || null;
