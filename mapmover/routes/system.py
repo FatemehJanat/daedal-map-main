@@ -109,7 +109,7 @@ def _start_runtime_prewarm_threads() -> list[str]:
     try:
         from mapmover.duckdb_helpers import is_cloud_mode
         if is_cloud_mode():
-            task_names.extend(["disasters", "geometry"])
+            task_names.extend(["disasters", "catalog_default_loads", "geometry"])
     except Exception:
         pass
     begin_prewarm(task_names)
@@ -120,6 +120,7 @@ def _start_runtime_prewarm_threads() -> list[str]:
         logger.warning("Runtime refresh: public pack catalog prewarm failed: %s", exc)
 
     try:
+        from mapmover.default_load_prewarm import prewarm_catalog_default_loads
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
@@ -132,6 +133,14 @@ def _start_runtime_prewarm_threads() -> list[str]:
                 name="prewarm-disasters-refresh",
             ).start()
             started.append("disasters")
+
+            threading.Thread(
+                target=run_prewarm_task,
+                args=("catalog_default_loads", prewarm_catalog_default_loads),
+                daemon=True,
+                name="prewarm-catalog-default-loads-refresh",
+            ).start()
+            started.append("catalog_default_loads")
 
             threading.Thread(
                 target=run_prewarm_task,
@@ -2460,6 +2469,7 @@ async def get_catalog_overlays(req: Request):
     # default for ?pack= loads. Keyed by pack_id; only packs that authored one.
     pack_defaults = {
         str(pack.get("pack_id")): {
+            "pack_id": pack.get("pack_id"),
             "default_load": pack.get("default_load"),
             "default_question": pack.get("default_question"),
             "default_response": pack.get("default_response"),
@@ -2468,17 +2478,20 @@ async def get_catalog_overlays(req: Request):
         if pack.get("pack_id") and pack.get("default_load")
     }
 
-    # Source-level defaults keyed by source_id, for ?source= deep-links. The
-    # overlay tree only carries defaults for sources that have an overlay; this
-    # map covers all sources with a default (e.g. metrics aggregates with no
-    # overlay slot), so the override is reachable regardless of overlay.
+    # Source-level defaults keyed by source_id, for ?source= deep-links. This
+    # is a public deep-link contract from the selected catalog surface, not the
+    # tray visibility list. Build it from the catalog authoring so anonymous
+    # source defaults still resolve even when their overlay rows are filtered
+    # out of the visible tree.
     source_defaults = {
         str(src.get("source_id")): {
+            "source_id": src.get("source_id"),
+            "pack_id": src.get("pack_id"),
             "default_load": src.get("default_load"),
             "default_question": src.get("default_question"),
             "default_response": src.get("default_response"),
         }
-        for src in filtered_sources
+        for src in all_sources
         if src.get("source_id") and src.get("default_load")
     }
 
