@@ -248,6 +248,38 @@ async def resolve_points_json_endpoint(req: Request):
 
     limit = _point_lookup_batch_limit()
     if len(points) > limit:
+        source = str(body.get("source") or "").strip()[:80] or "unknown"
+        batch_id = str(body.get("batch_id") or "").strip()[:120] or None
+        metadata = {
+            "surface": "test_data" if source == "try_dataset" else source,
+            "event": "point_lookup_batch",
+            "batch_id": batch_id,
+            "point_count": len(points),
+            "resolved_count": 0,
+            "unresolved_count": len(points),
+            "limit": limit,
+            "reject_reason": "too_many_points",
+        }
+        try:
+            log_api_query_event(
+                request_id=batch_id or f"point-batch-deny-{int(time.time() * 1000)}",
+                capability_id="point_lookup_batch",
+                pack_id="geography_tools",
+                source_id="resolve_points",
+                decision="deny",
+                payment_rail="free_preview",
+                auth_user_id=None,
+                ip_hash=hash_ip_for_analytics(get_client_ip(req)),
+                user_agent=req.headers.get("user-agent", "").strip() or None,
+                execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
+                row_count=len(points),
+                status_code=413,
+                error_code="too_many_points",
+                query_granularity=f"bulk_{len(points)}",
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.warning(f"Point lookup batch deny analytics failed: {exc}")
         return JSONResponse({"error": f"points must contain at most {limit} items", "limit": limit}, status_code=413)
 
     include_geometry = bool(body.get("include_geometry", False))

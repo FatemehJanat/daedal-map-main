@@ -46,6 +46,12 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("get_geometry", tool_names)
         self.assertIn("resolve_point", tool_names)
         self.assertIn("loc_id_info", tool_names)
+        self.assertIn("resolve_loc_id_scope", tool_names)
+        self.assertIn("estimate_geometry_package", tool_names)
+        self.assertIn("create_geometry_export", tool_names)
+        self.assertIn("estimate_conversion_job", tool_names)
+        self.assertIn("create_conversion_job", tool_names)
+        self.assertIn("get_job_status", tool_names)
         self.assertNotIn("check_geometries", tool_names)
         self.assertNotIn("resolve_points", tool_names)
         self.assertNotIn("loc_id_references", tool_names)
@@ -71,6 +77,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("get_geometry", tool_names)
         self.assertNotIn("get_boundary", tool_names)
         self.assertNotIn("resolve_points", tool_names)
+        self.assertIn("resolve_loc_id_scope", tool_names)
+        self.assertIn("estimate_geometry_package", tool_names)
+        self.assertIn("create_geometry_export", tool_names)
+        self.assertIn("get_job_status", tool_names)
 
     def test_resolve_point_tool_accepts_point_batch(self) -> None:
         def fake_resolve(lon, lat, include_geometry=False):
@@ -321,6 +331,28 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("resolve_reference", starter_tools)
         self.assertIn("convert_reference", starter_tools)
 
+    def test_list_reference_systems_logs_runtime_analytics(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.list_reference_systems",
+                return_value={
+                    "ok": True,
+                    "systems": [{"system": "daedalmap.loc_id"}, {"system": "overlay_zcta"}],
+                    "bridges": [],
+                },
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(self.client, "list_reference_systems")
+
+        self.assertTrue(payload["ok"])
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["source_id"], "list_reference_systems")
+        self.assertEqual(analytics["capability_id"], "reference_system_discovery")
+        self.assertEqual(analytics["row_count"], 2)
+        self.assertEqual(analytics["metadata"]["event"], "reference_system_discovery")
+        self.assertEqual(analytics["metadata"]["system_count"], 2)
+
     def test_resolve_reference_tool_resolves_zip_to_loc_id(self) -> None:
         payload = _tool_call(
             self.client,
@@ -337,6 +369,40 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["normalized_input"], "USA-Z-00601")
         self.assertEqual(payload["resolved_loc_id"], "USA-PR-001")
         self.assertEqual(payload["match_type"], "bridge_overlap")
+
+    def test_resolve_reference_tool_accepts_item_batch(self) -> None:
+        payload = _tool_call(
+            self.client,
+            "resolve_reference",
+            {
+                "batch_id": "refs-1",
+                "from_system": "zip",
+                "target_admin_level": "admin_2",
+                "items": [
+                    {"row_index": 1, "value": "00601"},
+                    {"row_index": 2, "value": "not-a-real-zcta"},
+                ],
+            },
+        )
+
+        self.assertEqual(payload["batch_id"], "refs-1")
+        self.assertEqual(payload["item_count"], 2)
+        self.assertEqual(payload["results"][0]["row_index"], 1)
+        self.assertTrue(payload["results"][0]["ok"])
+        self.assertEqual(payload["results"][0]["resolved_loc_id"], "USA-PR-001")
+        self.assertEqual(payload["resolved_count"], 1)
+        self.assertEqual(payload["unresolved_count"], 1)
+
+    def test_resolve_reference_tool_uses_per_tool_batch_limit_override(self) -> None:
+        with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_REFERENCE": "1"}):
+            payload = _tool_call(
+                self.client,
+                "resolve_reference",
+                {"from_system": "zip", "items": [{"value": "00601"}, {"value": "00602"}]},
+            )
+
+        self.assertEqual(payload["limit"], 1)
+        self.assertEqual(payload["error"]["code"], "too_many_items")
 
     def test_convert_reference_tool_composes_through_loc_id(self) -> None:
         payload = _tool_call(
@@ -355,6 +421,132 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["loc_id"], "USA-PR-001")
         self.assertTrue(payload["results"])
         self.assertEqual(payload["results"][0]["system"], "overlay_nws_fire_weather_zone")
+
+    def test_convert_reference_tool_accepts_item_batch(self) -> None:
+        payload = _tool_call(
+            self.client,
+            "convert_reference",
+            {
+                "batch_id": "conversions-1",
+                "from_system": "zip",
+                "to_system": "nws_fire",
+                "target_admin_level": "admin_2",
+                "items": [
+                    {"row_index": "a", "value": "00601"},
+                    {"row_index": "b", "value": ""},
+                ],
+            },
+        )
+
+        self.assertEqual(payload["batch_id"], "conversions-1")
+        self.assertEqual(payload["item_count"], 2)
+        self.assertEqual(payload["results"][0]["row_index"], "a")
+        self.assertTrue(payload["results"][0]["ok"])
+        self.assertEqual(payload["results"][0]["loc_id"], "USA-PR-001")
+        self.assertEqual(payload["converted_count"], 1)
+        self.assertEqual(payload["unconverted_count"], 1)
+
+    def test_resolve_loc_id_scope_uses_geometry_index(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.geometry_tool_jobs.get_geometry_index",
+                return_value={
+                    "rows": [
+                        {
+                            "loc_id": "USA-CA-037",
+                            "parent_id": "USA-CA",
+                            "admin_level": 2,
+                            "name": "Los Angeles County",
+                            "bbox_min_lon": -119,
+                            "bbox_min_lat": 33,
+                            "bbox_max_lon": -117,
+                            "bbox_max_lat": 35,
+                            "centroid_lon": -118.25,
+                            "centroid_lat": 34.05,
+                        },
+                        {"loc_id": "USA-CA-075", "parent_id": "USA-CA", "admin_level": 2, "name": "San Francisco County"},
+                    ],
+                    "count": 2,
+                },
+            ) as index_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_loc_id_scope",
+                {"parent_loc_id": "USA-CA", "admin_level": "admin_2", "limit": 1},
+            )
+
+        index_mock.assert_called_once()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["total_count"], 2)
+        self.assertEqual(payload["returned_count"], 1)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["loc_ids"], ["USA-CA-037"])
+
+    def test_estimate_geometry_package_uses_availability_preflight(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.geometry_tool_jobs.get_geometry_availability",
+                return_value={"ok": True, "requested": 2, "available": 1, "missing": 1, "items": []},
+            ) as availability_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "estimate_geometry_package",
+                {"loc_ids": ["USA-CA-037", "USA-NOPE"], "format": "geojson_gzip", "include_polygon": True},
+            )
+
+        availability_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["loc_id_count"], 2)
+        self.assertEqual(payload["available_shape_count"], 1)
+        self.assertEqual(payload["missing_shape_count"], 1)
+        self.assertEqual(payload["create_call"]["tool"], "create_geometry_export")
+        self.assertEqual(analytics_mock.call_args.kwargs["capability_id"], "geometry_package_estimate")
+
+    def test_create_geometry_export_inline_then_status(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.geometry_tool_jobs.get_geometry_references",
+                return_value={"ok": True, "requested": 1, "available": 1, "missing": 0, "results": [{"loc_id": "USA-CA-037", "has_shape": True}]},
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_geometry_export",
+                {"loc_ids": ["USA-CA-037"], "include_polygon": False},
+            )
+            status = _tool_call(self.client, "get_job_status", {"job_id": created["job_id"]})
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["status"], "completed")
+        self.assertEqual(created["result"]["delivery_mode"], "inline")
+        self.assertEqual(status["job_id"], created["job_id"])
+        self.assertEqual(status["status"], "completed")
+
+    def test_conversion_estimate_and_inline_create(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            estimate = _tool_call(
+                self.client,
+                "estimate_conversion_job",
+                {"from_system": "zip", "target_admin_level": "admin_2", "items": [{"value": "00601"}, {"value": "not-real"}]},
+            )
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {"from_system": "zip", "target_admin_level": "admin_2", "items": [{"row_index": 1, "value": "00601"}]},
+            )
+
+        self.assertTrue(estimate["ok"])
+        self.assertEqual(estimate["row_count"], 2)
+        self.assertEqual(estimate["create_call"]["tool"], "create_conversion_job")
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["status"], "completed")
+        self.assertEqual(created["result"]["row_count"], 1)
+        self.assertEqual(created["result"]["converted_count"], 1)
 
 
 if __name__ == "__main__":

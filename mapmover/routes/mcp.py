@@ -1315,58 +1315,152 @@ def _parse_children_by_level(value: Any) -> Any:
     return value
 
 
-async def _execute_loc_id_info_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "loc_id_info")
     request_id = str(payload.get("request_id") or "")
     batch_id = str(payload.get("batch_id") or "").strip() or None
     if "loc_ids" in payload:
         raw_loc_ids = payload.get("loc_ids")
         if not isinstance(raw_loc_ids, list):
+            error_payload = {"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_loc_ids", "message": "loc_ids must be a list"}}
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="loc_id_info",
+                capability_id="loc_id_metadata",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_loc_ids",
+                metadata={"event": "loc_id_metadata", "tool_mode": "bulk", "quantity": 0, "loc_id_count": 0, "batch_id": batch_id},
+            )
             return _jsonrpc_response(
-                _tool_result({"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_loc_ids", "message": "loc_ids must be a list"}}, is_error=True),
+                _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
         loc_ids = [str(value or "").strip() for value in raw_loc_ids if str(value or "").strip()]
         limit = _tool_batch_item_limit("loc_id_info", default=100, fallback_env_names=("LOC_ID_INFO_BATCH_LIMIT",))
         if len(loc_ids) > limit:
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_loc_ids",
+                message=f"loc_id_info accepts at most {limit} loc_ids per call",
+                limit=limit,
+                loc_id_count=len(loc_ids),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="loc_id_info",
+                capability_id="loc_id_metadata",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(loc_ids),
+                query_granularity=f"bulk_{len(loc_ids)}",
+                response_payload=error_payload,
+                error_code="too_many_loc_ids",
+                metadata={"event": "loc_id_metadata", "tool_mode": "bulk", "quantity": len(loc_ids), "loc_id_count": len(loc_ids), "batch_id": batch_id, "batch_limit": limit},
+            )
             return _jsonrpc_response(
-                _tool_result(
-                    _batch_error_payload(
-                        request_id=request_id,
-                        batch_id=batch_id,
-                        code="too_many_loc_ids",
-                        message=f"loc_id_info accepts at most {limit} loc_ids per call",
-                        limit=limit,
-                        loc_id_count=len(loc_ids),
-                    ),
-                    is_error=True,
-                ),
+                _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
         results = [_loc_id_info_item(loc_id, payload) for loc_id in loc_ids]
+        result_payload = {
+            "request_id": request_id,
+            "batch_id": batch_id,
+            "limit": limit,
+            "loc_id_count": len(loc_ids),
+            "results": results,
+            "found_count": sum(1 for item in results if not item.get("error")),
+            "missing_count": sum(1 for item in results if item.get("error")),
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="loc_id_info",
+            capability_id="loc_id_metadata",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(loc_ids),
+            query_granularity=f"bulk_{len(loc_ids)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "loc_id_metadata",
+                "tool_mode": "bulk",
+                "quantity": len(loc_ids),
+                "loc_id_count": len(loc_ids),
+                "batch_id": batch_id,
+                "found_count": result_payload["found_count"],
+                "missing_count": result_payload["missing_count"],
+                "include_hierarchy": bool(payload.get("include_hierarchy")),
+                "include_references": bool(payload.get("include_references")),
+            },
+        )
         return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "batch_id": batch_id,
-                    "limit": limit,
-                    "loc_id_count": len(loc_ids),
-                    "results": results,
-                    "found_count": sum(1 for item in results if not item.get("error")),
-                    "missing_count": sum(1 for item in results if item.get("error")),
-                }
-            ),
+            _tool_result(result_payload),
             rpc_request_id,
         )
     loc_id = str(payload.get("loc_id") or "").strip()
     if not loc_id:
+        error_payload = {"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="loc_id_info",
+            capability_id="loc_id_metadata",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="invalid_loc_id",
+            metadata={"event": "loc_id_metadata", "tool_mode": "single", "quantity": 0, "loc_id_count": 0},
+        )
         return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "invalid_loc_id", "message": "loc_id is required"}}, is_error=True),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
     result = {"request_id": request_id, **_loc_id_info_item(loc_id, payload)}
     if result.get("error"):
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="loc_id_info",
+            capability_id="loc_id_metadata",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=result,
+            error_code=str((result.get("error") or {}).get("code") or "not_found"),
+            metadata={"event": "loc_id_metadata", "tool_mode": "single", "quantity": 1, "loc_id": loc_id, "loc_id_count": 1},
+        )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="loc_id_info",
+        capability_id="loc_id_metadata",
+        decision="allow",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result,
+        metadata={
+            "event": "loc_id_metadata",
+            "tool_mode": "single",
+            "quantity": 1,
+            "loc_id": loc_id,
+            "loc_id_count": 1,
+            "include_hierarchy": bool(payload.get("include_hierarchy")),
+            "include_references": bool(payload.get("include_references")),
+        },
+    )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
@@ -1430,7 +1524,8 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-async def _execute_list_reference_systems_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+async def _execute_list_reference_systems_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "list_reference_systems")
     request_id = str(payload.get("request_id") or "")
     try:
@@ -1438,33 +1533,178 @@ async def _execute_list_reference_systems_tool(arguments: dict[str, Any], rpc_re
 
         result = list_reference_systems()
     except Exception as exc:
+        error_payload = {"request_id": request_id, "error": {"code": "reference_systems_failed", "message": str(exc)}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="list_reference_systems",
+            capability_id="reference_system_discovery",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="reference_systems_failed",
+            metadata={"event": "reference_system_discovery", "tool_mode": "single", "quantity": 0},
+        )
         return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "reference_systems_failed", "message": str(exc)}}, is_error=True),
+            _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
-    return _jsonrpc_response(_tool_result({"request_id": request_id, **result}), rpc_request_id)
+    result_payload = {"request_id": request_id, **result}
+    system_count = len(result.get("systems") or []) if isinstance(result, dict) else 0
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="list_reference_systems",
+        capability_id="reference_system_discovery",
+        decision="allow",
+        started_at=started_at,
+        row_count=system_count,
+        query_granularity=f"bulk_{system_count}" if system_count > 1 else "single",
+        response_payload=result_payload,
+        metadata={"event": "reference_system_discovery", "tool_mode": "discovery", "quantity": system_count, "system_count": system_count},
+    )
+    return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
-async def _execute_resolve_reference_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+async def _execute_resolve_reference_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "resolve_reference")
     request_id = str(payload.get("request_id") or "")
+    if "items" in payload:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        items = payload.get("items")
+        if not isinstance(items, list):
+            error_payload = {"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_items", "message": "items must be a list"}}
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_reference",
+                capability_id="reference_resolution",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_items",
+                metadata={"event": "reference_resolution", "tool_mode": "bulk", "quantity": 0, "item_count": 0, "batch_id": batch_id},
+            )
+            return _jsonrpc_response(
+                _tool_result(error_payload, is_error=True),
+                rpc_request_id,
+            )
+        limit = _tool_batch_item_limit("resolve_reference", default=100, fallback_env_names=("REFERENCE_RESOLVE_BATCH_LIMIT",))
+        if len(items) > limit:
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_items",
+                message=f"resolve_reference accepts at most {limit} items per call",
+                limit=limit,
+                loc_id_count=len(items),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_reference",
+                capability_id="reference_resolution",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(items),
+                query_granularity=f"bulk_{len(items)}",
+                response_payload=error_payload,
+                error_code="too_many_items",
+                metadata={"event": "reference_resolution", "tool_mode": "bulk", "quantity": len(items), "item_count": len(items), "batch_id": batch_id, "batch_limit": limit},
+            )
+            return _jsonrpc_response(
+                _tool_result(error_payload, is_error=True),
+                rpc_request_id,
+            )
+        results = []
+        base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+                continue
+            row_payload = {**base_payload, **item}
+            result = _resolve_reference_item(row_payload)
+            if item.get("row_index") is not None:
+                result["row_index"] = item.get("row_index")
+            elif item.get("id") is not None:
+                result["id"] = item.get("id")
+            results.append(result)
+        result_payload = {
+            "request_id": request_id,
+            "batch_id": batch_id,
+            "limit": limit,
+            "item_count": len(items),
+            "resolved_count": sum(1 for result in results if result.get("ok")),
+            "unresolved_count": sum(1 for result in results if not result.get("ok")),
+            "results": results,
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="resolve_reference",
+            capability_id="reference_resolution",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(items),
+            query_granularity=f"bulk_{len(items)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "reference_resolution",
+                "tool_mode": "bulk",
+                "quantity": len(items),
+                "item_count": len(items),
+                "batch_id": batch_id,
+                "resolved_count": result_payload["resolved_count"],
+                "unresolved_count": result_payload["unresolved_count"],
+            },
+        )
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+    result = {"request_id": request_id, **_resolve_reference_item(payload)}
+    if not result.get("ok"):
+        result.setdefault("error", {"code": "not_found", "message": "no loc_id match found for the reference"})
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="resolve_reference",
+            capability_id="reference_resolution",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=result,
+            error_code=str((result.get("error") or {}).get("code") or "not_found"),
+            metadata={"event": "reference_resolution", "tool_mode": "single", "quantity": 1, "item_count": 1},
+        )
+        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="resolve_reference",
+        capability_id="reference_resolution",
+        decision="allow",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result,
+        metadata={"event": "reference_resolution", "tool_mode": "single", "quantity": 1, "item_count": 1},
+    )
+    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+def _resolve_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
     from_system = str(payload.get("from_system") or payload.get("system") or "").strip()
     value = str(payload.get("value") or "").strip()
     if not from_system or not value:
-        return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "error": {"code": "invalid_reference_request", "message": "from_system and value are required"},
-                },
-                is_error=True,
-            ),
-            rpc_request_id,
-        )
+        return {"ok": False, "error": {"code": "invalid_reference_request", "message": "from_system and value are required"}}
     try:
         from mapmover.runtime.reference_exchange import resolve_reference
 
-        result = resolve_reference(
+        return resolve_reference(
             from_system=from_system,
             value=value,
             iso3=str(payload.get("iso3") or "USA"),
@@ -1476,38 +1716,147 @@ async def _execute_resolve_reference_tool(arguments: dict[str, Any], rpc_request
             admin_level_hint=payload.get("admin_level_hint"),
         )
     except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "resolve_reference_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
+        return {"ok": False, "from_system": from_system, "input": value, "error": {"code": "resolve_reference_failed", "message": str(exc)}}
+
+
+async def _execute_convert_reference_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
+    payload = _ensure_request_id(arguments, "convert_reference")
+    request_id = str(payload.get("request_id") or "")
+    if "items" in payload:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        items = payload.get("items")
+        if not isinstance(items, list):
+            error_payload = {"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_items", "message": "items must be a list"}}
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="convert_reference",
+                capability_id="reference_conversion",
+                decision="deny",
+                started_at=started_at,
+                row_count=0,
+                query_granularity="bulk_0",
+                response_payload=error_payload,
+                error_code="invalid_items",
+                metadata={"event": "reference_conversion", "tool_mode": "bulk", "quantity": 0, "item_count": 0, "batch_id": batch_id},
+            )
+            return _jsonrpc_response(
+                _tool_result(error_payload, is_error=True),
+                rpc_request_id,
+            )
+        limit = _tool_batch_item_limit("convert_reference", default=100, fallback_env_names=("REFERENCE_CONVERT_BATCH_LIMIT",))
+        if len(items) > limit:
+            error_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_items",
+                message=f"convert_reference accepts at most {limit} items per call",
+                limit=limit,
+                loc_id_count=len(items),
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="convert_reference",
+                capability_id="reference_conversion",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(items),
+                query_granularity=f"bulk_{len(items)}",
+                response_payload=error_payload,
+                error_code="too_many_items",
+                metadata={"event": "reference_conversion", "tool_mode": "bulk", "quantity": len(items), "item_count": len(items), "batch_id": batch_id, "batch_limit": limit},
+            )
+            return _jsonrpc_response(
+                _tool_result(error_payload, is_error=True),
+                rpc_request_id,
+            )
+        results = []
+        base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+                continue
+            row_payload = {**base_payload, **item}
+            result = _convert_reference_item(row_payload)
+            if item.get("row_index") is not None:
+                result["row_index"] = item.get("row_index")
+            elif item.get("id") is not None:
+                result["id"] = item.get("id")
+            results.append(result)
+        result_payload = {
+            "request_id": request_id,
+            "batch_id": batch_id,
+            "limit": limit,
+            "item_count": len(items),
+            "converted_count": sum(1 for result in results if result.get("ok")),
+            "unconverted_count": sum(1 for result in results if not result.get("ok")),
+            "results": results,
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="convert_reference",
+            capability_id="reference_conversion",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(items),
+            query_granularity=f"bulk_{len(items)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "reference_conversion",
+                "tool_mode": "bulk",
+                "quantity": len(items),
+                "item_count": len(items),
+                "batch_id": batch_id,
+                "converted_count": result_payload["converted_count"],
+                "unconverted_count": result_payload["unconverted_count"],
+            },
         )
-    result = {"request_id": request_id, **result}
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+    result = {"request_id": request_id, **_convert_reference_item(payload)}
     if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "no loc_id match found for the reference"})
+        result.setdefault("error", {"code": "not_found", "message": "reference conversion did not produce a match"})
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="convert_reference",
+            capability_id="reference_conversion",
+            decision="deny",
+            started_at=started_at,
+            row_count=1,
+            query_granularity="single",
+            response_payload=result,
+            error_code=str((result.get("error") or {}).get("code") or "not_found"),
+            metadata={"event": "reference_conversion", "tool_mode": "single", "quantity": 1, "item_count": 1},
+        )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="convert_reference",
+        capability_id="reference_conversion",
+        decision="allow",
+        started_at=started_at,
+        row_count=1,
+        query_granularity="single",
+        response_payload=result,
+        metadata={"event": "reference_conversion", "tool_mode": "single", "quantity": 1, "item_count": 1},
+    )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
 
-async def _execute_convert_reference_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
-    payload = _ensure_request_id(arguments, "convert_reference")
-    request_id = str(payload.get("request_id") or "")
+def _convert_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
     from_system = str(payload.get("from_system") or "").strip()
     to_system = str(payload.get("to_system") or "").strip()
     value = str(payload.get("value") or "").strip()
     if not from_system or not to_system or not value:
-        return _jsonrpc_response(
-            _tool_result(
-                {
-                    "request_id": request_id,
-                    "error": {"code": "invalid_convert_request", "message": "from_system, value, and to_system are required"},
-                },
-                is_error=True,
-            ),
-            rpc_request_id,
-        )
+        return {"ok": False, "error": {"code": "invalid_convert_request", "message": "from_system, value, and to_system are required"}}
     try:
         from mapmover.runtime.reference_exchange import convert_reference
 
-        result = convert_reference(
+        return convert_reference(
             from_system=from_system,
             value=value,
             to_system=to_system,
@@ -1518,15 +1867,7 @@ async def _execute_convert_reference_tool(arguments: dict[str, Any], rpc_request
             limit=_normalize_bridge_limit(payload.get("limit")) or 10,
         )
     except Exception as exc:
-        return _jsonrpc_response(
-            _tool_result({"request_id": request_id, "error": {"code": "convert_reference_failed", "message": str(exc)}}, is_error=True),
-            rpc_request_id,
-        )
-    result = {"request_id": request_id, **result}
-    if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "reference conversion did not produce a match"})
-        return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
-    return _jsonrpc_response(_tool_result(result), rpc_request_id)
+        return {"ok": False, "from_system": from_system, "input": value, "to_system": to_system, "error": {"code": "convert_reference_failed", "message": str(exc)}}
 
 
 async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
@@ -1709,6 +2050,84 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
         },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
+
+
+def _result_row_count(tool_name: str, payload: dict[str, Any], result: dict[str, Any]) -> int:
+    if tool_name == "resolve_loc_id_scope":
+        return int(result.get("total_count") or result.get("returned_count") or 0)
+    if tool_name == "estimate_geometry_package":
+        return int(result.get("loc_id_count") or 0)
+    if tool_name == "create_geometry_export":
+        nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+        return int(nested.get("loc_id_count") or nested.get("requested") or len(payload.get("loc_ids") or []) or (1 if payload.get("loc_id") else 0))
+    if tool_name == "estimate_conversion_job":
+        return int(result.get("row_count") or len(payload.get("items") or []) or 0)
+    if tool_name == "create_conversion_job":
+        nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+        return int(nested.get("row_count") or len(payload.get("items") or []) or 0)
+    return 1
+
+
+async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any, tool_name: str) -> Response:
+    started_at = time.perf_counter()
+    payload = _ensure_request_id(arguments, tool_name)
+    request_id = str(payload.get("request_id") or "")
+    try:
+        from mapmover.runtime import geometry_tool_jobs
+
+        if tool_name == "resolve_loc_id_scope":
+            limit = _tool_batch_item_limit("resolve_loc_id_scope", default=100, fallback_env_names=("LOC_ID_SCOPE_LIMIT",))
+            result = geometry_tool_jobs.resolve_loc_id_scope(payload, default_limit=limit)
+            capability_id = "loc_id_scope"
+        elif tool_name == "estimate_geometry_package":
+            result = geometry_tool_jobs.estimate_geometry_package(payload)
+            capability_id = "geometry_package_estimate"
+        elif tool_name == "create_geometry_export":
+            inline_limit = _tool_batch_item_limit("create_geometry_export", default=10, fallback_env_names=("GEOMETRY_EXPORT_INLINE_LIMIT",))
+            result = geometry_tool_jobs.create_geometry_export(payload, inline_limit=inline_limit)
+            capability_id = "geometry_export"
+        elif tool_name == "estimate_conversion_job":
+            result = geometry_tool_jobs.estimate_conversion_job(payload)
+            capability_id = "conversion_job_estimate"
+        elif tool_name == "create_conversion_job":
+            inline_limit = _tool_batch_item_limit("create_conversion_job", default=100, fallback_env_names=("CONVERSION_JOB_INLINE_LIMIT",))
+            result = geometry_tool_jobs.create_conversion_job(payload, inline_limit=inline_limit)
+            capability_id = "conversion_job"
+        elif tool_name == "get_job_status":
+            result = geometry_tool_jobs.get_job_status(str(payload.get("job_id") or ""))
+            capability_id = "geometry_job_status"
+        else:
+            return _jsonrpc_error(rpc_request_id, -32601, f"Tool '{tool_name}' not found")
+    except Exception as exc:
+        result = {"ok": False, "request_id": request_id, "error": {"code": f"{tool_name}_failed", "message": str(exc)}}
+        capability_id = tool_name
+
+    result = {"request_id": request_id, **result}
+    ok = bool(result.get("ok")) and not result.get("error")
+    row_count = _result_row_count(tool_name, payload, result)
+    job_id = str(result.get("job_id") or "").strip() or None
+    status = str(result.get("status") or "").strip() or None
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id or job_id or "",
+        tool_name=tool_name,
+        capability_id=capability_id,
+        decision="allow" if ok else "deny",
+        started_at=started_at,
+        row_count=row_count,
+        query_granularity=f"bulk_{row_count}" if row_count > 1 else "single",
+        response_payload=result,
+        error_code=str((result.get("error") or {}).get("code") or "") or None,
+        metadata={
+            "event": capability_id,
+            "tool_mode": "bulk" if row_count > 1 else "single",
+            "quantity": row_count,
+            "job_id": job_id,
+            "job_status": status,
+            "quote_id": result.get("quote_id") or payload.get("quote_id"),
+        },
+    )
+    return _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
 
 
 async def _execute_check_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
@@ -2312,25 +2731,25 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_loc_id_info_tool(arguments, request_id)
+        return await _execute_loc_id_info_tool(request, arguments, request_id)
 
     if tool_name == "list_reference_systems":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_list_reference_systems_tool(arguments, request_id)
+        return await _execute_list_reference_systems_tool(request, arguments, request_id)
 
     if tool_name == "resolve_reference":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_resolve_reference_tool(arguments, request_id)
+        return await _execute_resolve_reference_tool(request, arguments, request_id)
 
     if tool_name == "convert_reference":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_convert_reference_tool(arguments, request_id)
+        return await _execute_convert_reference_tool(request, arguments, request_id)
 
     if tool_name == "check_geometry":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
@@ -2343,6 +2762,19 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_get_geometry_tool(request, arguments, request_id)
+
+    if tool_name in {
+        "resolve_loc_id_scope",
+        "estimate_geometry_package",
+        "create_geometry_export",
+        "estimate_conversion_job",
+        "create_conversion_job",
+        "get_job_status",
+    }:
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_geometry_job_runtime_tool(request, arguments, request_id, tool_name)
 
     if tool_name == "get_disaster_links_for_event":
         return await _execute_disaster_links_for_event_tool(arguments, request_id)

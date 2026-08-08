@@ -103,13 +103,21 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["row_index"], 10)
 
     def test_point_lookup_batch_endpoint_rejects_over_limit(self) -> None:
-        response = self.client.post(
-            "/api/v1/resolve/points",
-            json={"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
-        )
+        with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={"source": "try_dataset", "batch_id": "too-many", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+            )
 
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.json()["limit"], 25)
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "deny")
+        self.assertEqual(analytics["source_id"], "resolve_points")
+        self.assertEqual(analytics["capability_id"], "point_lookup_batch")
+        self.assertEqual(analytics["error_code"], "too_many_points")
+        self.assertEqual(analytics["row_count"], 26)
+        self.assertEqual(analytics["metadata"]["surface"], "test_data")
 
     def test_geometry_catalog_loads_from_object_store_in_cloud_mode(self) -> None:
         class FakeObjectStore:
