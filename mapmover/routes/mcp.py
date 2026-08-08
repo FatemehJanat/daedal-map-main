@@ -413,6 +413,30 @@ def _json_size_bytes(payload: Any) -> int | None:
         return None
 
 
+def _mcp_text_inline_limit_bytes() -> int:
+    return _parse_env_int_optional("MCP_TOOL_TEXT_INLINE_MAX_BYTES") or 750_000
+
+
+def _summarize_structured_tool_payload(payload: Any, payload_bytes: int) -> str:
+    if isinstance(payload, dict):
+        result_items = payload.get("results") or payload.get("items") or payload.get("rows")
+        count = len(result_items) if isinstance(result_items, list) else None
+        parts = ["Large structured MCP result returned in structuredContent."]
+        if payload.get("request_id"):
+            parts.append(f"request_id={payload.get('request_id')}")
+        if payload.get("ok") is not None:
+            parts.append(f"ok={payload.get('ok')}")
+        if count is not None:
+            parts.append(f"items={count}")
+        if payload.get("available") is not None:
+            parts.append(f"available={payload.get('available')}")
+        parts.append(f"structured_json_bytes={payload_bytes}")
+        return " ".join(parts)
+    if isinstance(payload, list):
+        return f"Large structured MCP result returned in structuredContent. items={len(payload)} structured_json_bytes={payload_bytes}"
+    return f"Large MCP result returned in structuredContent. structured_json_bytes={payload_bytes}"
+
+
 def _elapsed_ms(started_at: float) -> int:
     return int((time.perf_counter() - started_at) * 1000)
 
@@ -597,7 +621,14 @@ def _jsonrpc_error(request_id: Any, code: int, message: str, *, data: dict[str, 
 
 def _tool_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
     payload = _with_agent_safety(payload, surface="tool_result") if not is_error else payload
-    text = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, (dict, list)) else str(payload)
+    if isinstance(payload, (dict, list)):
+        payload_bytes = _json_size_bytes(payload) or 0
+        if payload_bytes > _mcp_text_inline_limit_bytes():
+            text = _summarize_structured_tool_payload(payload, payload_bytes)
+        else:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+    else:
+        text = str(payload)
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": text}],
         "structuredContent": payload if isinstance(payload, (dict, list)) else {"value": payload},

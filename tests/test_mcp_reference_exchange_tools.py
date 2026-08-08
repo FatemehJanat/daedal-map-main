@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from mapmover.runtime.reference_exchange import get_geometry_availability, get_geometry_references
-from mapmover.routes.mcp import _tool_rate_limit_for_tier, router as mcp_router
+from mapmover.routes.mcp import _tool_rate_limit_for_tier, _tool_result, router as mcp_router
 
 
 def _mcp_call(client: TestClient, method: str, params: dict | None = None, *, path: str = "/mcp/geography", headers: dict | None = None) -> dict:
@@ -62,6 +62,22 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertNotIn("loc_id_hierarchy", tool_names)
         self.assertNotIn("sidechain_to_admin", tool_names)
         self.assertNotIn("admin_to_sidechain", tool_names)
+
+    def test_large_structured_tool_result_summarizes_text_copy(self) -> None:
+        payload = {
+            "request_id": "large-shape-test",
+            "ok": True,
+            "results": [{"loc_id": "USA-AK-063", "geometry": "x" * 200}],
+        }
+
+        with mock.patch.dict("os.environ", {"MCP_TOOL_TEXT_INLINE_MAX_BYTES": "100"}):
+            result = _tool_result(payload)
+
+        self.assertEqual(result["structuredContent"]["request_id"], "large-shape-test")
+        text = result["content"][0]["text"]
+        self.assertIn("Large structured MCP result", text)
+        self.assertIn("structuredContent", text)
+        self.assertNotIn("x" * 200, text)
 
     def test_reverse_geocoding_facade_lists_multipurpose_point_tool(self) -> None:
         envelope = _mcp_call(self.client, "tools/list", path="/mcp/reverse-geocoding")
