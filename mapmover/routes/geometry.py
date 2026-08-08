@@ -46,9 +46,9 @@ def _point_lookup_batch_limit() -> int:
 
 def _point_lookup_paid_batch_limit() -> int:
     try:
-        return max(_point_lookup_batch_limit(), int(str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "1000")).strip() or "1000"))
+        return max(_point_lookup_batch_limit(), int(str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "10000")).strip() or "10000"))
     except ValueError:
-        return 1000
+        return 10000
 
 
 def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None, point_count: int, free_limit: int, paid_limit: int) -> dict:

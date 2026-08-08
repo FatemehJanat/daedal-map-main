@@ -235,11 +235,11 @@ def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
 def _point_lookup_paid_batch_limit(free_limit: int) -> int:
     import os
 
-    raw = str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "1000")).strip()
+    raw = str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "10000")).strip()
     try:
-        return max(free_limit, int(raw or "1000"))
+        return max(free_limit, int(raw or "10000"))
     except ValueError:
-        return max(free_limit, 1000)
+        return max(free_limit, 10000)
 
 
 def _point_lookup_quote_payload(
