@@ -230,6 +230,57 @@ def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
     return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=2))
 
 
+def _point_lookup_paid_batch_limit(free_limit: int) -> int:
+    import os
+
+    raw = str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "1000")).strip()
+    try:
+        return max(free_limit, int(raw or "1000"))
+    except ValueError:
+        return max(free_limit, 1000)
+
+
+def _point_lookup_quote_payload(
+    *,
+    request_id: str | None,
+    batch_id: str | None,
+    point_count: int,
+    free_limit: int,
+    paid_limit: int,
+) -> dict[str, Any]:
+    import os
+
+    def _money_env(name: str, default: str) -> float:
+        try:
+            return max(0.0, float(os.getenv(name, default) or default))
+        except ValueError:
+            return float(default)
+
+    base_usd = _money_env("POINT_LOOKUP_PAID_BASE_USD", "0.01")
+    per_point_usd = _money_env("POINT_LOOKUP_PAID_PER_POINT_USD", "0.0002")
+    max_usd = _money_env("POINT_LOOKUP_PAID_MAX_USD", "0.50")
+    extra_points = max(0, point_count - free_limit)
+    estimated_usd = min(max_usd, base_usd + extra_points * per_point_usd)
+    return {
+        "request_id": request_id,
+        "batch_id": batch_id,
+        "payment_required": True,
+        "quote": {
+            "capability_id": "point_lookup_batch",
+            "quantity": point_count,
+            "free_quantity": free_limit,
+            "billable_quantity": extra_points,
+            "estimated_price_usd": round(estimated_usd, 6),
+            "price_display": f"${estimated_usd:.4f}",
+            "payment_rails": ["account_credit", "x402"],
+            "status": "quote_only",
+        },
+        "limits": {"free_batch_limit": free_limit, "paid_batch_limit": paid_limit},
+        "retry_hint": "Fund account credits or satisfy the x402 payment challenge, then retry the same request.",
+        "error": {"code": "payment_required", "message": f"{point_count} points exceeds the free preview limit of {free_limit}."},
+    }
+
+
 def _tool_env_suffix(tool_name: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in str(tool_name or "").upper()).strip("_")
 
@@ -1115,7 +1166,8 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         limit = _tool_batch_item_limit("resolve_point", default=25, fallback_env_names=("POINT_LOOKUP_BATCH_LIMIT",))
-        if len(points) > limit:
+        paid_limit = _point_lookup_paid_batch_limit(limit)
+        if len(points) > paid_limit:
             _stamp_mcp_tool_analytics(
                 request,
                 event="mcp_tool",
@@ -1125,13 +1177,14 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 error_code="too_many_points",
                 point_count=len(points),
                 batch_limit=limit,
+                paid_batch_limit=paid_limit,
             )
             error_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
                 code="too_many_points",
-                message=f"points must contain at most {limit} items",
-                limit=limit,
+                message=f"points must contain at most {paid_limit} items",
+                limit=paid_limit,
                 point_count=len(points),
             )
             _log_mcp_tool_usage_event(
@@ -1145,9 +1198,53 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 query_granularity=f"bulk_{len(points)}",
                 response_payload=error_payload,
                 error_code="too_many_points",
-                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit},
+                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit, "paid_batch_limit": paid_limit},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        if len(points) > limit:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="challenge",
+                error_code="payment_required",
+                point_count=len(points),
+                batch_limit=limit,
+                paid_batch_limit=paid_limit,
+            )
+            quote_payload = _point_lookup_quote_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                point_count=len(points),
+                free_limit=limit,
+                paid_limit=paid_limit,
+            )
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                decision="challenge",
+                started_at=started_at,
+                row_count=len(points),
+                query_granularity=f"bulk_{len(points)}",
+                response_payload=quote_payload,
+                error_code="payment_required",
+                payment_rail="commercial_access",
+                metadata={
+                    "event": "point_lookup",
+                    "tool_mode": "bulk",
+                    "quantity": len(points),
+                    "batch_id": batch_id,
+                    "point_count": len(points),
+                    "batch_limit": limit,
+                    "paid_batch_limit": paid_limit,
+                    "quote": quote_payload.get("quote"),
+                    "challenge_reason": "over_free_limit",
+                },
+            )
+            return _jsonrpc_response(_tool_result(quote_payload, is_error=True), rpc_request_id)
 
         include_geometry = bool(payload.get("include_geometry", False))
         target_admin_level = _point_lookup_target_admin_level(payload)

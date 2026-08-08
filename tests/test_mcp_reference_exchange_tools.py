@@ -140,16 +140,21 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
         self.assertIn("point_resolver_ms", analytics["metadata"]["compute"]["stage_ms"])
 
-    def test_resolve_point_tool_rejects_point_batch_over_limit(self) -> None:
-        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+    def test_resolve_point_tool_challenges_point_batch_over_free_limit(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
             payload = _tool_call(
                 self.client,
                 "resolve_point",
                 {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
             )
 
-        self.assertEqual(payload["limit"], 25)
-        self.assertEqual(payload["error"]["code"], "too_many_points")
+        self.assertTrue(payload["payment_required"])
+        self.assertEqual(payload["limits"]["free_batch_limit"], 25)
+        self.assertEqual(payload["error"]["code"], "payment_required")
+        self.assertEqual(payload["quote"]["payment_rails"], ["account_credit", "x402"])
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "challenge")
+        self.assertEqual(analytics["payment_rail"], "commercial_access")
 
     def test_resolve_point_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):
@@ -160,8 +165,8 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                     {"points": [{"lon": 0, "lat": 0} for _ in range(3)]},
                 )
 
-        self.assertEqual(payload["limit"], 2)
-        self.assertEqual(payload["error"]["code"], "too_many_points")
+        self.assertEqual(payload["limits"]["free_batch_limit"], 2)
+        self.assertEqual(payload["error"]["code"], "payment_required")
 
     def test_check_geometry_tool_accepts_loc_id_batch(self) -> None:
         with (

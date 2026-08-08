@@ -132,7 +132,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Free geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; responses say when deeper admin_3+ levels exist so callers can ask intentionally. Use lat/lon for one point or points for table-style batches; do not call this repeatedly for bulk. No payment required.",
+            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -152,7 +152,7 @@ def build_tool_definitions() -> list[dict]:
                             "required": ["lat", "lon"],
                             "additionalProperties": False,
                         },
-                        "description": "Points to resolve. Hosted default maximum is 25 points per call.",
+                        "description": "Points to resolve. Hosted default free preview is 25 points; larger valid batches return a payment-required quote instead of executing for free.",
                     },
                     "target_admin_level": {
                         "anyOf": [{"type": "string"}, {"type": "integer"}],

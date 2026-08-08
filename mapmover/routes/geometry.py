@@ -42,6 +42,39 @@ def _point_lookup_batch_limit() -> int:
         return 25
 
 
+def _point_lookup_paid_batch_limit() -> int:
+    try:
+        return max(_point_lookup_batch_limit(), int(str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "1000")).strip() or "1000"))
+    except ValueError:
+        return 1000
+
+
+def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None, point_count: int, free_limit: int, paid_limit: int) -> dict:
+    base_usd = float(os.getenv("POINT_LOOKUP_PAID_BASE_USD", "0.01") or "0.01")
+    per_point_usd = float(os.getenv("POINT_LOOKUP_PAID_PER_POINT_USD", "0.0002") or "0.0002")
+    max_usd = float(os.getenv("POINT_LOOKUP_PAID_MAX_USD", "0.50") or "0.50")
+    extra_points = max(0, point_count - free_limit)
+    estimated_usd = min(max_usd, base_usd + extra_points * per_point_usd)
+    return {
+        "request_id": request_id,
+        "batch_id": batch_id,
+        "payment_required": True,
+        "quote": {
+            "capability_id": "point_lookup_batch",
+            "quantity": point_count,
+            "free_quantity": free_limit,
+            "billable_quantity": extra_points,
+            "estimated_price_usd": round(estimated_usd, 6),
+            "price_display": f"${estimated_usd:.4f}",
+            "payment_rails": ["account_credit", "x402"],
+            "status": "quote_only",
+        },
+        "limits": {"free_batch_limit": free_limit, "paid_batch_limit": paid_limit},
+        "retry_hint": "Fund account credits or satisfy the x402 payment challenge, then retry the same request.",
+        "error": {"code": "payment_required", "message": f"{point_count} points exceeds the free preview limit of {free_limit}."},
+    }
+
+
 def _point_lookup_target_admin_level(value=None) -> int | None:
     default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "2"))
     raw = str(value if value is not None else default).strip().lower()
@@ -264,9 +297,27 @@ async def resolve_points_json_endpoint(req: Request):
         return JSONResponse({"error": "points must be a list"}, status_code=400)
 
     limit = _point_lookup_batch_limit()
+    paid_limit = _point_lookup_paid_batch_limit()
+    if len(points) > paid_limit:
+        return JSONResponse(
+            {
+                "error": f"points must contain at most {paid_limit} items",
+                "free_limit": limit,
+                "paid_limit": paid_limit,
+                "retry_hint": "Split this request into smaller paid batches or use an async conversion/export job.",
+            },
+            status_code=413,
+        )
     if len(points) > limit:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
         batch_id = str(body.get("batch_id") or "").strip()[:120] or None
+        quote_payload = _point_lookup_quote_payload(
+            request_id=str(body.get("request_id") or batch_id or ""),
+            batch_id=batch_id,
+            point_count=len(points),
+            free_limit=limit,
+            paid_limit=paid_limit,
+        )
         metadata = {
             "surface": "test_data" if source == "try_dataset" else source,
             "event": "point_lookup_batch",
@@ -275,29 +326,31 @@ async def resolve_points_json_endpoint(req: Request):
             "resolved_count": 0,
             "unresolved_count": len(points),
             "limit": limit,
-            "reject_reason": "too_many_points",
+            "paid_batch_limit": paid_limit,
+            "quote": quote_payload.get("quote"),
+            "challenge_reason": "over_free_limit",
         }
         try:
             log_api_query_event(
-                request_id=batch_id or f"point-batch-deny-{int(time.time() * 1000)}",
+                request_id=batch_id or str(body.get("request_id") or "") or f"point-batch-challenge-{int(time.time() * 1000)}",
                 capability_id="point_lookup_batch",
                 pack_id="geography_tools",
                 source_id="resolve_points",
-                decision="deny",
-                payment_rail="free_preview",
+                decision="challenge",
+                payment_rail="commercial_access",
                 auth_user_id=None,
                 ip_hash=hash_ip_for_analytics(get_client_ip(req)),
                 user_agent=req.headers.get("user-agent", "").strip() or None,
                 execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
                 row_count=len(points),
-                status_code=413,
-                error_code="too_many_points",
+                status_code=402,
+                error_code="payment_required",
                 query_granularity=f"bulk_{len(points)}",
                 metadata=metadata,
             )
         except Exception as exc:
-            logger.warning(f"Point lookup batch deny analytics failed: {exc}")
-        return JSONResponse({"error": f"points must contain at most {limit} items", "limit": limit}, status_code=413)
+            logger.warning(f"Point lookup batch challenge analytics failed: {exc}")
+        return JSONResponse(quote_payload, status_code=402)
 
     include_geometry = bool(body.get("include_geometry", False))
     target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))

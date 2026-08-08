@@ -106,20 +106,23 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["row_index"], 10)
         bulk_mock.assert_called_once()
 
-    def test_point_lookup_batch_endpoint_rejects_over_limit(self) -> None:
+    def test_point_lookup_batch_endpoint_challenges_over_free_limit(self) -> None:
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
             response = self.client.post(
                 "/api/v1/resolve/points",
                 json={"source": "try_dataset", "batch_id": "too-many", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
             )
 
-        self.assertEqual(response.status_code, 413)
-        self.assertEqual(response.json()["limit"], 25)
+        self.assertEqual(response.status_code, 402)
+        body = response.json()
+        self.assertTrue(body["payment_required"])
+        self.assertEqual(body["limits"]["free_batch_limit"], 25)
+        self.assertEqual(body["quote"]["payment_rails"], ["account_credit", "x402"])
         analytics = analytics_mock.call_args.kwargs
-        self.assertEqual(analytics["decision"], "deny")
+        self.assertEqual(analytics["decision"], "challenge")
         self.assertEqual(analytics["source_id"], "resolve_points")
         self.assertEqual(analytics["capability_id"], "point_lookup_batch")
-        self.assertEqual(analytics["error_code"], "too_many_points")
+        self.assertEqual(analytics["error_code"], "payment_required")
         self.assertEqual(analytics["row_count"], 26)
         self.assertEqual(analytics["metadata"]["surface"], "test_data")
 
