@@ -333,6 +333,38 @@ def _json_size_bytes(payload: Any) -> int | None:
         return None
 
 
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _compute_metadata(
+    *,
+    response_payload: Any | None = None,
+    stages: dict[str, int] | None = None,
+    input_count: int | None = None,
+    output_count: int | None = None,
+    include_polygon: bool | None = None,
+    delivery_mode: str | None = None,
+    estimated_transfer_bytes: int | None = None,
+    output_format: str | None = None,
+    batch_limit: int | None = None,
+    cache_hit: bool | None = None,
+) -> dict[str, Any]:
+    compute: dict[str, Any] = {
+        "stage_ms": {key: value for key, value in (stages or {}).items() if value is not None},
+        "input_count": input_count,
+        "output_count": output_count,
+        "include_polygon": include_polygon,
+        "delivery_mode": delivery_mode,
+        "estimated_transfer_bytes": estimated_transfer_bytes,
+        "output_format": output_format,
+        "batch_limit": batch_limit,
+        "cache_hit": cache_hit,
+        "response_size_bytes_estimate": _json_size_bytes(response_payload),
+    }
+    return {"compute": {key: value for key, value in compute.items() if value not in (None, {})}}
+
+
 def _log_mcp_tool_usage_event(
     request: Request,
     *,
@@ -1127,6 +1159,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
 
+        runtime_started = time.perf_counter()
         for index, point in enumerate(points):
             if not isinstance(point, dict):
                 unresolved_count += 1
@@ -1170,6 +1203,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             if caller_point_id is not None:
                 item["id"] = caller_point_id
             results.append(item)
+        stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
 
         _stamp_mcp_tool_analytics(
             request,
@@ -1210,6 +1244,14 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "resolved_count": resolved_count,
                 "unresolved_count": unresolved_count,
                 "batch_limit": limit,
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(points),
+                    output_count=resolved_count,
+                    include_polygon=include_geometry,
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
@@ -1261,7 +1303,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
     try:
         from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
+        runtime_started = time.perf_counter()
         raw = resolve_point_to_loc_id_stack(lon, lat)
+        stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:  # surface a clean tool error, never a 500
         error_payload = {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}}
         _log_mcp_tool_usage_event(
@@ -1301,6 +1345,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "point_count": 1,
             "resolved_count": 1 if resolved else 0,
             "unresolved_count": 0 if resolved else 1,
+            **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1 if resolved else 0),
         },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
@@ -1405,7 +1450,9 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
+        runtime_started = time.perf_counter()
         results = [_loc_id_info_item(loc_id, payload) for loc_id in loc_ids]
+        stages = {"metadata_fetch_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
             "batch_id": batch_id,
@@ -1435,6 +1482,13 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
                 "missing_count": result_payload["missing_count"],
                 "include_hierarchy": bool(payload.get("include_hierarchy")),
                 "include_references": bool(payload.get("include_references")),
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(loc_ids),
+                    output_count=result_payload["found_count"],
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(
@@ -1461,7 +1515,9 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
             _tool_result(error_payload, is_error=True),
             rpc_request_id,
         )
+    runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_loc_id_info_item(loc_id, payload)}
+    stages = {"metadata_fetch_ms": _elapsed_ms(runtime_started)}
     if result.get("error"):
         _log_mcp_tool_usage_event(
             request,
@@ -1474,7 +1530,14 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
             query_granularity="single",
             response_payload=result,
             error_code=str((result.get("error") or {}).get("code") or "not_found"),
-            metadata={"event": "loc_id_metadata", "tool_mode": "single", "quantity": 1, "loc_id": loc_id, "loc_id_count": 1},
+            metadata={
+                "event": "loc_id_metadata",
+                "tool_mode": "single",
+                "quantity": 1,
+                "loc_id": loc_id,
+                "loc_id_count": 1,
+                **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=0),
+            },
         )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
     _log_mcp_tool_usage_event(
@@ -1495,6 +1558,7 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
             "loc_id_count": 1,
             "include_hierarchy": bool(payload.get("include_hierarchy")),
             "include_references": bool(payload.get("include_references")),
+            **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1),
         },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
@@ -1578,7 +1642,9 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
     try:
         from mapmover.runtime.reference_exchange import list_reference_systems
 
+        runtime_started = time.perf_counter()
         result = list_reference_systems()
+        stages = {"catalog_lookup_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "reference_systems_failed", "message": str(exc)}}
         _log_mcp_tool_usage_event(
@@ -1610,7 +1676,13 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
         row_count=system_count,
         query_granularity=f"bulk_{system_count}" if system_count > 1 else "single",
         response_payload=result_payload,
-        metadata={"event": "reference_system_discovery", "tool_mode": "discovery", "quantity": system_count, "system_count": system_count},
+        metadata={
+            "event": "reference_system_discovery",
+            "tool_mode": "discovery",
+            "quantity": system_count,
+            "system_count": system_count,
+            **_compute_metadata(response_payload=result_payload, stages=stages, input_count=1, output_count=system_count),
+        },
     )
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
@@ -1668,6 +1740,7 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
+        runtime_started = time.perf_counter()
         results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
         for index, item in enumerate(items):
@@ -1681,6 +1754,7 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
             elif item.get("id") is not None:
                 result["id"] = item.get("id")
             results.append(result)
+        stages = {"bridge_lookup_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
             "batch_id": batch_id,
@@ -1708,10 +1782,19 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                 "batch_id": batch_id,
                 "resolved_count": result_payload["resolved_count"],
                 "unresolved_count": result_payload["unresolved_count"],
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(items),
+                    output_count=result_payload["resolved_count"],
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+    runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_resolve_reference_item(payload)}
+    stages = {"bridge_lookup_ms": _elapsed_ms(runtime_started)}
     if not result.get("ok"):
         result["error"] = _normalize_tool_error(
             result.get("error"),
@@ -1729,7 +1812,13 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
             query_granularity="single",
             response_payload=result,
             error_code=str((result.get("error") or {}).get("code") or "not_found"),
-            metadata={"event": "reference_resolution", "tool_mode": "single", "quantity": 1, "item_count": 1},
+            metadata={
+                "event": "reference_resolution",
+                "tool_mode": "single",
+                "quantity": 1,
+                "item_count": 1,
+                **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=0),
+            },
         )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
     _log_mcp_tool_usage_event(
@@ -1742,7 +1831,13 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
         row_count=1,
         query_granularity="single",
         response_payload=result,
-        metadata={"event": "reference_resolution", "tool_mode": "single", "quantity": 1, "item_count": 1},
+        metadata={
+            "event": "reference_resolution",
+            "tool_mode": "single",
+            "quantity": 1,
+            "item_count": 1,
+            **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1),
+        },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
@@ -1823,6 +1918,7 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
+        runtime_started = time.perf_counter()
         results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
         for index, item in enumerate(items):
@@ -1836,6 +1932,7 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
             elif item.get("id") is not None:
                 result["id"] = item.get("id")
             results.append(result)
+        stages = {"conversion_lookup_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
             "batch_id": batch_id,
@@ -1863,10 +1960,19 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                 "batch_id": batch_id,
                 "converted_count": result_payload["converted_count"],
                 "unconverted_count": result_payload["unconverted_count"],
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(items),
+                    output_count=result_payload["converted_count"],
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+    runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_convert_reference_item(payload)}
+    stages = {"conversion_lookup_ms": _elapsed_ms(runtime_started)}
     if not result.get("ok"):
         result["error"] = _normalize_tool_error(
             result.get("error"),
@@ -1884,7 +1990,13 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
             query_granularity="single",
             response_payload=result,
             error_code=str((result.get("error") or {}).get("code") or "not_found"),
-            metadata={"event": "reference_conversion", "tool_mode": "single", "quantity": 1, "item_count": 1},
+            metadata={
+                "event": "reference_conversion",
+                "tool_mode": "single",
+                "quantity": 1,
+                "item_count": 1,
+                **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=0),
+            },
         )
         return _jsonrpc_response(_tool_result(result, is_error=True), rpc_request_id)
     _log_mcp_tool_usage_event(
@@ -1897,7 +2009,13 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
         row_count=1,
         query_granularity="single",
         response_payload=result,
-        metadata={"event": "reference_conversion", "tool_mode": "single", "quantity": 1, "item_count": 1},
+        metadata={
+            "event": "reference_conversion",
+            "tool_mode": "single",
+            "quantity": 1,
+            "item_count": 1,
+            **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1),
+        },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
 
@@ -1981,7 +2099,9 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
         try:
             from mapmover.runtime.reference_exchange import get_geometry_references
 
+            runtime_started = time.perf_counter()
             result = get_geometry_references(loc_ids, include_polygon=include_polygon, include_info=True)
+            stages = {"geometry_fetch_ms": _elapsed_ms(runtime_started)}
         except Exception as exc:
             error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="get_geometry_failed", message=str(exc), loc_id_count=len(loc_ids))
             _log_mcp_tool_usage_event(
@@ -2021,6 +2141,14 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
                 "batch_id": batch_id,
                 "include_polygon": include_polygon,
                 "batch_limit": limit,
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(loc_ids),
+                    output_count=available_count,
+                    include_polygon=include_polygon,
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
@@ -2047,7 +2175,9 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
     try:
         from mapmover.runtime.reference_exchange import get_geometry_reference
 
+        runtime_started = time.perf_counter()
         result = get_geometry_reference(loc_id, include_polygon=include_polygon)
+        stages = {"geometry_fetch_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "get_geometry_failed", "message": str(exc)}}
         _log_mcp_tool_usage_event(
@@ -2102,6 +2232,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             "loc_id_count": 1,
             "has_shape": True,
             "include_polygon": include_polygon,
+            **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1, include_polygon=include_polygon),
         },
     )
     return _jsonrpc_response(_tool_result(result), rpc_request_id)
@@ -2130,6 +2261,7 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
     try:
         from mapmover.runtime import geometry_tool_jobs
 
+        runtime_started = time.perf_counter()
         if tool_name == "resolve_loc_id_scope":
             limit = _tool_batch_item_limit("resolve_loc_id_scope", default=100, fallback_env_names=("LOC_ID_SCOPE_LIMIT",))
             result = geometry_tool_jobs.resolve_loc_id_scope(payload, default_limit=limit)
@@ -2153,15 +2285,19 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
             capability_id = "geometry_job_status"
         else:
             return _jsonrpc_error(rpc_request_id, -32601, f"Tool '{tool_name}' not found")
+        stages = {"runtime_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         result = {"ok": False, "request_id": request_id, "error": {"code": f"{tool_name}_failed", "message": str(exc)}}
         capability_id = tool_name
+        stages = {"runtime_ms": _elapsed_ms(started_at)}
 
     result = {"request_id": request_id, **result}
     ok = bool(result.get("ok")) and not result.get("error")
     row_count = _result_row_count(tool_name, payload, result)
     job_id = str(result.get("job_id") or "").strip() or None
     status = str(result.get("status") or "").strip() or None
+    nested_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+    delivery_mode = str(result.get("recommended_delivery_mode") or nested_result.get("delivery_mode") or "").strip() or None
     _log_mcp_tool_usage_event(
         request,
         request_id=request_id or job_id or "",
@@ -2180,6 +2316,17 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
             "job_id": job_id,
             "job_status": status,
             "quote_id": result.get("quote_id") or payload.get("quote_id"),
+            **_compute_metadata(
+                response_payload=result,
+                stages=stages,
+                input_count=row_count,
+                output_count=row_count if ok else 0,
+                include_polygon=payload.get("include_polygon") if "include_polygon" in payload else result.get("include_polygon"),
+                delivery_mode=delivery_mode,
+                estimated_transfer_bytes=result.get("estimated_transfer_bytes"),
+                output_format=result.get("format") or payload.get("format"),
+                batch_limit=payload.get("limit"),
+            ),
         },
     )
     return _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
@@ -2253,7 +2400,9 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
         try:
             from mapmover.runtime.reference_exchange import get_geometry_availability
 
+            runtime_started = time.perf_counter()
             result = get_geometry_availability([str(loc_id) for loc_id in loc_ids])
+            stages = {"geometry_availability_ms": _elapsed_ms(runtime_started)}
         except Exception as exc:
             _stamp_mcp_tool_analytics(
                 request,
@@ -2313,6 +2462,13 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
                 "available_count": available,
                 "missing_count": missing,
                 "batch_limit": limit,
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages=stages,
+                    input_count=len(loc_ids),
+                    output_count=available,
+                    batch_limit=limit,
+                ),
             },
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
@@ -2340,7 +2496,9 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
     try:
         from mapmover.runtime.reference_exchange import get_geometry_availability
 
+        runtime_started = time.perf_counter()
         result = get_geometry_availability([loc_id])
+        stages = {"geometry_availability_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "check_geometry_failed", "message": str(exc)}}
         _log_mcp_tool_usage_event(
@@ -2380,6 +2538,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
             "loc_id": loc_id,
             "loc_id_count": 1,
             "has_shape": bool(item.get("has_shape")),
+            **_compute_metadata(response_payload=result_payload, stages=stages, input_count=1, output_count=1 if item.get("has_shape") else 0),
         },
     )
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)

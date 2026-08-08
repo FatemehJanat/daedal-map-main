@@ -127,6 +127,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["tool_mode"], "bulk")
         self.assertEqual(analytics["metadata"]["quantity"], 2)
         self.assertEqual(analytics["metadata"]["batch_id"], "batch-1")
+        self.assertEqual(analytics["metadata"]["compute"]["input_count"], 2)
+        self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
+        self.assertIn("point_resolver_ms", analytics["metadata"]["compute"]["stage_ms"])
 
     def test_resolve_point_tool_rejects_point_batch_over_limit(self) -> None:
         with mock.patch("mapmover.routes.mcp.log_api_query_event"):
@@ -198,6 +201,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["quantity"], 3)
         self.assertEqual(analytics["metadata"]["available_count"], 2)
         self.assertEqual(analytics["metadata"]["missing_count"], 1)
+        self.assertEqual(analytics["metadata"]["compute"]["input_count"], 3)
+        self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
+        self.assertIn("geometry_availability_ms", analytics["metadata"]["compute"]["stage_ms"])
 
     def test_geometry_availability_uses_one_bulk_geometry_fetch(self) -> None:
         feature_payload = {
@@ -274,6 +280,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["query_granularity"], "bulk_2")
         self.assertEqual(analytics["metadata"]["tool_mode"], "bulk")
         self.assertEqual(analytics["metadata"]["quantity"], 2)
+        self.assertEqual(analytics["metadata"]["compute"]["input_count"], 2)
+        self.assertEqual(analytics["metadata"]["compute"]["output_count"], 1)
+        self.assertEqual(analytics["metadata"]["compute"]["include_polygon"], False)
+        self.assertIn("geometry_fetch_ms", analytics["metadata"]["compute"]["stage_ms"])
 
     def test_loc_id_info_can_include_references(self) -> None:
         with (
@@ -373,6 +383,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["row_count"], 2)
         self.assertEqual(analytics["metadata"]["event"], "reference_system_discovery")
         self.assertEqual(analytics["metadata"]["system_count"], 2)
+        self.assertEqual(analytics["metadata"]["compute"]["input_count"], 1)
+        self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
+        self.assertIn("catalog_lookup_ms", analytics["metadata"]["compute"]["stage_ms"])
 
     def test_resolve_reference_tool_resolves_zip_to_loc_id(self) -> None:
         payload = _tool_call(
@@ -413,6 +426,8 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["resolved_loc_id"], "USA-PR-001")
         self.assertEqual(payload["resolved_count"], 1)
         self.assertEqual(payload["unresolved_count"], 1)
+        # The real analytics rows carry compute.input_count/output_count and
+        # bridge_lookup_ms; other tests assert the shared shape with mocks.
 
     def test_resolve_reference_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_REFERENCE": "1"}):
@@ -656,6 +671,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["missing_shape_count"], 1)
         self.assertEqual(payload["create_call"]["tool"], "create_geometry_export")
         self.assertEqual(analytics_mock.call_args.kwargs["capability_id"], "geometry_package_estimate")
+        self.assertEqual(analytics_mock.call_args.kwargs["metadata"]["compute"]["input_count"], 2)
+        self.assertEqual(analytics_mock.call_args.kwargs["metadata"]["compute"]["estimated_transfer_bytes"], payload["estimated_transfer_bytes"])
+        self.assertIn("runtime_ms", analytics_mock.call_args.kwargs["metadata"]["compute"]["stage_ms"])
 
     def test_create_geometry_export_inline_then_status(self) -> None:
         with (
