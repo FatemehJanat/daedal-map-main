@@ -200,6 +200,30 @@ def build_tool_definitions() -> list[dict]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "read_geometry_catalog",
+            "title": "Read Geometry Catalog",
+            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so you can see available admin coverage, geometry families, bridges/crosswalks, named geometries, and downloadable packages before choosing loc_id tools. Use view='summary' first; use view='full' only when you need the whole catalog. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "view": {
+                        "type": "string",
+                        "enum": ["summary", "admin_coverage", "bridges", "packages", "named_geometries", "full"],
+                        "description": "Catalog view to return. Default summary.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Maximum named geometries to return when view='named_geometries'. Default 50.",
+                    },
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "list_reference_systems",
             "title": "List Geographic Reference Systems",
             "description": "Free geography utility. Lists the currently exchangeable geographic reference systems in DaedalMap, including catalog-backed geometry families, bridge artifacts, row counts, vintages, target levels, and source license metadata. Call this first when you need to know whether ZIP/ZCTA, NWS zones, tribal areas, marine ids, NUTS-style regional ids, or other systems can be exchanged through loc_id. No payment required.",

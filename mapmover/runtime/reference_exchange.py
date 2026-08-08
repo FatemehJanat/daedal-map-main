@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..duckdb_helpers import is_cloud_mode
-from ..geometry_handlers import get_location_info, get_selection_geometries
+from ..geometry_handlers import get_location_info, get_selection_geometries, get_selection_geometry_metadata
 from ..paths import DATA_ROOT
 from .admin_hierarchy import infer_admin_level_from_loc_id
 from .geography_reference import (
@@ -197,6 +197,160 @@ def list_reference_systems() -> dict[str, Any]:
             "license": artifact.get("source_license"),
         })
     return _clean_json({"ok": True, "reserve_system": LOC_ID_SYSTEM, "systems": list(systems.values()), "bridges": bridges})
+
+
+def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
+    return {
+        key: len(catalog.get(key) or []) if isinstance(catalog.get(key), list) else 0
+        for key in (
+            "geometry_banks",
+            "geometry_families",
+            "bridge_artifacts",
+            "geometry_assets",
+            "geometry_packages",
+            "named_geometry_groups",
+            "named_geometries",
+        )
+    }
+
+
+def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    assets = catalog.get("geometry_assets") or catalog.get("geometry_packages") or []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        coverage = asset.get("admin_coverage")
+        if not isinstance(coverage, dict):
+            continue
+        levels = coverage.get("levels") if isinstance(coverage.get("levels"), list) else []
+        rows.append({
+            "asset_id": asset.get("asset_id"),
+            "label": asset.get("label"),
+            "scope": asset.get("scope") or coverage.get("scope"),
+            "family": asset.get("family"),
+            "feature_count": asset.get("feature_count"),
+            "has_shapes": bool(asset.get("has_shapes")),
+            "min_admin_level": coverage.get("min_admin_level"),
+            "max_admin_level": coverage.get("max_admin_level"),
+            "levels": [
+                {
+                    "admin_level": item.get("admin_level"),
+                    "label": item.get("label"),
+                    "row_count": item.get("row_count"),
+                    "file_count": item.get("file_count"),
+                }
+                for item in levels
+                if isinstance(item, dict)
+            ],
+        })
+    rows.sort(key=lambda item: (str(item.get("scope") or ""), str(item.get("asset_id") or "")))
+    return rows
+
+
+def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for artifact in catalog.get("bridge_artifacts") or []:
+        if not isinstance(artifact, dict):
+            continue
+        source_license = artifact.get("source_license") if isinstance(artifact.get("source_license"), dict) else {}
+        rows.append({
+            "source_system": artifact.get("source_family"),
+            "target_system": LOC_ID_SYSTEM,
+            "target_family": artifact.get("target_family"),
+            "target_admin_level": artifact.get("target_admin_level"),
+            "bridge_vintage": artifact.get("bridge_vintage"),
+            "status": artifact.get("status"),
+            "row_count": artifact.get("row_count"),
+            "source_count": artifact.get("source_count"),
+            "target_count": artifact.get("target_count"),
+            "license": source_license.get("license"),
+            "license_review_status": source_license.get("license_review_status"),
+        })
+    return rows
+
+
+def _geometry_catalog_packages(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for package in catalog.get("geometry_packages") or catalog.get("geometry_assets") or []:
+        if not isinstance(package, dict):
+            continue
+        coverage = package.get("admin_coverage") if isinstance(package.get("admin_coverage"), dict) else {}
+        rows.append({
+            "asset_id": package.get("asset_id"),
+            "label": package.get("label"),
+            "group": package.get("group"),
+            "family": package.get("family"),
+            "scope": package.get("scope"),
+            "summary": package.get("summary"),
+            "feature_count": package.get("feature_count"),
+            "has_shapes": bool(package.get("has_shapes")),
+            "artifact_kind": package.get("artifact_kind"),
+            "max_admin_level": coverage.get("max_admin_level"),
+            "cloud_probe_path": package.get("cloud_probe_path"),
+        })
+    return rows
+
+
+def _geometry_catalog_named_geometries(catalog: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    items = [item for item in (catalog.get("named_geometries") or []) if isinstance(item, dict)]
+    for item in items[: max(0, limit)]:
+        rows.append({
+            "loc_id": item.get("loc_id"),
+            "label": item.get("label"),
+            "family": item.get("family"),
+            "resolvable": item.get("resolvable"),
+            "parent_loc_id": item.get("parent_loc_id"),
+            "geometry_path": item.get("geometry_path"),
+            "bank_id": item.get("bank_id"),
+        })
+    return {"items": rows, "returned": len(rows), "total": len(items), "truncated": len(rows) < len(items)}
+
+
+def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> dict[str, Any]:
+    """Return an agent-oriented view of the live geometry catalog."""
+    catalog = load_geometry_catalog()
+    selected_view = str(view or "summary").strip().lower().replace("-", "_")
+    row_limit = max(1, min(int(limit or 50), 500))
+    base = {
+        "ok": True,
+        "view": selected_view,
+        "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
+        "generated_at": catalog.get("generated_at"),
+        "download_url": "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
+        "app_summary_endpoint": "https://app.daedalmap.com/api/v1/geometry/catalog",
+        "counts": _geometry_catalog_counts(catalog),
+        "usage": {
+            "start_here": "Use summary or admin_coverage to discover coverage, then use loc_id-keyed tools for lookups and exports.",
+            "loc_id_rule": "Shape and data tools are keyed to DaedalMap loc_id. If an input is not a loc_id, call resolve_reference first.",
+            "bulk_rule": "Prepared bulk point requests should provide country_scope and target_admin_level; geometry exports should preflight before create.",
+        },
+    }
+    if selected_view == "summary":
+        return _clean_json({
+            **base,
+            "families": catalog.get("geometry_families") or [],
+            "admin_coverage": _geometry_catalog_admin_coverage(catalog),
+        })
+    if selected_view == "admin_coverage":
+        return _clean_json({**base, "admin_coverage": _geometry_catalog_admin_coverage(catalog)})
+    if selected_view == "bridges":
+        return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog)})
+    if selected_view == "packages":
+        return _clean_json({**base, "packages": _geometry_catalog_packages(catalog)})
+    if selected_view == "named_geometries":
+        return _clean_json({**base, "named_geometries": _geometry_catalog_named_geometries(catalog, limit=row_limit)})
+    if selected_view == "full":
+        return _clean_json({**base, "catalog": catalog})
+    return _clean_json({
+        **base,
+        "ok": False,
+        "error": {
+            "code": "invalid_view",
+            "message": "view must be one of summary, admin_coverage, bridges, packages, named_geometries, or full",
+        },
+    })
 
 
 def _direct_loc_id_result(value: str, *, request_system: str) -> dict[str, Any]:
@@ -492,21 +646,44 @@ def get_geometry_references(
 
 def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
     """Return a lightweight shape-availability preflight for one or more loc_ids."""
-    payload = get_geometry_references(loc_ids, include_polygon=False, include_info=False)
+    canonical_ids = [canonicalize_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
+    rows = get_selection_geometry_metadata(canonical_ids)
+    by_loc_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        row_loc_id = row.get("loc_id") or row.get("source_loc_id")
+        if row_loc_id:
+            by_loc_id[canonicalize_loc_id(str(row_loc_id))] = row
     items = []
-    for result in payload.get("results") or []:
+    for loc_id in canonical_ids:
+        result = by_loc_id.get(loc_id)
+        has_shape = bool(result)
         item = {
-            "loc_id": result.get("loc_id"),
-            "has_shape": bool(result.get("has_shape")),
-            "family": result.get("family"),
-            "admin_level": result.get("admin_level"),
-            "centroid": result.get("centroid") if result.get("has_shape") else None,
-            "bbox": result.get("bbox") if result.get("has_shape") else None,
+            "loc_id": loc_id,
+            "has_shape": has_shape,
+            "family": classify_loc_id_family(loc_id) if has_shape else None,
+            "admin_level": result.get("admin_level") if result else None,
+            "centroid": {"lon": result.get("centroid_lon"), "lat": result.get("centroid_lat")} if has_shape else None,
+            "bbox": [
+                result.get("bbox_min_lon"),
+                result.get("bbox_min_lat"),
+                result.get("bbox_max_lon"),
+                result.get("bbox_max_lat"),
+            ] if has_shape else None,
         }
         if not item["has_shape"]:
-            item["error"] = result.get("error") or "no geometry found"
+            item["error"] = "no geometry found"
         items.append(item)
-    return _clean_json({**payload, "items": items, "results": items})
+    available = sum(1 for item in items if item.get("has_shape"))
+    return _clean_json(
+        {
+            "ok": bool(canonical_ids),
+            "requested": len(canonical_ids),
+            "available": available,
+            "missing": len(canonical_ids) - available,
+            "items": items,
+            "results": items,
+        }
+    )
 
 
 def get_geometry_reference(loc_id: str, *, include_polygon: bool = False) -> dict[str, Any]:

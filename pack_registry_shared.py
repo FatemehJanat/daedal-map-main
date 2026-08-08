@@ -341,6 +341,7 @@ PACK_REGISTRY: dict[str, dict] = {
         "mcp_tool_allowlist": (
             "get_catalog",
             "get_pack",
+            "read_geometry_catalog",
             "list_reference_systems",
             "resolve_reference",
             "convert_reference",
@@ -369,9 +370,10 @@ PACK_REGISTRY: dict[str, dict] = {
             ],
         },
         "routing": {
-            "preferred_tool": "list_reference_systems",
+            "preferred_tool": "read_geometry_catalog",
         },
         "tool_summaries": (
+            {"name": "read_geometry_catalog", "summary": "discover geometry coverage, families, bridges, named geometries, and packages"},
             {"name": "list_reference_systems", "summary": "discover exchangeable geography systems, bridge vintages, counts, and licenses"},
             {"name": "resolve_reference", "summary": "one reference or reference batch -> ranked DaedalMap loc_id matches"},
             {"name": "convert_reference", "summary": "one reference or reference batch -> loc_id -> target reference system"},
@@ -496,16 +498,18 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
     first_arguments: dict[str, object]
     start_here: list[str]
     important_rules: list[str]
-    if preferred_tool == "list_reference_systems":
-        first_arguments = {}
+    if preferred_tool == "read_geometry_catalog":
+        first_arguments = {"view": "summary"}
         start_here = [
-            "Call list_reference_systems first when you need to know which geography systems can be exchanged.",
+            "Call read_geometry_catalog first to see what coverage, geometry families, bridges, named geometries, and packages exist.",
+            "Call list_reference_systems next when you need to know which geography systems can be exchanged.",
             "Use resolve_reference for outside identifiers or names that need to become DaedalMap loc_ids.",
             "Use convert_reference when the caller wants one external geography system expressed in another.",
         ]
         important_rules = [
             "These are free utility tools, not a query_dataset pack.",
             "loc_id is the reserve identifier: generic conversions should flow X -> loc_id -> Y.",
+            "Use read_geometry_catalog for live catalog-backed coverage and package discovery instead of assuming a fixed list of countries or admin depths.",
             "Use list_reference_systems for live catalog-backed availability instead of assuming a fixed list of systems.",
             "Use resolve_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, NWS fire weather-zone, admin-name, and named-geometry inputs.",
             "Use loc_id_info with include_references=true for reverse lookup from an existing loc_id to overlapping or equivalent external references.",
@@ -560,6 +564,11 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "arguments": first_arguments,
         },
         "bridge_examples": [
+            {
+                "question": "What geometry coverage does DaedalMap expose right now?",
+                "tool": "read_geometry_catalog",
+                "arguments": {"view": "summary"},
+            },
             {
                 "question": "What can DaedalMap exchange right now?",
                 "tool": "list_reference_systems",

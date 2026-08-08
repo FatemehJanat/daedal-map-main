@@ -42,6 +42,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         tool_names = {tool["name"] for tool in envelope["result"]["tools"]}
 
         self.assertIn("list_reference_systems", tool_names)
+        self.assertIn("read_geometry_catalog", tool_names)
         self.assertIn("resolve_reference", tool_names)
         self.assertIn("convert_reference", tool_names)
         self.assertIn("check_geometry", tool_names)
@@ -255,31 +256,28 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
         self.assertIn("geometry_availability_ms", analytics["metadata"]["compute"]["stage_ms"])
 
-    def test_geometry_availability_uses_one_bulk_geometry_fetch(self) -> None:
-        feature_payload = {
-            "type": "FeatureCollection",
-            "features": [
+    def test_geometry_availability_uses_metadata_only_fetch(self) -> None:
+        metadata_rows = [
                 {
-                    "type": "Feature",
-                    "properties": {
-                        "local_loc_id": "USA-CA-037",
-                        "name": "Los Angeles County",
-                        "admin_level": 2,
-                        "centroid_lon": -118.25,
-                        "centroid_lat": 34.05,
-                        "bbox_min_lon": -119.0,
-                        "bbox_min_lat": 33.0,
-                        "bbox_max_lon": -117.0,
-                        "bbox_max_lat": 35.0,
-                    },
-                    "geometry": {"type": "Polygon", "coordinates": []},
+                    "loc_id": "USA-CA-037",
+                    "name": "Los Angeles County",
+                    "admin_level": 2,
+                    "centroid_lon": -118.25,
+                    "centroid_lat": 34.05,
+                    "bbox_min_lon": -119.0,
+                    "bbox_min_lat": 33.0,
+                    "bbox_max_lon": -117.0,
+                    "bbox_max_lat": 35.0,
                 }
-            ],
-        }
-        with mock.patch("mapmover.runtime.reference_exchange.get_selection_geometries", return_value=feature_payload) as fetch_mock:
+        ]
+        with (
+            mock.patch("mapmover.runtime.reference_exchange.get_selection_geometry_metadata", return_value=metadata_rows) as metadata_mock,
+            mock.patch("mapmover.runtime.reference_exchange.get_selection_geometries") as geometry_mock,
+        ):
             payload = get_geometry_availability(["USA-CA-037", "USA-NOPE"])
 
-        fetch_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"])
+        metadata_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"])
+        geometry_mock.assert_not_called()
         self.assertEqual(payload["requested"], 2)
         self.assertEqual(payload["available"], 1)
         self.assertEqual(payload["missing"], 1)
@@ -406,11 +404,75 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
     def test_get_pack_geography_prefers_reference_exchange(self) -> None:
         payload = _tool_call(self.client, "get_pack", {"pack_id": "geography"})
 
-        self.assertEqual(payload["routing"]["preferred_tool"], "list_reference_systems")
-        self.assertEqual(payload["quick_start"]["first_query_template"]["tool"], "list_reference_systems")
+        self.assertEqual(payload["routing"]["preferred_tool"], "read_geometry_catalog")
+        self.assertEqual(payload["quick_start"]["first_query_template"]["tool"], "read_geometry_catalog")
         starter_tools = set(payload["quick_start"]["starter_tools"])
+        self.assertIn("read_geometry_catalog", starter_tools)
+        self.assertIn("list_reference_systems", starter_tools)
         self.assertIn("resolve_reference", starter_tools)
         self.assertIn("convert_reference", starter_tools)
+
+    def test_read_geometry_catalog_returns_agent_summary(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.load_geometry_catalog",
+            return_value={
+                "schema_version": "1.0.0",
+                "generated_at": "2026-08-03T18:25:18Z",
+                "geometry_families": [{"family": "admin_boundary", "label": "Admin", "feature_count": 10}],
+                "geometry_assets": [
+                    {
+                        "asset_id": "global_admin_spine",
+                        "label": "Global Admin Spine",
+                        "scope": "Global",
+                        "family": "admin_base",
+                        "feature_count": 10,
+                        "has_shapes": True,
+                        "admin_coverage": {
+                            "min_admin_level": 0,
+                            "max_admin_level": 2,
+                            "levels": [{"admin_level": "admin_2", "label": "county", "row_count": 10}],
+                        },
+                    }
+                ],
+                "bridge_artifacts": [{"source_family": "overlay_zcta", "status": "complete"}],
+                "geometry_packages": [],
+                "named_geometry_groups": [],
+                "named_geometries": [],
+            },
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "summary"})
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["view"], "summary")
+        self.assertEqual(payload["schema_version"], "1.0.0")
+        self.assertEqual(payload["counts"]["geometry_assets"], 1)
+        self.assertEqual(payload["admin_coverage"][0]["asset_id"], "global_admin_spine")
+        self.assertIn("download_url", payload)
+
+    def test_read_geometry_catalog_logs_runtime_analytics(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.read_geometry_catalog",
+                return_value={
+                    "ok": True,
+                    "view": "packages",
+                    "counts": {"geometry_assets": 3, "geometry_packages": 3, "geometry_banks": 2},
+                    "packages": [],
+                },
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "packages"})
+
+        self.assertTrue(payload["ok"])
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["source_id"], "read_geometry_catalog")
+        self.assertEqual(analytics["capability_id"], "geometry_catalog_discovery")
+        self.assertEqual(analytics["row_count"], 3)
+        self.assertEqual(analytics["metadata"]["event"], "geometry_catalog_discovery")
+        self.assertEqual(analytics["metadata"]["view"], "packages")
+        self.assertEqual(analytics["metadata"]["compute"]["input_count"], 1)
+        self.assertEqual(analytics["metadata"]["compute"]["output_count"], 3)
 
     def test_list_reference_systems_logs_runtime_analytics(self) -> None:
         with (

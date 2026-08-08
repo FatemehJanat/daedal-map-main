@@ -511,7 +511,7 @@ def get_server_description(pack_id: str | None = None) -> str:
     if normalized in {"geography", "reverse-geocoding", "boundaries"}:
         return (
             f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} "
-            "Start with free discovery: call list_reference_systems to see supported reference systems, bridge vintages, counts, and license/source context. "
+            "Start with free discovery: call read_geometry_catalog for coverage, admin depths, shape-backed families, bridges, named geometries, and package availability; then call list_reference_systems to see supported exchange systems, bridge vintages, counts, and license/source context. "
             "For coordinates, call resolve_point with lat/lon or points. The default target_admin_level is admin_2; when a result has deeper_available=true, retry with target_admin_level admin_3, admin_4, admin_5, or deepest only when that depth is needed. "
             "For outside geography codes or names, call resolve_reference to get loc_id matches, then use loc_id_info, check_geometry, or get_geometry. "
             "For bulk geometry, call resolve_loc_id_scope and estimate_geometry_package before create_geometry_export. "
@@ -1882,6 +1882,78 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
+async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
+    payload = _ensure_request_id(arguments, "read_geometry_catalog")
+    request_id = str(payload.get("request_id") or "")
+    view = str(payload.get("view") or "summary").strip() or "summary"
+    try:
+        from mapmover.runtime.reference_exchange import read_geometry_catalog
+
+        runtime_started = time.perf_counter()
+        result = read_geometry_catalog(view=view, limit=payload.get("limit"))
+        stages = {"catalog_lookup_ms": _elapsed_ms(runtime_started)}
+    except Exception as exc:
+        error_payload = {"request_id": request_id, "error": {"code": "geometry_catalog_read_failed", "message": str(exc)}}
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="read_geometry_catalog",
+            capability_id="geometry_catalog_discovery",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="geometry_catalog_read_failed",
+            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view},
+        )
+        return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+
+    result_payload = {"request_id": request_id, **result}
+    counts = result.get("counts") if isinstance(result, dict) else {}
+    if isinstance(counts, dict):
+        row_count = int(counts.get("geometry_assets") or counts.get("geometry_packages") or counts.get("geometry_banks") or 0)
+    else:
+        row_count = 0
+    if isinstance(result, dict) and result.get("ok") is False:
+        error_payload = result_payload
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="read_geometry_catalog",
+            capability_id="geometry_catalog_discovery",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code=((result.get("error") or {}).get("code") if isinstance(result.get("error"), dict) else "invalid_view"),
+            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view},
+        )
+        return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="read_geometry_catalog",
+        capability_id="geometry_catalog_discovery",
+        decision="allow",
+        started_at=started_at,
+        row_count=row_count,
+        query_granularity=f"catalog_{view}",
+        response_payload=result_payload,
+        metadata={
+            "event": "geometry_catalog_discovery",
+            "tool_mode": "discovery",
+            "quantity": row_count,
+            "view": view,
+            **_compute_metadata(response_payload=result_payload, stages=stages, input_count=1, output_count=row_count),
+        },
+    )
+    return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+
+
 async def _execute_resolve_reference_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "resolve_reference")
@@ -3131,6 +3203,12 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_loc_id_info_tool(request, arguments, request_id)
+
+    if tool_name == "read_geometry_catalog":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_read_geometry_catalog_tool(request, arguments, request_id)
 
     if tool_name == "list_reference_systems":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)

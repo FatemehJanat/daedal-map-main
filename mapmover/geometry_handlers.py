@@ -2814,3 +2814,110 @@ def get_selection_geometries(loc_ids: list):
     logger.debug(f"Loaded {len(features)} geometries for selection from {len(requested_ids)} loc_ids")
 
     return {"type": "FeatureCollection", "features": features}
+
+
+def _geometry_metadata_row(row) -> dict:
+    """Return loc_id geometry metadata without polygon payload."""
+    return {
+        "loc_id": row.get("local_loc_id") or row.get("loc_id"),
+        "source_loc_id": row.get("source_loc_id"),
+        "name": row.get("name"),
+        "admin_level": row.get("admin_level"),
+        "parent_id": row.get("parent_id"),
+        "centroid_lon": row.get("centroid_lon"),
+        "centroid_lat": row.get("centroid_lat"),
+        "bbox_min_lon": row.get("bbox_min_lon"),
+        "bbox_min_lat": row.get("bbox_min_lat"),
+        "bbox_max_lon": row.get("bbox_max_lon"),
+        "bbox_max_lat": row.get("bbox_max_lat"),
+        "has_polygon": row.get("has_polygon"),
+        "iso_a3": row.get("iso_a3"),
+    }
+
+
+def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
+    """
+    Get exact loc_id geometry metadata for lightweight availability checks.
+
+    This deliberately skips GeoJSON feature construction and never returns the
+    polygon geometry field. It reuses the same exact-row loaders as
+    get_selection_geometries so check/preflight tools stay aligned with the
+    runtime geometry spine.
+    """
+    if not loc_ids:
+        return []
+
+    rows: list[dict] = []
+    requested_ids = [str(loc_id).strip() for loc_id in loc_ids if str(loc_id).strip()]
+    requested_set = set(requested_ids)
+
+    marine_ids = [
+        loc_id for loc_id in requested_ids
+        if classify_loc_id_family(loc_id) in {"marine_eez", "water_body"}
+    ]
+    remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
+
+    if marine_ids:
+        marine_df = load_marine_geometry(marine_ids)
+        if marine_df is not None and not marine_df.empty:
+            for _, row in marine_df.iterrows():
+                item = _geometry_metadata_row(row)
+                if item.get("loc_id"):
+                    rows.append(item)
+
+    by_country = {}
+    for loc_id in remaining_ids:
+        parts = loc_id.split("-")
+        iso3 = parts[0]
+        by_country.setdefault(iso3, []).append(loc_id)
+
+    for iso3, country_loc_ids in by_country.items():
+        country_level_ids = [lid for lid in country_loc_ids if lid == iso3]
+        sub_level_ids = [lid for lid in country_loc_ids if lid != iso3]
+        deep_level_ids = []
+        regular_sub_level_ids = []
+        if sub_level_ids:
+            sub_admin_levels = get_country_sub_admin_levels(iso3)
+            for lid in sub_level_ids:
+                segment_count = len(str(lid).split("-"))
+                admin_level = segment_count - 1
+                if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                    deep_level_ids.append(lid)
+                else:
+                    regular_sub_level_ids.append(lid)
+
+        if country_level_ids:
+            global_df = load_global_countries_frame()
+            if global_df is not None and not global_df.empty:
+                country_rows = global_df[global_df["loc_id"].isin(country_level_ids)]
+                for _, row in country_rows.iterrows():
+                    item = _geometry_metadata_row(row)
+                    if item.get("loc_id") in requested_set:
+                        rows.append(item)
+
+        if deep_level_ids:
+            deep_df = _load_subcounty_rows_by_loc_ids(iso3, deep_level_ids)
+            if deep_df is not None and not deep_df.empty:
+                for _, row in deep_df.iterrows():
+                    item = _geometry_metadata_row(row)
+                    if item.get("loc_id") in requested_set:
+                        rows.append(item)
+
+        if regular_sub_level_ids:
+            country_df = load_geometry_rows_by_loc_ids(iso3, regular_sub_level_ids)
+            if country_df is not None and not country_df.empty:
+                for _, row in country_df.iterrows():
+                    item = _geometry_metadata_row(row)
+                    if item.get("loc_id") in requested_set or item.get("source_loc_id") in requested_set:
+                        rows.append(item)
+
+    seen = set()
+    deduped = []
+    for row in rows:
+        loc_id = str(row.get("loc_id") or "").strip()
+        if not loc_id or loc_id in seen:
+            continue
+        seen.add(loc_id)
+        deduped.append(row)
+    logger.debug("Loaded %s geometry metadata rows for %s loc_ids", len(deduped), len(requested_ids))
+    return deduped
