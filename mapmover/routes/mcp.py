@@ -497,6 +497,15 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
 
 def get_server_description(pack_id: str | None = None) -> str:
     normalized = _normalize_pack_id(pack_id)
+    if normalized in {"geography", "reverse-geocoding", "boundaries"}:
+        return (
+            f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} "
+            "Start with free discovery: call list_reference_systems to see supported reference systems, bridge vintages, counts, and license/source context. "
+            "For coordinates, call resolve_point with lat/lon or points. The default target_admin_level is admin_2; when a result has deeper_available=true, retry with target_admin_level admin_3, admin_4, admin_5, or deepest only when that depth is needed. "
+            "For outside geography codes or names, call resolve_reference to get loc_id matches, then use loc_id_info, check_geometry, or get_geometry. "
+            "For bulk geometry, call resolve_loc_id_scope and estimate_geometry_package before create_geometry_export. "
+            "Small batches execute in the free preview lane, medium batches return a payment-required quote that can be satisfied by account credits or x402, and very large requests should use async job/export tools instead of waiting on one interactive response."
+        )
     if not normalized:
         return (
             build_mcp_instructions(safety_notice=AGENT_SAFETY_NOTICE)
@@ -2890,6 +2899,7 @@ async def mcp_endpoint_info(pack_id: str | None = None):
             "serverInfo": get_server_info(normalized_pack_id),
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "transport": "streamable-http",
+            "instructions": get_server_description(normalized_pack_id),
             "tools": [tool["name"] for tool in _facade_tools(normalized_pack_id)],
         }
     )
@@ -2960,18 +2970,7 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
                     "prompts": {"listChanged": False},
                 },
                 "serverInfo": get_server_info(normalized_pack_id),
-                "instructions": (
-                    f"Safety: {AGENT_SAFETY_NOTICE} "
-                    "Step 1: call get_catalog to see all live packs and which are free vs paid. "
-                    "Step 2: call get_pack with a pack_id for coverage dates, canonical freshness metadata, preferred canonical tool guidance, and a first-query example. "
-                    "Step 3: call get_volcanic_activity or get_fx_rates to get real data immediately - both are free, no setup needed. "
-                    "Step 4: call prompts/list to get ready-to-use example calls for every supported query shape. "
-                    "Canonical pack tools come first. Use get_pack as the source of truth for canonical_available_through, preferred_tool, and any live_fallback_tool guidance. "
-                    "For earthquakes, prefer get_earthquake_events for normal historical or recent questions and only use get_live_earthquake_events when the caller explicitly asks for live/preliminary upstream data or the published canonical window is not sufficient. "
-                    "Paid packs ("
-                    + ", ".join(sorted(_paid_pack_ids()))
-                    + "): call the tool without payment first - the server returns HTTP 402 with the exact price and payment address before any charge occurs."
-                ),
+                "instructions": get_server_description(normalized_pack_id),
             },
             request_id,
         )
