@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from mapmover.routes.geometry import router as geometry_router
+from mapmover.runtime import reference_exchange
 from mapmover.runtime.reference_exchange import (
     LOC_ID_SYSTEM,
     convert_reference,
@@ -103,6 +105,27 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
 
         self.assertFalse(payload["ok"])
         self.assertIn("no bridge artifact", payload["error"])
+
+    def test_cloud_mode_keeps_catalog_bridge_artifacts_without_local_file(self) -> None:
+        artifact = {
+            "status": "complete",
+            "source_family": "overlay_zcta",
+            "target_admin_level": "admin_2",
+            "artifact_path": "published/geometry/bridges/overlay_zcta_to_admin_2_USA.parquet",
+            "row_count": 10,
+            "bridge_vintage": "usa_geometry_current",
+        }
+        with (
+            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"bridge_artifacts": [artifact]}),
+            mock.patch("mapmover.runtime.reference_exchange.is_cloud_mode", return_value=True),
+        ):
+            artifacts = reference_exchange._bridge_artifacts(
+                source_family="zip",
+                target_admin_level="admin_2",
+                iso3="USA",
+            )
+
+        self.assertEqual(artifacts, [artifact])
 
 
 class ReferenceExchangeRouteTests(unittest.TestCase):

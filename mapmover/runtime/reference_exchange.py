@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from ..duckdb_helpers import is_cloud_mode
 from ..geometry_handlers import get_location_info, get_selection_geometries
 from ..paths import DATA_ROOT
 from .admin_hierarchy import infer_admin_level_from_loc_id
@@ -116,7 +117,7 @@ def _bridge_artifacts(
             continue
         if vintage and str(artifact.get("bridge_vintage") or "") != vintage:
             continue
-        if path and path.exists():
+        if path and (path.exists() or is_cloud_mode()):
             out.append(artifact)
     out.sort(
         key=lambda item: (

@@ -404,6 +404,25 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["limit"], 1)
         self.assertEqual(payload["error"]["code"], "too_many_items")
 
+    def test_resolve_reference_tool_normalizes_string_error(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.resolve_reference",
+                return_value={"ok": False, "from_system": "zip", "input": "not-real", "error": "no bridge artifact found"},
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_reference",
+                {"from_system": "zip", "value": "not-real", "target_admin_level": "admin_2"},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "not_found")
+        self.assertEqual(payload["error"]["message"], "no bridge artifact found")
+        self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
+
     def test_convert_reference_tool_composes_through_loc_id(self) -> None:
         payload = _tool_call(
             self.client,
@@ -446,6 +465,25 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["converted_count"], 1)
         self.assertEqual(payload["unconverted_count"], 1)
 
+    def test_convert_reference_tool_normalizes_string_error(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.convert_reference",
+                return_value={"ok": False, "from_system": "zip", "input": "not-real", "to_system": "nws_fire", "error": "no bridge artifact found"},
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "convert_reference",
+                {"from_system": "zip", "value": "not-real", "to_system": "nws_fire", "target_admin_level": "admin_2"},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "not_found")
+        self.assertEqual(payload["error"]["message"], "no bridge artifact found")
+        self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
+
     def test_resolve_loc_id_scope_uses_geometry_index(self) -> None:
         with (
             mock.patch(
@@ -483,6 +521,47 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["returned_count"], 1)
         self.assertTrue(payload["truncated"])
         self.assertEqual(payload["loc_ids"], ["USA-CA-037"])
+
+    def test_resolve_loc_id_scope_expands_country_to_counties(self) -> None:
+        def fake_index(*, parent_loc_id=None, admin_level=None, bbox=None):
+            if parent_loc_id == "USA" and admin_level == 2:
+                return {"rows": [], "count": 0}
+            if parent_loc_id == "USA" and admin_level == 1:
+                return {
+                    "rows": [
+                        {"loc_id": "USA-CA", "parent_id": "USA", "admin_level": 1, "name": "California"},
+                        {"loc_id": "USA-NY", "parent_id": "USA", "admin_level": 1, "name": "New York"},
+                    ],
+                    "count": 2,
+                }
+            if parent_loc_id == "USA-CA" and admin_level == 2:
+                return {
+                    "rows": [
+                        {"loc_id": "USA-CA-037", "parent_id": "USA-CA", "admin_level": 2, "name": "Los Angeles County"},
+                        {"loc_id": "USA-CA-075", "parent_id": "USA-CA", "admin_level": 2, "name": "San Francisco County"},
+                    ],
+                    "count": 2,
+                }
+            if parent_loc_id == "USA-NY" and admin_level == 2:
+                return {"rows": [{"loc_id": "USA-NY-061", "parent_id": "USA-NY", "admin_level": 2, "name": "New York County"}], "count": 1}
+            return {"rows": [], "count": 0}
+
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_index", side_effect=fake_index) as index_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_loc_id_scope",
+                {"parent_loc_id": "USA", "admin_level": "admin_2", "limit": 2},
+            )
+
+        self.assertGreaterEqual(index_mock.call_count, 4)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["total_count"], 3)
+        self.assertEqual(payload["returned_count"], 2)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["loc_ids"], ["USA-CA-037", "USA-CA-075"])
 
     def test_estimate_geometry_package_uses_availability_preflight(self) -> None:
         with (

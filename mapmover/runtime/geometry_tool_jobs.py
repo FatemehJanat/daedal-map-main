@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from ..geometry_handlers import get_geometry_index
+from .admin_hierarchy import infer_admin_level_from_loc_id
 from .reference_exchange import convert_reference, get_geometry_availability, get_geometry_references, resolve_reference
 
 
@@ -90,6 +91,35 @@ def _row_summary(row: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _scope_rows(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, float, float] | None) -> list[dict[str, Any]]:
+    index = get_geometry_index(parent_loc_id=parent_loc_id, admin_level=admin_level, bbox=bbox)
+    rows = [row for row in (index.get("rows") or []) if isinstance(row, dict)]
+    if rows:
+        return rows
+
+    parent_level = infer_admin_level_from_loc_id(parent_loc_id)
+    if parent_level is None or admin_level <= parent_level + 1:
+        return rows
+
+    frontier = [parent_loc_id]
+    for level in range(parent_level + 1, admin_level + 1):
+        level_rows: list[dict[str, Any]] = []
+        next_frontier: list[str] = []
+        for current_parent in frontier:
+            child_index = get_geometry_index(parent_loc_id=current_parent, admin_level=level, bbox=bbox)
+            child_rows = [row for row in (child_index.get("rows") or []) if isinstance(row, dict)]
+            if level == admin_level:
+                level_rows.extend(child_rows)
+            else:
+                next_frontier.extend(str(row.get("loc_id") or "").strip() for row in child_rows if row.get("loc_id"))
+        if level == admin_level:
+            return level_rows
+        frontier = next_frontier
+        if not frontier:
+            break
+    return []
+
+
 def resolve_loc_id_scope(payload: dict[str, Any], *, default_limit: int = 100) -> dict[str, Any]:
     scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else payload
     parent_loc_id = str(scope.get("parent_loc_id") or payload.get("parent_loc_id") or "").strip()
@@ -102,8 +132,7 @@ def resolve_loc_id_scope(payload: dict[str, Any], *, default_limit: int = 100) -
     limit = max(0, int(payload.get("limit") or default_limit))
     offset = max(0, int(payload.get("offset") or 0))
     count_only = bool(payload.get("count_only"))
-    index = get_geometry_index(parent_loc_id=parent_loc_id, admin_level=admin_level, bbox=bbox)
-    rows = [_row_summary(row) for row in (index.get("rows") or []) if isinstance(row, dict)]
+    rows = [_row_summary(row) for row in _scope_rows(parent_loc_id, admin_level, bbox)]
     total = len(rows)
     page = [] if count_only else rows[offset : offset + limit]
     return _clean_json(

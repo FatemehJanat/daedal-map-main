@@ -1524,6 +1524,17 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _normalize_tool_error(value: Any, *, default_code: str, default_message: str) -> dict[str, str]:
+    if isinstance(value, dict):
+        return {
+            "code": str(value.get("code") or default_code),
+            "message": str(value.get("message") or value.get("error") or default_message),
+        }
+    if value:
+        return {"code": default_code, "message": str(value)}
+    return {"code": default_code, "message": default_message}
+
+
 async def _execute_list_reference_systems_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "list_reference_systems")
@@ -1666,7 +1677,11 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
     result = {"request_id": request_id, **_resolve_reference_item(payload)}
     if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "no loc_id match found for the reference"})
+        result["error"] = _normalize_tool_error(
+            result.get("error"),
+            default_code="not_found",
+            default_message="no loc_id match found for the reference",
+        )
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id,
@@ -1817,7 +1832,11 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
     result = {"request_id": request_id, **_convert_reference_item(payload)}
     if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": "reference conversion did not produce a match"})
+        result["error"] = _normalize_tool_error(
+            result.get("error"),
+            default_code="not_found",
+            default_message="reference conversion did not produce a match",
+        )
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id,
