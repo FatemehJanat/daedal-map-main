@@ -315,6 +315,61 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["country"]["loc_id"], "USA")
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
 
+    def test_resolve_points_errors_when_requested_depth_is_unavailable(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                }
+            ]
+        )
+        admin1_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA",
+                    "parent_id": "USA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                }
+            ]
+        )
+        admin2_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA-037",
+                    "parent_id": "USA-CA",
+                    "name": "Los Angeles",
+                    "admin_level": 2,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                }
+            ]
+        )
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]),
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[]),
+        ):
+            results = resolve_points_to_locations(
+                [{"lon": -118.25, "lat": 34.05}],
+                include_geometry=False,
+                target_admin_level=3,
+                country_scope="USA",
+            )
+
+        self.assertEqual(results[0]["error"]["code"], "target_admin_level_unavailable")
+        self.assertEqual(results[0]["error"]["message"], "USA currently serves through admin_2, not admin_3")
+        self.assertEqual(results[0]["target_admin_level"], "admin_3")
+        self.assertEqual(results[0]["max_available_admin_level"], "admin_2")
+        self.assertEqual(results[0]["available_admin_levels"], ["admin_0", "admin_1", "admin_2"])
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
+
     def test_resolve_points_defaults_to_admin2_and_reports_deeper_levels(self):
         import pandas as pd
 

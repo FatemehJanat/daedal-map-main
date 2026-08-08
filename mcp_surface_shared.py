@@ -132,7 +132,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; use country_scope when the caller already knows all points belong to one country. Responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
+            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; use country_scope when the caller already knows all points belong to one country. If a caller requests deeper geometry than the country serves, the tool returns a structured target_admin_level_unavailable error with max_available_admin_level. Responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

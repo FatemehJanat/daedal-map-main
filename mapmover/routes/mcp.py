@@ -1135,10 +1135,25 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
             "error": {"code": "resolve_failed", "message": "point resolver returned an invalid payload"},
         }
     if raw.get("error"):
+        raw_error = raw.get("error")
+        if isinstance(raw_error, dict):
+            error = {
+                "code": str(raw_error.get("code") or "resolve_failed"),
+                "message": str(raw_error.get("message") or raw_error),
+            }
+        else:
+            error = {"code": "resolve_failed", "message": str(raw_error)}
         return {
             "request_id": request_id,
             "point": raw.get("point"),
-            "error": {"code": "resolve_failed", "message": str(raw.get("error"))},
+            "country": raw.get("country"),
+            "matched": raw.get("matched"),
+            "target_admin_level": raw.get("target_admin_level"),
+            "max_available_admin_level": raw.get("max_available_admin_level"),
+            "available_admin_levels": raw.get("available_admin_levels") or [],
+            "deeper_available": bool(raw.get("deeper_available")),
+            "available_deeper_admin_levels": raw.get("available_deeper_admin_levels") or [],
+            "error": error,
         }
     return {
         "request_id": request_id,
