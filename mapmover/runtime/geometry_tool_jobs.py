@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any
 
-from ..geometry_handlers import get_geometry_index
+from ..geometry_handlers import get_geometry_index, load_country_parquet
 from .admin_hierarchy import infer_admin_level_from_loc_id
 from .country_geography import get_country_supported_deep_admin_levels
 from .geography_reference import translate_geometry_id_to_local_id
@@ -75,6 +75,29 @@ def _bbox_value(value: Any) -> tuple[float, float, float, float] | None:
 
 def _country_code_from_loc_id(loc_id: str) -> str:
     return str(loc_id or "").strip().split("-", 1)[0].upper()
+
+
+def _base_admin_scope_rows(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, float, float] | None) -> list[dict[str, Any]]:
+    parent_level = infer_admin_level_from_loc_id(parent_loc_id)
+    if parent_level is None or admin_level > 2:
+        return []
+    iso3 = _country_code_from_loc_id(parent_loc_id)
+    df = load_country_parquet(iso3, admin_level=admin_level)
+    if df is None or df.empty:
+        return []
+    if parent_level > 0 and "parent_id" in df.columns:
+        parent_ids = {parent_loc_id, translate_geometry_id_to_local_id(parent_loc_id)}
+        df = df[df["parent_id"].map(lambda value: translate_geometry_id_to_local_id(str(value or "").strip()) in parent_ids)]
+    if bbox is not None and not df.empty:
+        min_lon, min_lat, max_lon, max_lat = bbox
+        if all(col in df.columns for col in ("bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat")):
+            df = df[
+                (df["bbox_max_lon"] >= min_lon)
+                & (df["bbox_min_lon"] <= max_lon)
+                & (df["bbox_max_lat"] >= min_lat)
+                & (df["bbox_min_lat"] <= max_lat)
+            ]
+    return [row for row in df.to_dict("records") if isinstance(row, dict)]
 
 
 def _unsupported_deep_scope_error(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, float, float] | None) -> dict[str, Any] | None:
@@ -148,7 +171,10 @@ def _scope_rows(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, 
 
     parent_level = infer_admin_level_from_loc_id(parent_loc_id)
     if parent_level is None or admin_level <= parent_level + 1:
-        return rows
+        return _base_admin_scope_rows(parent_loc_id, admin_level, bbox) or rows
+    base_rows = _base_admin_scope_rows(parent_loc_id, admin_level, bbox)
+    if base_rows:
+        return base_rows
 
     frontier = [parent_loc_id]
     for level in range(parent_level + 1, admin_level + 1):

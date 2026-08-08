@@ -1112,6 +1112,159 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
     return result
 
 
+def _row_state_abbrev(row) -> str | None:
+    if row is None:
+        return None
+    return _state_code_from_row(row)
+
+
+def resolve_points_to_locations(points: list[dict], include_geometry: bool = False):
+    """Resolve multiple points through one shared geometry-loading pass.
+
+    The single-point resolver is intentionally exact, but calling it in a loop
+    reloads the same country/state/deep-admin sources for every point in hosted
+    cloud mode. This helper keeps the result shape compatible while grouping
+    geometry reads by country/state and admin level.
+    """
+    normalized_points: list[dict] = []
+    for index, point in enumerate(points or []):
+        try:
+            lon = float(point.get("lon"))
+            lat = float(point.get("lat"))
+        except Exception:
+            normalized_points.append({"index": index, "error": "invalid point"})
+            continue
+        normalized_points.append({"index": index, "lon": lon, "lat": lat})
+
+    country_df = load_global_countries_frame()
+    if country_df is None or country_df.empty:
+        return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
+
+    results: list[dict | None] = [None] * len(normalized_points)
+    by_country: dict[str, list[dict]] = {}
+    for item in normalized_points:
+        if item.get("error"):
+            results[item["index"]] = {"error": item["error"]}
+            continue
+        lon = float(item["lon"])
+        lat = float(item["lat"])
+        country_match = _find_containing_country_with_fallback(country_df, lon, lat)
+        if country_match is None:
+            results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
+            continue
+        iso3 = str(country_match.get("loc_id") or "").strip()
+        item["country_match"] = country_match
+        item["iso3"] = iso3
+        by_country.setdefault(iso3, []).append(item)
+
+    for iso3, country_items in by_country.items():
+        min_lon = min(float(item["lon"]) for item in country_items)
+        max_lon = max(float(item["lon"]) for item in country_items)
+        min_lat = min(float(item["lat"]) for item in country_items)
+        max_lat = max(float(item["lat"]) for item in country_items)
+        bbox = (min_lon, min_lat, max_lon, max_lat)
+
+        admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
+        if admin1_df is None or admin1_df.empty:
+            admin1_df = load_country_parquet(iso3, admin_level=1)
+        admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
+        if admin2_df is None or admin2_df.empty:
+            admin2_df = load_country_parquet(iso3, admin_level=2)
+
+        for item in country_items:
+            lon = float(item["lon"])
+            lat = float(item["lat"])
+            admin1_match = _find_containing_row(admin1_df, lon, lat)
+            admin2_match = _find_containing_row(admin2_df, lon, lat)
+            item["admin1_match"] = admin1_match
+            item["admin2_match"] = admin2_match
+            if admin2_match is not None:
+                item["deepest_row"] = admin2_match
+            elif admin1_match is not None:
+                item["deepest_row"] = admin1_match
+            else:
+                item["deepest_row"] = item["country_match"]
+            item["parent_scope"] = (
+                translate_geometry_id_to_local_id(admin2_match.get("loc_id")) if admin2_match is not None else
+                translate_geometry_id_to_local_id(admin1_match.get("loc_id")) if admin1_match is not None else
+                None
+            )
+
+        deep_levels = get_country_supported_deep_admin_levels(iso3)
+        for admin_level in deep_levels:
+            groups: dict[str, list[dict]] = {}
+            for item in country_items:
+                state_abbrev = _row_state_abbrev(item.get("admin2_match")) or _row_state_abbrev(item.get("admin1_match"))
+                if not state_abbrev:
+                    continue
+                groups.setdefault(state_abbrev, []).append(item)
+            for state_abbrev, grouped_items in groups.items():
+                group_bbox = (
+                    min(float(item["lon"]) for item in grouped_items),
+                    min(float(item["lat"]) for item in grouped_items),
+                    max(float(item["lon"]) for item in grouped_items),
+                    max(float(item["lat"]) for item in grouped_items),
+                )
+                df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev, bbox=group_bbox)
+                if df is None or df.empty:
+                    continue
+                for item in grouped_items:
+                    lon = float(item["lon"])
+                    lat = float(item["lat"])
+                    candidates = _filter_df_for_point(df, lon, lat)
+                    if candidates.empty:
+                        continue
+                    parent_scope = item.get("parent_scope")
+                    if parent_scope and "parent_id" in candidates.columns:
+                        parent_mask = (
+                            (candidates["parent_id"] == parent_scope) |
+                            candidates["parent_id"].astype(str).str.startswith(str(parent_scope) + "-", na=False)
+                        )
+                        scoped = candidates[parent_mask]
+                        if not scoped.empty:
+                            candidates = scoped
+                    match_row = _find_containing_row(candidates, lon, lat)
+                    if match_row is not None:
+                        item["deepest_row"] = match_row
+                        item["parent_scope"] = canonicalize_loc_id(match_row.get("loc_id"))
+
+        for item in country_items:
+            lon = float(item["lon"])
+            lat = float(item["lat"])
+            country_match = item["country_match"]
+            country_name = country_match.get("name") or iso3
+            deepest_row = item.get("deepest_row")
+            if deepest_row is None:
+                deepest_row = country_match
+            deepest_loc_id = deepest_row.get("loc_id") if deepest_row is not None else iso3
+            deepest_name = deepest_row.get("name") if deepest_row is not None else country_name
+            deepest_level = int(deepest_row.get("admin_level", 0)) if deepest_row is not None else 0
+            stack = []
+            for row in (country_match, item.get("admin1_match"), item.get("admin2_match")):
+                if row is None:
+                    continue
+                stack.append({"loc_id": row.get("loc_id"), "name": row.get("name"), "admin_level": int(row.get("admin_level", 0))})
+            if deepest_level >= 3 and deepest_row is not None:
+                stack.append({"loc_id": deepest_loc_id, "name": deepest_name, "admin_level": deepest_level})
+            result = {
+                "point": {"lon": lon, "lat": lat},
+                "country": {"loc_id": iso3, "name": country_name},
+                "matched": {
+                    "loc_id": deepest_loc_id,
+                    "name": deepest_name,
+                    "admin_level": deepest_level,
+                    "country_name": country_name,
+                    "iso3": iso3,
+                },
+                "stack": stack,
+            }
+            if include_geometry:
+                result["geojson"] = get_selection_geometries([deepest_loc_id])
+            results[item["index"]] = result
+
+    return [result or {"error": "point did not resolve"} for result in results]
+
+
 def calculate_coverage_from_parquet(iso3: str, from_level: int = 1):
     """
     Calculate coverage stats on-the-fly from actual parquet data.

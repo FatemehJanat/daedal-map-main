@@ -1131,7 +1131,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         resolved_count = 0
         unresolved_count = 0
         try:
-            from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+            from mapmover.geometry_handlers import resolve_points_to_locations
         except Exception as exc:
             _stamp_mcp_tool_analytics(
                 request,
@@ -1160,10 +1160,11 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
 
         runtime_started = time.perf_counter()
+        valid_points: list[dict[str, Any]] = []
+        invalid_by_index: dict[int, dict[str, Any]] = {}
         for index, point in enumerate(points):
             if not isinstance(point, dict):
-                unresolved_count += 1
-                results.append({"index": index, "error": {"code": "invalid_point", "message": "point must be an object"}})
+                invalid_by_index[index] = {"index": index, "error": {"code": "invalid_point", "message": "point must be an object"}}
                 continue
             row_index = point.get("row_index", index)
             caller_point_id = point.get("id")
@@ -1171,14 +1172,12 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 lat = float(point.get("lat"))
                 lon = float(point.get("lon"))
             except (TypeError, ValueError):
-                unresolved_count += 1
                 item = {"index": index, "row_index": row_index, "error": {"code": "invalid_point", "message": "lat and lon are required numbers"}}
                 if caller_point_id is not None:
                     item["id"] = caller_point_id
-                results.append(item)
+                invalid_by_index[index] = item
                 continue
             if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
-                unresolved_count += 1
                 item = {
                     "index": index,
                     "row_index": row_index,
@@ -1187,21 +1186,31 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 }
                 if caller_point_id is not None:
                     item["id"] = caller_point_id
-                results.append(item)
+                invalid_by_index[index] = item
                 continue
+            valid_points.append({"index": index, "row_index": row_index, "id": caller_point_id, "lat": lat, "lon": lon})
+        try:
+            raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry)
+        except Exception as exc:
+            raw_results = [{"error": str(exc), "point": {"lat": point.get("lat"), "lon": point.get("lon")}} for point in valid_points]
+
+        shaped_by_index: dict[int, dict[str, Any]] = dict(invalid_by_index)
+        for point, raw in zip(valid_points, raw_results):
             try:
-                raw = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
                 shaped = _shape_resolve_point_payload(raw, request_id)
                 shaped.pop("request_id", None)
             except Exception as exc:
-                shaped = {"point": {"lat": lat, "lon": lon}, "error": {"code": "resolve_failed", "message": str(exc)}}
-            if shaped.get("error"):
+                shaped = {"point": {"lat": point["lat"], "lon": point["lon"]}, "error": {"code": "resolve_failed", "message": str(exc)}}
+            item = {"index": point["index"], "row_index": point["row_index"], **shaped}
+            if point.get("id") is not None:
+                item["id"] = point.get("id")
+            shaped_by_index[point["index"]] = item
+        for index in range(len(points)):
+            item = shaped_by_index.get(index) or {"index": index, "error": {"code": "resolve_failed", "message": "point did not produce a result"}}
+            if item.get("error"):
                 unresolved_count += 1
             else:
                 resolved_count += 1
-            item = {"index": index, "row_index": row_index, **shaped}
-            if caller_point_id is not None:
-                item["id"] = caller_point_id
             results.append(item)
         stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
 

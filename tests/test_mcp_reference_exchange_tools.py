@@ -83,17 +83,20 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("get_job_status", tool_names)
 
     def test_resolve_point_tool_accepts_point_batch(self) -> None:
-        def fake_resolve(lon, lat, include_geometry=False):
-            return {
-                "point": {"lon": lon, "lat": lat},
-                "matched": {"loc_id": f"TEST-{lat}-{lon}", "iso3": "USA"},
-                "deepest_resolved_loc_id": f"TEST-{lat}-{lon}",
-                "deepest_resolved_admin_level": "admin_2",
-                "stack": [{"loc_id": "USA"}, {"loc_id": f"TEST-{lat}-{lon}"}],
-            }
+        def fake_resolve(points, include_geometry=False):
+            return [
+                {
+                    "point": {"lon": point["lon"], "lat": point["lat"]},
+                    "matched": {"loc_id": f"TEST-{point['lat']}-{point['lon']}", "iso3": "USA"},
+                    "deepest_resolved_loc_id": f"TEST-{point['lat']}-{point['lon']}",
+                    "deepest_resolved_admin_level": "admin_2",
+                    "stack": [{"loc_id": "USA"}, {"loc_id": f"TEST-{point['lat']}-{point['lon']}"}],
+                }
+                for point in points
+            ]
 
         with (
-            mock.patch("mapmover.runtime.loc_id_resolution.resolve_point_to_loc_id_stack", side_effect=fake_resolve),
+            mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve) as bulk_mock,
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
             payload = _tool_call(
@@ -110,6 +113,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["batch_id"], "batch-1")
+        bulk_mock.assert_called_once()
         self.assertEqual(payload["point_count"], 2)
         self.assertEqual(payload["resolved_count"], 2)
         self.assertEqual(payload["results"][0]["row_index"], 10)
@@ -578,31 +582,18 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["loc_ids"], ["USA-CA-037"])
 
     def test_resolve_loc_id_scope_expands_country_to_counties(self) -> None:
-        def fake_index(*, parent_loc_id=None, admin_level=None, bbox=None):
-            if parent_loc_id == "USA" and admin_level == 2:
-                return {"rows": [], "count": 0}
-            if parent_loc_id == "USA" and admin_level == 1:
-                return {
-                    "rows": [
-                        {"loc_id": "USA-G166186276B10610315112087", "parent_id": "USA", "admin_level": 1, "name": "Minnesota"},
-                        {"loc_id": "USA-G166186276B10933057601622", "parent_id": "USA", "admin_level": 1, "name": "Wyoming"},
-                    ],
-                    "count": 2,
-                }
-            if parent_loc_id == "USA-MN" and admin_level == 2:
-                return {
-                    "rows": [
-                        {"loc_id": "USA-MN-001", "parent_id": "USA-MN", "admin_level": 2, "name": "Aitkin County"},
-                        {"loc_id": "USA-MN-003", "parent_id": "USA-MN", "admin_level": 2, "name": "Anoka County"},
-                    ],
-                    "count": 2,
-                }
-            if parent_loc_id == "USA-WY" and admin_level == 2:
-                return {"rows": [{"loc_id": "USA-WY-001", "parent_id": "USA-WY", "admin_level": 2, "name": "Albany County"}], "count": 1}
-            return {"rows": [], "count": 0}
+        pd = __import__("pandas")
+        base_rows = pd.DataFrame(
+            [
+                {"loc_id": "USA-MN-001", "parent_id": "USA-MN", "admin_level": 2, "name": "Aitkin County"},
+                {"loc_id": "USA-MN-003", "parent_id": "USA-MN", "admin_level": 2, "name": "Anoka County"},
+                {"loc_id": "USA-WY-001", "parent_id": "USA-WY", "admin_level": 2, "name": "Albany County"},
+            ]
+        )
 
         with (
-            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_index", side_effect=fake_index) as index_mock,
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_index", return_value={"rows": [], "count": 0}) as index_mock,
+            mock.patch("mapmover.runtime.geometry_tool_jobs.load_country_parquet", return_value=base_rows) as base_mock,
             mock.patch("mapmover.routes.mcp.log_api_query_event"),
         ):
             payload = _tool_call(
@@ -611,7 +602,8 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 {"parent_loc_id": "USA", "admin_level": "admin_2", "limit": 2},
             )
 
-        self.assertGreaterEqual(index_mock.call_count, 4)
+        index_mock.assert_called_once()
+        base_mock.assert_called_once_with("USA", admin_level=2)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["total_count"], 3)
         self.assertEqual(payload["returned_count"], 2)

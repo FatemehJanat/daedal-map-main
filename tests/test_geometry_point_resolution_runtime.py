@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from mapmover.geometry_handlers import resolve_point_to_location
+from mapmover.geometry_handlers import resolve_point_to_location, resolve_points_to_locations
 from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
@@ -135,6 +135,72 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(result["country"]["loc_id"], "AUS")
         self.assertEqual(result["matched"]["loc_id"], "AUS-G114531-G295907")
         self.assertEqual(result["matched"]["admin_level"], 2)
+
+    def test_resolve_points_to_locations_batches_country_admin_reads(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 24,
+                    "bbox_max_lon": -66,
+                    "bbox_max_lat": 50,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                }
+            ]
+        )
+        admin1_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA",
+                    "parent_id": "USA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 32,
+                    "bbox_max_lon": -113,
+                    "bbox_max_lat": 42,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                }
+            ]
+        )
+        admin2_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA-037",
+                    "parent_id": "USA-CA",
+                    "name": "Los Angeles",
+                    "admin_level": 2,
+                    "bbox_min_lon": -119,
+                    "bbox_min_lat": 33,
+                    "bbox_max_lon": -117,
+                    "bbox_max_lat": 35,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                }
+            ]
+        )
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]) as viewport_mock,
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[]),
+        ):
+            results = resolve_points_to_locations(
+                [
+                    {"row_index": 1, "lon": -118.25, "lat": 34.05},
+                    {"row_index": 2, "lon": -118.2, "lat": 34.0},
+                ],
+                include_geometry=False,
+            )
+
+        self.assertEqual(viewport_mock.call_count, 2)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
+        self.assertEqual(results[1]["matched"]["loc_id"], "USA-CA-037")
 
 
 if __name__ == "__main__":
