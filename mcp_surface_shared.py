@@ -132,7 +132,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
+            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; use country_scope when the caller already knows all points belong to one country. Responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -158,6 +158,8 @@ def build_tool_definitions() -> list[dict]:
                         "anyOf": [{"type": "string"}, {"type": "integer"}],
                         "description": "Requested administrative level such as admin_0, admin_1, admin_2, admin_3, admin_4, or admin_5. Default admin_2. Use deepest/all only when the caller explicitly needs the deepest supported local geometry.",
                     },
+                    "country_scope": {"type": "string", "description": "Optional ISO3/admin_0 loc_id scope such as USA or CAN. Use only when every point in the request should be resolved inside that one country; this lets the runtime skip global country detection and use one country geometry bank."},
+                    "country_hint": {"type": "string", "description": "Alias for country_scope for clients that already use hint terminology."},
                     "include_geometry": {"type": "boolean", "description": "When true, include geometry in resolver internals where available. Default false to keep responses small."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id echoed in the result."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},

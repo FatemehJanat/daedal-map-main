@@ -1110,6 +1110,7 @@ def resolve_points_to_locations(
     timing_ms: dict[str, int] | None = None,
     target_admin_level: int | None = 2,
     max_admin_level: int | None = None,
+    country_scope: str | None = None,
 ):
     """Resolve multiple points through one shared geometry-loading pass.
 
@@ -1138,24 +1139,39 @@ def resolve_points_to_locations(
 
     results: list[dict | None] = [None] * len(normalized_points)
     by_country: dict[str, list[dict]] = {}
+    scope_iso3 = str(country_scope or "").strip().upper()
     stage_started = time.perf_counter()
-    country_index = geometry_spine_index_for_frame(country_df)
-    country_matches = country_index.match_points(normalized_points) if country_index is not None else [None] * len(normalized_points)
-    for item, country_spine_match in zip(normalized_points, country_matches):
-        if item.get("error"):
-            results[item["index"]] = {"error": item["error"]}
-            continue
-        lon = float(item["lon"])
-        lat = float(item["lat"])
-        country_match = country_spine_match.row if country_spine_match is not None else _find_containing_country_with_fallback(country_df, lon, lat)
-        if country_match is None:
-            results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
-            continue
-        iso3 = str(country_match.get("loc_id") or "").strip()
-        item["country_match"] = country_match
-        item["iso3"] = iso3
-        by_country.setdefault(iso3, []).append(item)
-    _add_timing_ms(timing_ms, "country_match_ms", stage_started)
+    if scope_iso3:
+        scoped_rows = country_df[country_df["loc_id"].astype(str).str.upper() == scope_iso3] if "loc_id" in country_df.columns else pd.DataFrame()
+        if scoped_rows.empty:
+            return [{"error": f"Unknown country_scope {scope_iso3}", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
+        country_match = scoped_rows.iloc[0]
+        for item in normalized_points:
+            if item.get("error"):
+                results[item["index"]] = {"error": item["error"]}
+                continue
+            item["country_match"] = country_match
+            item["iso3"] = scope_iso3
+            by_country.setdefault(scope_iso3, []).append(item)
+        _add_timing_ms(timing_ms, "country_scope_ms", stage_started)
+    else:
+        country_index = geometry_spine_index_for_frame(country_df)
+        country_matches = country_index.match_points(normalized_points) if country_index is not None else [None] * len(normalized_points)
+        for item, country_spine_match in zip(normalized_points, country_matches):
+            if item.get("error"):
+                results[item["index"]] = {"error": item["error"]}
+                continue
+            lon = float(item["lon"])
+            lat = float(item["lat"])
+            country_match = country_spine_match.row if country_spine_match is not None else _find_containing_country_with_fallback(country_df, lon, lat)
+            if country_match is None:
+                results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
+                continue
+            iso3 = str(country_match.get("loc_id") or "").strip()
+            item["country_match"] = country_match
+            item["iso3"] = iso3
+            by_country.setdefault(iso3, []).append(item)
+        _add_timing_ms(timing_ms, "country_match_ms", stage_started)
 
     for iso3, country_items in by_country.items():
         min_lon = min(float(item["lon"]) for item in country_items)

@@ -1269,6 +1269,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
 
         include_geometry = bool(payload.get("include_geometry", False))
         target_admin_level = _point_lookup_target_admin_level(payload)
+        country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         results: list[dict[str, Any]] = []
         resolved_count = 0
         unresolved_count = 0
@@ -1338,6 +1339,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 include_geometry=include_geometry,
                 timing_ms=resolver_stages,
                 target_admin_level=target_admin_level,
+                country_scope=country_scope,
             )
         except Exception as exc:
             raw_results = [{"error": str(exc), "point": {"lat": point.get("lat"), "lon": point.get("lon")}} for point in valid_points]
@@ -1381,6 +1383,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "resolved_count": resolved_count,
             "unresolved_count": unresolved_count,
             "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
+            "country_scope": country_scope,
             "results": results,
         }
         _log_mcp_tool_usage_event(
@@ -1406,6 +1409,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
                 "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
+                "country_scope": country_scope,
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,
@@ -1468,6 +1472,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         from mapmover.geometry_handlers import resolve_points_to_locations
 
         target_admin_level = _point_lookup_target_admin_level(payload)
+        country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         runtime_started = time.perf_counter()
         resolver_stages: dict[str, int] = {}
         raw_results = resolve_points_to_locations(
@@ -1475,6 +1480,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             include_geometry=False,
             timing_ms=resolver_stages,
             target_admin_level=target_admin_level,
+            country_scope=country_scope,
         )
         raw = raw_results[0] if raw_results else {"error": "point did not resolve", "point": {"lon": lon, "lat": lat}}
         stages = {"point_resolver_ms": _elapsed_ms(runtime_started), **resolver_stages}
@@ -1518,6 +1524,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "resolved_count": 1 if resolved else 0,
             "unresolved_count": 0 if resolved else 1,
             "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
+            "country_scope": country_scope,
             **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1 if resolved else 0),
         },
     )

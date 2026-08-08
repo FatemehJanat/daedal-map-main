@@ -263,6 +263,58 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
         self.assertEqual(results[1]["matched"]["loc_id"], "USA-CA-037")
 
+    def test_resolve_points_country_scope_skips_global_country_overlay(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                }
+            ]
+        )
+        admin1_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA",
+                    "parent_id": "USA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                }
+            ]
+        )
+        admin2_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA-037",
+                    "parent_id": "USA-CA",
+                    "name": "Los Angeles",
+                    "admin_level": 2,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                }
+            ]
+        )
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]),
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[]),
+            patch("mapmover.geometry_handlers._find_containing_country_with_fallback") as country_fallback,
+        ):
+            results = resolve_points_to_locations(
+                [{"lon": -118.25, "lat": 34.05}],
+                include_geometry=False,
+                country_scope="USA",
+            )
+
+        country_fallback.assert_not_called()
+        self.assertEqual(results[0]["country"]["loc_id"], "USA")
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
+
     def test_resolve_points_defaults_to_admin2_and_reports_deeper_levels(self):
         import pandas as pd
 
