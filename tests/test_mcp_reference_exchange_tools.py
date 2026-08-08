@@ -344,7 +344,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 {"batch_id": "geo-1", "loc_ids": ["USA-CA-037", "USA-NOPE"]},
             )
 
-        geometry_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"], include_polygon=False, include_info=True)
+        geometry_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"], include_polygon=False, include_info=False)
         self.assertEqual(payload["batch_id"], "geo-1")
         self.assertEqual(payload["requested"], 2)
         self.assertEqual(payload["items"][0]["loc_id"], "USA-CA-037")
@@ -359,6 +359,22 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 1)
         self.assertEqual(analytics["metadata"]["compute"]["include_polygon"], False)
         self.assertIn("geometry_fetch_ms", analytics["metadata"]["compute"]["stage_ms"])
+
+    def test_get_geometry_tool_bulk_include_info_is_explicit(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.get_geometry_references",
+                return_value={"ok": True, "requested": 1, "results": [{"ok": True, "loc_id": "USA-CA-037"}]},
+            ) as geometry_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            _tool_call(
+                self.client,
+                "get_geometry",
+                {"loc_ids": ["USA-CA-037"], "include_info": True},
+            )
+
+        geometry_mock.assert_called_once_with(["USA-CA-037"], include_polygon=False, include_info=True)
 
     def test_get_geometry_tool_trusted_token_bypasses_batch_limit(self) -> None:
         with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass", "MCP_TOOL_BATCH_LIMIT_GET_GEOMETRY": "2"}):

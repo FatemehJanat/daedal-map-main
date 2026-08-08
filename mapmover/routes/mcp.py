@@ -2315,6 +2315,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
     payload = _ensure_request_id(arguments, "get_geometry")
     request_id = str(payload.get("request_id") or "")
     include_polygon = bool(payload.get("include_polygon", False))
+    include_info = bool(payload.get("include_info", False))
     if "loc_ids" in payload:
         batch_id = str(payload.get("batch_id") or "").strip() or None
         loc_ids = payload.get("loc_ids")
@@ -2368,7 +2369,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             from mapmover.runtime.reference_exchange import get_geometry_references
 
             runtime_started = time.perf_counter()
-            result = get_geometry_references(loc_ids, include_polygon=include_polygon, include_info=True)
+            result = get_geometry_references(loc_ids, include_polygon=include_polygon, include_info=include_info)
             stages = {"geometry_fetch_ms": _elapsed_ms(runtime_started)}
         except Exception as exc:
             error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="get_geometry_failed", message=str(exc), loc_id_count=len(loc_ids))
@@ -2410,6 +2411,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
                 "missing_count": max(0, len(loc_ids) - available_count),
                 "batch_id": batch_id,
                 "include_polygon": include_polygon,
+                "include_info": include_info,
                 "batch_limit": limit,
                 "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
                 "artifact_token_id": trusted_token_id,

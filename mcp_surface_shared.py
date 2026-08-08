@@ -368,6 +368,7 @@ def build_tool_definitions() -> list[dict]:
                     "loc_id": {"type": "string", "description": "DaedalMap loc_id, such as USA-CA-037, USA-Z-00601, USA-NWSFZ-AKZ317, EEZ-USA, or IHO1953-240001002."},
                     "loc_ids": {"type": "array", "items": {"type": "string"}, "description": "DaedalMap loc_ids to fetch in one call. Default public cap is deployment-configurable and lower when include_polygon is true."},
                     "include_polygon": {"type": "boolean", "description": "When true, include the full GeoJSON geometry. Default false."},
+                    "include_info": {"type": "boolean", "description": "When true for loc_ids batch mode, include heavier loc_id_info enrichment for each result. Default false for lean bulk geometry responses."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id for tracing."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
