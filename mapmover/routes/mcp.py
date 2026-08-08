@@ -1343,6 +1343,42 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
             )
         loc_ids = [str(value or "").strip() for value in raw_loc_ids if str(value or "").strip()]
         limit = _tool_batch_item_limit("loc_id_info", default=100, fallback_env_names=("LOC_ID_INFO_BATCH_LIMIT",))
+        if bool(payload.get("include_references")):
+            references_limit = (
+                _parse_env_int_optional("MCP_TOOL_REFERENCES_BATCH_LIMIT_LOC_ID_INFO")
+                or _tool_batch_item_limit("loc_id_info_references", default=25, fallback_env_names=("LOC_ID_INFO_REFERENCES_BATCH_LIMIT",))
+            )
+            if len(loc_ids) > references_limit:
+                error_payload = _batch_error_payload(
+                    request_id=request_id,
+                    batch_id=batch_id,
+                    code="too_many_loc_ids_for_references",
+                    message=f"loc_id_info with include_references accepts at most {references_limit} loc_ids per call",
+                    limit=references_limit,
+                    loc_id_count=len(loc_ids),
+                )
+                _log_mcp_tool_usage_event(
+                    request,
+                    request_id=request_id or batch_id or "",
+                    tool_name="loc_id_info",
+                    capability_id="loc_id_metadata",
+                    decision="deny",
+                    started_at=started_at,
+                    row_count=len(loc_ids),
+                    query_granularity=f"bulk_{len(loc_ids)}",
+                    response_payload=error_payload,
+                    error_code="too_many_loc_ids_for_references",
+                    metadata={
+                        "event": "loc_id_metadata",
+                        "tool_mode": "bulk",
+                        "quantity": len(loc_ids),
+                        "loc_id_count": len(loc_ids),
+                        "batch_id": batch_id,
+                        "batch_limit": references_limit,
+                        "include_references": True,
+                    },
+                )
+                return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         if len(loc_ids) > limit:
             error_payload = _batch_error_payload(
                 request_id=request_id,

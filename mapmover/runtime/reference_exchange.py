@@ -403,11 +403,24 @@ def convert_reference(
         min_share=min_share,
         limit_per_system=limit,
     )
+    results = [ref for ref in references.get("references") or [] if ref.get("system") == target]
+    if not results:
+        return _clean_json({
+            "ok": False,
+            "from": resolved,
+            "to_system": target,
+            "results": [],
+            "loc_id": loc_id,
+            "error": {
+                "code": "unsupported_target_system",
+                "message": f"no references found from loc_id to {target}",
+            },
+        })
     return _clean_json({
-        "ok": bool(references.get("reference_count")),
+        "ok": True,
         "from": resolved,
         "to_system": target,
-        "results": [ref for ref in references.get("references") or [] if ref.get("system") == target],
+        "results": results,
         "loc_id": loc_id,
     })
 

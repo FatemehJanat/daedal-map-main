@@ -309,6 +309,27 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["reference_count"], 1)
         self.assertEqual(payload["references"]["references"][0]["system"], "overlay_nws_fire_weather_zone")
 
+    def test_loc_id_info_references_batch_uses_smaller_guard(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"MCP_TOOL_REFERENCES_BATCH_LIMIT_LOC_ID_INFO": "2"}),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "loc_id_info",
+                {
+                    "loc_ids": ["USA-CA-037", "USA-NY-061", "USA-AK-282"],
+                    "include_references": True,
+                },
+            )
+
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["error"]["code"], "too_many_loc_ids_for_references")
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "deny")
+        self.assertEqual(analytics["error_code"], "too_many_loc_ids_for_references")
+        self.assertEqual(analytics["metadata"]["batch_limit"], 2)
+
     def test_tool_rate_limit_uses_per_tool_override(self) -> None:
         with mock.patch.dict(
             "os.environ",
@@ -483,6 +504,25 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "not_found")
         self.assertEqual(payload["error"]["message"], "no bridge artifact found")
         self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
+
+    def test_convert_reference_tool_rejects_empty_target_results(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
+            payload = _tool_call(
+                self.client,
+                "convert_reference",
+                {
+                    "from_system": "zip",
+                    "value": "10001",
+                    "to_system": "huc",
+                    "target_admin_level": "admin_2",
+                    "limit": 2,
+                },
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "unsupported_target_system")
+        self.assertEqual(analytics_mock.call_args.kwargs["decision"], "deny")
+        self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "unsupported_target_system")
 
     def test_resolve_loc_id_scope_uses_geometry_index(self) -> None:
         with (

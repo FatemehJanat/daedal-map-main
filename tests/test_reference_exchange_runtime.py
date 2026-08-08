@@ -96,6 +96,20 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertTrue(payload["results"])
         self.assertEqual(payload["results"][0]["system"], "overlay_nws_fire_weather_zone")
 
+    def test_convert_reference_without_target_results_is_not_success(self) -> None:
+        payload = convert_reference(
+            from_system="zip",
+            value="10001",
+            to_system="huc",
+            target_admin_level="admin_2",
+            limit=2,
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["to_system"], "huc")
+        self.assertEqual(payload["results"], [])
+        self.assertEqual(payload["error"]["code"], "unsupported_target_system")
+
     def test_unknown_bridge_system_returns_clean_error(self) -> None:
         payload = resolve_reference(
             from_system="huc",
