@@ -91,7 +91,7 @@ manifests. Send them only in the `Authorization` header.
 
 ## Pack install status
 
-The anonymous downloadable installer uses the curated
+The anonymous downloadable installer uses the curated pack-level
 `downloadable/packs/...` manifest contract. The Pack Store is the visual
 version of the same flow. GitHub users can use a text assistant or script to
 read the manifest, choose a pack, download the archive, verify it, and install
@@ -104,6 +104,10 @@ archives.
 
 Use pack manifests and archives for installs. Raw catalogs are discovery
 documents, not installable pack archives.
+
+Future storefront note: `download.daedalmap.com` may become the browseable
+storefront over the same pack registry/manifests. It should not define a
+separate inventory from the downloadable pack manifest contract.
 
 ## Storage isolation
 
