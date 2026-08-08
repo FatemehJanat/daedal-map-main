@@ -1131,7 +1131,6 @@ def resolve_points_to_locations(
     timing_ms: dict[str, int] | None = None,
     target_admin_level: int | None = 2,
     max_admin_level: int | None = None,
-    country_scope: str | None = None,
 ):
     """Resolve multiple points through one shared geometry-loading pass.
 
@@ -1152,58 +1151,30 @@ def resolve_points_to_locations(
             continue
         normalized_points.append({"index": index, "lon": lon, "lat": lat})
 
+    stage_started = time.perf_counter()
+    country_df = load_global_countries_frame()
+    _add_timing_ms(timing_ms, "global_country_load_ms", stage_started)
+    if country_df is None or country_df.empty:
+        return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
+
     results: list[dict | None] = [None] * len(normalized_points)
     by_country: dict[str, list[dict]] = {}
-    scoped_iso3 = str(country_scope or "").strip().upper()
-    if scoped_iso3:
-        scoped_iso3 = scoped_iso3.split("-", 1)[0]
-        stage_started = time.perf_counter()
-        scoped_country_df = load_country_parquet(scoped_iso3, admin_level=0)
-        if scoped_country_df is None or scoped_country_df.empty:
-            global_df = load_global_countries_frame()
-            if global_df is not None and not global_df.empty and "loc_id" in global_df.columns:
-                scoped_country_df = global_df[global_df["loc_id"].astype(str).str.upper() == scoped_iso3]
-        _add_timing_ms(timing_ms, "scoped_country_load_ms", stage_started)
-        if scoped_country_df is None or scoped_country_df.empty:
-            return [{"error": f"No country geometry available for scope {scoped_iso3}", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
-        stage_started = time.perf_counter()
-        for item in normalized_points:
-            if item.get("error"):
-                results[item["index"]] = {"error": item["error"]}
-                continue
-            lon = float(item["lon"])
-            lat = float(item["lat"])
-            country_match = _find_containing_row(scoped_country_df, lon, lat)
-            if country_match is None:
-                results[item["index"]] = {"error": f"Point is outside country scope {scoped_iso3}", "point": {"lon": lon, "lat": lat}}
-                continue
-            item["country_match"] = country_match
-            item["iso3"] = scoped_iso3
-            by_country.setdefault(scoped_iso3, []).append(item)
-        _add_timing_ms(timing_ms, "scoped_country_match_ms", stage_started)
-    else:
-        stage_started = time.perf_counter()
-        country_df = load_global_countries_frame()
-        _add_timing_ms(timing_ms, "global_country_load_ms", stage_started)
-        if country_df is None or country_df.empty:
-            return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
-
-        stage_started = time.perf_counter()
-        for item in normalized_points:
-            if item.get("error"):
-                results[item["index"]] = {"error": item["error"]}
-                continue
-            lon = float(item["lon"])
-            lat = float(item["lat"])
-            country_match = _find_containing_country_with_fallback(country_df, lon, lat)
-            if country_match is None:
-                results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
-                continue
-            iso3 = str(country_match.get("loc_id") or "").strip()
-            item["country_match"] = country_match
-            item["iso3"] = iso3
-            by_country.setdefault(iso3, []).append(item)
-        _add_timing_ms(timing_ms, "country_match_ms", stage_started)
+    stage_started = time.perf_counter()
+    for item in normalized_points:
+        if item.get("error"):
+            results[item["index"]] = {"error": item["error"]}
+            continue
+        lon = float(item["lon"])
+        lat = float(item["lat"])
+        country_match = _find_containing_country_with_fallback(country_df, lon, lat)
+        if country_match is None:
+            results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
+            continue
+        iso3 = str(country_match.get("loc_id") or "").strip()
+        item["country_match"] = country_match
+        item["iso3"] = iso3
+        by_country.setdefault(iso3, []).append(item)
+    _add_timing_ms(timing_ms, "country_match_ms", stage_started)
 
     for iso3, country_items in by_country.items():
         min_lon = min(float(item["lon"]) for item in country_items)

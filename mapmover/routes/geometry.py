@@ -97,20 +97,6 @@ def _point_lookup_target_admin_level(value=None) -> int | None:
         return 2
 
 
-def _point_lookup_country_scope(body: dict) -> str | None:
-    value = (
-        body.get("parent_loc_id")
-        or body.get("country_scope")
-        or body.get("country_hint")
-        or body.get("iso3")
-        or body.get("country")
-    )
-    scope = str(value or "").strip().upper()
-    if not scope:
-        return None
-    return scope.split("-", 1)[0]
-
-
 async def decode_request_body(request: Request) -> dict:
     """Decode MessagePack request body."""
     body_bytes = await request.body()
@@ -270,8 +256,7 @@ async def resolve_point_endpoint(req: Request):
             return msgpack_error("lon and lat are required", 400)
 
         target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
-        country_scope = _point_lookup_country_scope(body)
-        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True, target_admin_level=target_admin_level, country_scope=country_scope)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True, target_admin_level=target_admin_level)
         result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return msgpack_response(result, status_code=404)
@@ -296,9 +281,8 @@ async def resolve_point_json_endpoint(req: Request):
 
     include_geometry = bool(body.get("include_geometry", False))
     target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
-    country_scope = _point_lookup_country_scope(body)
     try:
-        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=include_geometry, target_admin_level=target_admin_level, country_scope=country_scope)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=include_geometry, target_admin_level=target_admin_level)
         result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return JSONResponse(result, status_code=404)
@@ -324,8 +308,6 @@ async def resolve_points_json_endpoint(req: Request):
     limit = _point_lookup_batch_limit()
     paid_limit = _point_lookup_paid_batch_limit()
     trusted_token, trusted_token_id = _trusted_artifact_access(req)
-    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
-    country_scope = _point_lookup_country_scope(body)
     if len(points) > paid_limit:
         return JSONResponse(
             {
@@ -335,24 +317,6 @@ async def resolve_points_json_endpoint(req: Request):
                 "retry_hint": "Split this request into smaller paid batches or use an async conversion/export job.",
             },
             status_code=413,
-        )
-    if len(points) > limit and not country_scope:
-        return JSONResponse(
-            {
-                "error": {
-                    "code": "bulk_scope_requires_single_country_and_level",
-                    "message": "Bulk point lookups over the free preview limit must target one country and one admin level.",
-                },
-                "scope_policy": {
-                    "required_for": "paid_or_trusted_bulk",
-                    "country_scope_fields": ["parent_loc_id", "country_scope", "country_hint", "iso3", "country"],
-                    "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-                    "example": {"parent_loc_id": "USA", "target_admin_level": "admin_2", "points": [{"lat": 34.0522, "lon": -118.2437}]},
-                },
-                "free_limit": limit,
-                "paid_limit": paid_limit,
-            },
-            status_code=400,
         )
     if len(points) > limit and trusted_token is None:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
@@ -399,6 +363,7 @@ async def resolve_points_json_endpoint(req: Request):
         return JSONResponse(quote_payload, status_code=402)
 
     include_geometry = bool(body.get("include_geometry", False))
+    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
     source = str(body.get("source") or "").strip()[:80] or "unknown"
     batch_id = str(body.get("batch_id") or "").strip()[:120] or None
     valid_points = []
@@ -429,7 +394,7 @@ async def resolve_points_json_endpoint(req: Request):
 
     resolver_stage_ms = {}
     try:
-        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stage_ms, target_admin_level=target_admin_level, country_scope=country_scope)
+        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stage_ms, target_admin_level=target_admin_level)
     except Exception as exc:
         raw_results = [{"error": str(exc), "point": {"lon": point.get("lon"), "lat": point.get("lat")}} for point in valid_points]
 
@@ -457,7 +422,6 @@ async def resolve_points_json_endpoint(req: Request):
         "resolved_count": resolved_count,
         "unresolved_count": unresolved_count,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-        "country_scope": country_scope,
         "results": results,
     }
 
@@ -476,8 +440,6 @@ async def resolve_points_json_endpoint(req: Request):
         "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
         "artifact_token_id": trusted_token_id,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-        "country_scope": country_scope,
-        "scope_policy": "single_country_single_admin_level" if country_scope else "small_flexible_discovery",
         "resolver_stage_ms": resolver_stage_ms,
     }
 

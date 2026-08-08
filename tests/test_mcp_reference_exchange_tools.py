@@ -147,7 +147,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"parent_loc_id": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+                {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
             )
 
         self.assertTrue(payload["payment_required"])
@@ -180,39 +180,17 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 payload = _tool_call(
                     self.client,
                     "resolve_point",
-                    {
-                        "parent_loc_id": "USA",
-                        "target_admin_level": "admin_2",
-                        "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)],
-                    },
-                    headers={"Authorization": "Bearer tok_test_bypass"},
-                )
-
-        self.assertEqual(payload["point_count"], 50)
-        self.assertEqual(payload["country_scope"], "USA")
-        self.assertEqual(payload["resolved_count"], 50)
-        bulk_mock.assert_called_once()
-        self.assertEqual(bulk_mock.call_args.kwargs["country_scope"], "USA")
-        analytics = analytics_mock.call_args.kwargs
-        self.assertEqual(analytics["decision"], "allow")
-        self.assertEqual(analytics["payment_rail"], "trusted_artifact")
-        self.assertIsNotNone(analytics["artifact_token_id"])
-
-    def test_resolve_point_tool_rejects_paid_size_batch_without_country_scope(self) -> None:
-        with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass"}):
-            with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
-                payload = _tool_call(
-                    self.client,
-                    "resolve_point",
                     {"points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
                     headers={"Authorization": "Bearer tok_test_bypass"},
                 )
 
-        self.assertEqual(payload["error"]["code"], "bulk_scope_requires_single_country_and_level")
-        self.assertEqual(payload["scope_policy"]["required_for"], "paid_or_trusted_bulk")
+        self.assertEqual(payload["point_count"], 50)
+        self.assertEqual(payload["resolved_count"], 50)
+        bulk_mock.assert_called_once()
         analytics = analytics_mock.call_args.kwargs
-        self.assertEqual(analytics["decision"], "deny")
-        self.assertEqual(analytics["error_code"], "bulk_scope_requires_single_country_and_level")
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "trusted_artifact")
+        self.assertIsNotNone(analytics["artifact_token_id"])
 
     def test_resolve_point_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):
@@ -220,7 +198,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 payload = _tool_call(
                     self.client,
                     "resolve_point",
-                    {"parent_loc_id": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(3)]},
+                    {"points": [{"lon": 0, "lat": 0} for _ in range(3)]},
                 )
 
         self.assertEqual(payload["limits"]["free_batch_limit"], 2)

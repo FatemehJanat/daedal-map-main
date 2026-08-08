@@ -232,20 +232,6 @@ def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
     return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=2))
 
 
-def _point_lookup_country_scope(payload: dict[str, Any]) -> str | None:
-    value = (
-        payload.get("parent_loc_id")
-        or payload.get("country_scope")
-        or payload.get("country_hint")
-        or payload.get("iso3")
-        or payload.get("country")
-    )
-    scope = str(value or "").strip().upper()
-    if not scope:
-        return None
-    return scope.split("-", 1)[0]
-
-
 def _point_lookup_paid_batch_limit(free_limit: int) -> int:
     import os
 
@@ -1236,56 +1222,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit, "paid_batch_limit": paid_limit},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        include_geometry = bool(payload.get("include_geometry", False))
-        target_admin_level = _point_lookup_target_admin_level(payload)
-        country_scope = _point_lookup_country_scope(payload)
-        if len(points) > limit and not country_scope:
-            error_payload = _batch_error_payload(
-                request_id=request_id,
-                batch_id=batch_id,
-                code="bulk_scope_requires_single_country_and_level",
-                message=(
-                    "Bulk point lookups over the free preview limit must target one country "
-                    "and one admin level. Add parent_loc_id, country_scope, country_hint, "
-                    "iso3, or country, then retry this batch."
-                ),
-                point_count=len(points),
-                limit=limit,
-            )
-            error_payload["scope_policy"] = {
-                "required_for": "paid_or_trusted_bulk",
-                "country_scope_fields": ["parent_loc_id", "country_scope", "country_hint", "iso3", "country"],
-                "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-                "example": {
-                    "parent_loc_id": "USA",
-                    "target_admin_level": "admin_2",
-                    "points": [{"lat": 34.0522, "lon": -118.2437}],
-                },
-            }
-            _log_mcp_tool_usage_event(
-                request,
-                request_id=request_id or batch_id or "",
-                tool_name="resolve_point",
-                capability_id="point_lookup",
-                decision="deny",
-                started_at=started_at,
-                row_count=len(points),
-                query_granularity=f"bulk_{len(points)}",
-                response_payload=error_payload,
-                error_code="bulk_scope_requires_single_country_and_level",
-                metadata={
-                    "event": "point_lookup",
-                    "tool_mode": "bulk",
-                    "quantity": len(points),
-                    "batch_id": batch_id,
-                    "point_count": len(points),
-                    "batch_limit": limit,
-                    "paid_batch_limit": paid_limit,
-                    "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-                    "scope_policy": "single_country_single_admin_level_required",
-                },
-            )
-            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         if len(points) > limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
                 request,
@@ -1331,6 +1267,8 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(quote_payload, is_error=True), rpc_request_id)
 
+        include_geometry = bool(payload.get("include_geometry", False))
+        target_admin_level = _point_lookup_target_admin_level(payload)
         results: list[dict[str, Any]] = []
         resolved_count = 0
         unresolved_count = 0
@@ -1400,7 +1338,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 include_geometry=include_geometry,
                 timing_ms=resolver_stages,
                 target_admin_level=target_admin_level,
-                country_scope=country_scope,
             )
         except Exception as exc:
             raw_results = [{"error": str(exc), "point": {"lat": point.get("lat"), "lon": point.get("lon")}} for point in valid_points]
@@ -1444,7 +1381,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "resolved_count": resolved_count,
             "unresolved_count": unresolved_count,
             "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-            "country_scope": country_scope,
             "results": results,
         }
         _log_mcp_tool_usage_event(
@@ -1470,8 +1406,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
                 "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
-                "country_scope": country_scope,
-                "scope_policy": "single_country_single_admin_level" if country_scope else "small_flexible_discovery",
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,
@@ -1534,7 +1468,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         from mapmover.geometry_handlers import resolve_points_to_locations
 
         target_admin_level = _point_lookup_target_admin_level(payload)
-        country_scope = _point_lookup_country_scope(payload)
         runtime_started = time.perf_counter()
         resolver_stages: dict[str, int] = {}
         raw_results = resolve_points_to_locations(
@@ -1542,7 +1475,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             include_geometry=False,
             timing_ms=resolver_stages,
             target_admin_level=target_admin_level,
-            country_scope=country_scope,
         )
         raw = raw_results[0] if raw_results else {"error": "point did not resolve", "point": {"lon": lon, "lat": lat}}
         stages = {"point_resolver_ms": _elapsed_ms(runtime_started), **resolver_stages}
