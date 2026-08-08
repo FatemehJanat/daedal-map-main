@@ -16,6 +16,7 @@ from typing import Any
 
 from ..geometry_handlers import get_geometry_index
 from .admin_hierarchy import infer_admin_level_from_loc_id
+from .geography_reference import translate_geometry_id_to_local_id
 from .reference_exchange import convert_reference, get_geometry_availability, get_geometry_references, resolve_reference
 
 
@@ -72,6 +73,10 @@ def _bbox_value(value: Any) -> tuple[float, float, float, float] | None:
 
 
 def _row_summary(row: dict[str, Any]) -> dict[str, Any]:
+    raw_loc_id = str(row.get("loc_id") or "").strip()
+    loc_id = translate_geometry_id_to_local_id(raw_loc_id) if raw_loc_id else None
+    raw_parent_id = str(row.get("parent_id") or "").strip()
+    parent_id = translate_geometry_id_to_local_id(raw_parent_id) if raw_parent_id else None
     bbox = None
     if all(key in row for key in ("bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat")):
         bbox = [row.get("bbox_min_lon"), row.get("bbox_min_lat"), row.get("bbox_max_lon"), row.get("bbox_max_lat")]
@@ -80,9 +85,9 @@ def _row_summary(row: dict[str, Any]) -> dict[str, Any]:
         centroid = {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")}
     return _clean_json(
         {
-            "loc_id": row.get("loc_id"),
+            "loc_id": loc_id or row.get("loc_id"),
             "name": row.get("name"),
-            "parent_id": row.get("parent_id"),
+            "parent_id": parent_id or row.get("parent_id"),
             "admin_level": row.get("admin_level"),
             "code": row.get("code"),
             "bbox": bbox,
@@ -111,7 +116,11 @@ def _scope_rows(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, 
             if level == admin_level:
                 level_rows.extend(child_rows)
             else:
-                next_frontier.extend(str(row.get("loc_id") or "").strip() for row in child_rows if row.get("loc_id"))
+                next_frontier.extend(
+                    translate_geometry_id_to_local_id(str(row.get("loc_id") or "").strip())
+                    for row in child_rows
+                    if row.get("loc_id")
+                )
         if level == admin_level:
             return level_rows
         frontier = next_frontier

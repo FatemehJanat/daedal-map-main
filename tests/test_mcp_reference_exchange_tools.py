@@ -529,21 +529,21 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             if parent_loc_id == "USA" and admin_level == 1:
                 return {
                     "rows": [
-                        {"loc_id": "USA-CA", "parent_id": "USA", "admin_level": 1, "name": "California"},
-                        {"loc_id": "USA-NY", "parent_id": "USA", "admin_level": 1, "name": "New York"},
+                        {"loc_id": "USA-G166186276B10610315112087", "parent_id": "USA", "admin_level": 1, "name": "Minnesota"},
+                        {"loc_id": "USA-G166186276B10933057601622", "parent_id": "USA", "admin_level": 1, "name": "Wyoming"},
                     ],
                     "count": 2,
                 }
-            if parent_loc_id == "USA-CA" and admin_level == 2:
+            if parent_loc_id == "USA-MN" and admin_level == 2:
                 return {
                     "rows": [
-                        {"loc_id": "USA-CA-037", "parent_id": "USA-CA", "admin_level": 2, "name": "Los Angeles County"},
-                        {"loc_id": "USA-CA-075", "parent_id": "USA-CA", "admin_level": 2, "name": "San Francisco County"},
+                        {"loc_id": "USA-MN-001", "parent_id": "USA-MN", "admin_level": 2, "name": "Aitkin County"},
+                        {"loc_id": "USA-MN-003", "parent_id": "USA-MN", "admin_level": 2, "name": "Anoka County"},
                     ],
                     "count": 2,
                 }
-            if parent_loc_id == "USA-NY" and admin_level == 2:
-                return {"rows": [{"loc_id": "USA-NY-061", "parent_id": "USA-NY", "admin_level": 2, "name": "New York County"}], "count": 1}
+            if parent_loc_id == "USA-WY" and admin_level == 2:
+                return {"rows": [{"loc_id": "USA-WY-001", "parent_id": "USA-WY", "admin_level": 2, "name": "Albany County"}], "count": 1}
             return {"rows": [], "count": 0}
 
         with (
@@ -561,7 +561,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["total_count"], 3)
         self.assertEqual(payload["returned_count"], 2)
         self.assertTrue(payload["truncated"])
-        self.assertEqual(payload["loc_ids"], ["USA-CA-037", "USA-CA-075"])
+        self.assertEqual(payload["loc_ids"], ["USA-MN-001", "USA-MN-003"])
 
     def test_estimate_geometry_package_uses_availability_preflight(self) -> None:
         with (
