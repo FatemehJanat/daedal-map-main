@@ -563,6 +563,38 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertTrue(payload["truncated"])
         self.assertEqual(payload["loc_ids"], ["USA-MN-001", "USA-MN-003"])
 
+    def test_resolve_loc_id_scope_rejects_unsupported_deep_country_level(self) -> None:
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_country_supported_deep_admin_levels", return_value=[]),
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_index") as index_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_loc_id_scope",
+                {"parent_loc_id": "NGA", "admin_level": "admin_4", "limit": 5},
+            )
+
+        index_mock.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "unsupported_admin_level")
+
+    def test_resolve_loc_id_scope_rejects_too_broad_deep_country_level(self) -> None:
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_country_supported_deep_admin_levels", return_value=[3, 4]),
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_index") as index_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_loc_id_scope",
+                {"parent_loc_id": "USA", "admin_level": "admin_4", "limit": 5},
+            )
+
+        index_mock.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "scope_too_broad")
+
     def test_estimate_geometry_package_uses_availability_preflight(self) -> None:
         with (
             mock.patch(

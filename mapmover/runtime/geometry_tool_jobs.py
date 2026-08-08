@@ -16,6 +16,7 @@ from typing import Any
 
 from ..geometry_handlers import get_geometry_index
 from .admin_hierarchy import infer_admin_level_from_loc_id
+from .country_geography import get_country_supported_deep_admin_levels
 from .geography_reference import translate_geometry_id_to_local_id
 from .reference_exchange import convert_reference, get_geometry_availability, get_geometry_references, resolve_reference
 
@@ -70,6 +71,49 @@ def _bbox_value(value: Any) -> tuple[float, float, float, float] | None:
         return tuple(float(part) for part in parts)  # type: ignore[return-value]
     except (TypeError, ValueError):
         return None
+
+
+def _country_code_from_loc_id(loc_id: str) -> str:
+    return str(loc_id or "").strip().split("-", 1)[0].upper()
+
+
+def _unsupported_deep_scope_error(parent_loc_id: str, admin_level: int, bbox: tuple[float, float, float, float] | None) -> dict[str, Any] | None:
+    if admin_level < 3:
+        return None
+    iso3 = _country_code_from_loc_id(parent_loc_id)
+    supported_levels = get_country_supported_deep_admin_levels(iso3)
+    if admin_level not in supported_levels:
+        return {
+            "ok": False,
+            "parent_loc_id": parent_loc_id,
+            "admin_level": admin_level,
+            "error": {
+                "code": "unsupported_admin_level",
+                "message": f"{iso3} does not publish admin_{admin_level} geometry through this scope tool",
+            },
+            "supported_deep_admin_levels": [f"admin_{level}" for level in supported_levels],
+        }
+    parent_level = infer_admin_level_from_loc_id(parent_loc_id)
+    if parent_level is None:
+        return {
+            "ok": False,
+            "parent_loc_id": parent_loc_id,
+            "admin_level": admin_level,
+            "error": {"code": "invalid_scope", "message": "parent_loc_id is not a recognized admin loc_id shape"},
+            "supported_deep_admin_levels": [f"admin_{level}" for level in supported_levels],
+        }
+    if parent_level < 2 and bbox is None:
+        return {
+            "ok": False,
+            "parent_loc_id": parent_loc_id,
+            "admin_level": admin_level,
+            "error": {
+                "code": "scope_too_broad",
+                "message": "Deep admin scope requests require an admin_2 parent or bbox; use estimate/create export for country- or state-scale deep geometry.",
+            },
+            "supported_deep_admin_levels": [f"admin_{level}" for level in supported_levels],
+        }
+    return None
 
 
 def _row_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -138,6 +182,9 @@ def resolve_loc_id_scope(payload: dict[str, Any], *, default_limit: int = 100) -
     if admin_level is None:
         return {"ok": False, "error": {"code": "invalid_scope", "message": "admin_level is required"}}
     bbox = _bbox_value(scope.get("bbox") if isinstance(scope, dict) else payload.get("bbox"))
+    unsupported = _unsupported_deep_scope_error(parent_loc_id, admin_level, bbox)
+    if unsupported:
+        return _clean_json(unsupported)
     limit = max(0, int(payload.get("limit") or default_limit))
     offset = max(0, int(payload.get("offset") or 0))
     count_only = bool(payload.get("count_only"))
