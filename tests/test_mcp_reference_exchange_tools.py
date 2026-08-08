@@ -83,7 +83,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("get_job_status", tool_names)
 
     def test_resolve_point_tool_accepts_point_batch(self) -> None:
-        def fake_resolve(points, include_geometry=False):
+        def fake_resolve(points, include_geometry=False, **_kwargs):
             return [
                 {
                     "point": {"lon": point["lon"], "lat": point["lat"]},

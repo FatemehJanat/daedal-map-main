@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import threading
+import time
 import pandas as pd
 from collections import OrderedDict
 from pathlib import Path
@@ -1118,7 +1119,13 @@ def _row_state_abbrev(row) -> str | None:
     return _state_code_from_row(row)
 
 
-def resolve_points_to_locations(points: list[dict], include_geometry: bool = False):
+def _add_timing_ms(timing_ms: dict[str, int] | None, key: str, started_at: float) -> None:
+    if timing_ms is None:
+        return
+    timing_ms[key] = timing_ms.get(key, 0) + int((time.perf_counter() - started_at) * 1000)
+
+
+def resolve_points_to_locations(points: list[dict], include_geometry: bool = False, timing_ms: dict[str, int] | None = None):
     """Resolve multiple points through one shared geometry-loading pass.
 
     The single-point resolver is intentionally exact, but calling it in a loop
@@ -1136,12 +1143,15 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
             continue
         normalized_points.append({"index": index, "lon": lon, "lat": lat})
 
+    stage_started = time.perf_counter()
     country_df = load_global_countries_frame()
+    _add_timing_ms(timing_ms, "global_country_load_ms", stage_started)
     if country_df is None or country_df.empty:
         return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
 
     results: list[dict | None] = [None] * len(normalized_points)
     by_country: dict[str, list[dict]] = {}
+    stage_started = time.perf_counter()
     for item in normalized_points:
         if item.get("error"):
             results[item["index"]] = {"error": item["error"]}
@@ -1156,6 +1166,7 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
         item["country_match"] = country_match
         item["iso3"] = iso3
         by_country.setdefault(iso3, []).append(item)
+    _add_timing_ms(timing_ms, "country_match_ms", stage_started)
 
     for iso3, country_items in by_country.items():
         min_lon = min(float(item["lon"]) for item in country_items)
@@ -1164,13 +1175,19 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
         max_lat = max(float(item["lat"]) for item in country_items)
         bbox = (min_lon, min_lat, max_lon, max_lat)
 
+        stage_started = time.perf_counter()
         admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
         if admin1_df is None or admin1_df.empty:
             admin1_df = load_country_parquet(iso3, admin_level=1)
+        _add_timing_ms(timing_ms, f"{iso3}_admin1_load_ms", stage_started)
+
+        stage_started = time.perf_counter()
         admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
         if admin2_df is None or admin2_df.empty:
             admin2_df = load_country_parquet(iso3, admin_level=2)
+        _add_timing_ms(timing_ms, f"{iso3}_admin2_load_ms", stage_started)
 
+        stage_started = time.perf_counter()
         for item in country_items:
             lon = float(item["lon"])
             lat = float(item["lat"])
@@ -1189,8 +1206,11 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
                 translate_geometry_id_to_local_id(admin1_match.get("loc_id")) if admin1_match is not None else
                 None
             )
+        _add_timing_ms(timing_ms, f"{iso3}_admin_match_ms", stage_started)
 
+        stage_started = time.perf_counter()
         deep_levels = get_country_supported_deep_admin_levels(iso3)
+        _add_timing_ms(timing_ms, f"{iso3}_deep_config_ms", stage_started)
         for admin_level in deep_levels:
             groups: dict[str, list[dict]] = {}
             for item in country_items:
@@ -1205,9 +1225,12 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
                     max(float(item["lon"]) for item in grouped_items),
                     max(float(item["lat"]) for item in grouped_items),
                 )
+                stage_started = time.perf_counter()
                 df = load_subcounty_geometry(iso3, admin_level=admin_level, state_abbrev=state_abbrev, bbox=group_bbox)
+                _add_timing_ms(timing_ms, f"{iso3}_admin{admin_level}_load_ms", stage_started)
                 if df is None or df.empty:
                     continue
+                stage_started = time.perf_counter()
                 for item in grouped_items:
                     lon = float(item["lon"])
                     lat = float(item["lat"])
@@ -1227,6 +1250,7 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
                     if match_row is not None:
                         item["deepest_row"] = match_row
                         item["parent_scope"] = canonicalize_loc_id(match_row.get("loc_id"))
+                _add_timing_ms(timing_ms, f"{iso3}_admin{admin_level}_match_ms", stage_started)
 
         for item in country_items:
             lon = float(item["lon"])

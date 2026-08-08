@@ -1189,8 +1189,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 invalid_by_index[index] = item
                 continue
             valid_points.append({"index": index, "row_index": row_index, "id": caller_point_id, "lat": lat, "lon": lon})
+        resolver_stages: dict[str, int] = {}
         try:
-            raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry)
+            raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stages)
         except Exception as exc:
             raw_results = [{"error": str(exc), "point": {"lat": point.get("lat"), "lon": point.get("lon")}} for point in valid_points]
 
@@ -1212,7 +1213,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             else:
                 resolved_count += 1
             results.append(item)
-        stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
+        stages = {"point_resolver_ms": _elapsed_ms(runtime_started), **resolver_stages}
 
         _stamp_mcp_tool_analytics(
             request,
@@ -1313,9 +1314,10 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         from mapmover.geometry_handlers import resolve_points_to_locations
 
         runtime_started = time.perf_counter()
-        raw_results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=False)
+        resolver_stages: dict[str, int] = {}
+        raw_results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=False, timing_ms=resolver_stages)
         raw = raw_results[0] if raw_results else {"error": "point did not resolve", "point": {"lon": lon, "lat": lat}}
-        stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
+        stages = {"point_resolver_ms": _elapsed_ms(runtime_started), **resolver_stages}
     except Exception as exc:  # surface a clean tool error, never a 500
         error_payload = {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}}
         _log_mcp_tool_usage_event(

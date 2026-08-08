@@ -313,8 +313,9 @@ async def resolve_points_json_endpoint(req: Request):
             continue
         valid_points.append({"index": index, "row_index": row_index, "lon": lon_value, "lat": lat_value})
 
+    resolver_stage_ms = {}
     try:
-        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry)
+        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stage_ms)
     except Exception as exc:
         raw_results = [{"error": str(exc), "point": {"lon": point.get("lon"), "lat": point.get("lat")}} for point in valid_points]
 
@@ -355,6 +356,7 @@ async def resolve_points_json_endpoint(req: Request):
         "resolved_count": resolved_count,
         "unresolved_count": unresolved_count,
         "limit": limit,
+        "resolver_stage_ms": resolver_stage_ms,
     }
 
     try:

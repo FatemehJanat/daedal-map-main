@@ -71,7 +71,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             self.assertEqual(_rate_limit_config_for_surface("point_lookup"), (25, 60))
 
     def test_point_lookup_batch_endpoint_returns_one_bulk_payload(self) -> None:
-        def fake_resolve(points, include_geometry=False):
+        def fake_resolve(points, include_geometry=False, **_kwargs):
             return [
                 {
                     "deepest_resolved_loc_id": f"TEST-{point['lat']}-{point['lon']}",
