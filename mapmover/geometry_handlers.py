@@ -50,7 +50,7 @@ from .runtime.country_geography import (
     get_country_supported_deep_admin_levels,
 )
 from .runtime.geometry_loader import resolve_country_geometry_source
-from .runtime.geometry_spine import match_point_in_frame
+from .runtime.geometry_spine import geometry_spine_index_for_frame, match_point_in_frame
 from .runtime.marine_geometry import load_marine_geometry
 from .runtime.read_posture import geometry_read_mode, prefer_local_geometry_reads
 
@@ -1139,13 +1139,15 @@ def resolve_points_to_locations(
     results: list[dict | None] = [None] * len(normalized_points)
     by_country: dict[str, list[dict]] = {}
     stage_started = time.perf_counter()
-    for item in normalized_points:
+    country_index = geometry_spine_index_for_frame(country_df)
+    country_matches = country_index.match_points(normalized_points) if country_index is not None else [None] * len(normalized_points)
+    for item, country_spine_match in zip(normalized_points, country_matches):
         if item.get("error"):
             results[item["index"]] = {"error": item["error"]}
             continue
         lon = float(item["lon"])
         lat = float(item["lat"])
-        country_match = _find_containing_country_with_fallback(country_df, lon, lat)
+        country_match = country_spine_match.row if country_spine_match is not None else _find_containing_country_with_fallback(country_df, lon, lat)
         if country_match is None:
             results[item["index"]] = {"error": "No containing country found", "point": {"lon": lon, "lat": lat}}
             continue
@@ -1175,11 +1177,13 @@ def resolve_points_to_locations(
         _add_timing_ms(timing_ms, f"{iso3}_admin2_load_ms", stage_started)
 
         stage_started = time.perf_counter()
-        for item in country_items:
-            lon = float(item["lon"])
-            lat = float(item["lat"])
-            admin1_match = _find_containing_row(admin1_df, lon, lat)
-            admin2_match = _find_containing_row(admin2_df, lon, lat)
+        admin1_index = geometry_spine_index_for_frame(admin1_df)
+        admin2_index = geometry_spine_index_for_frame(admin2_df)
+        admin1_matches = admin1_index.match_points(country_items) if admin1_index is not None else [None] * len(country_items)
+        admin2_matches = admin2_index.match_points(country_items) if admin2_index is not None else [None] * len(country_items)
+        for item, admin1_spine_match, admin2_spine_match in zip(country_items, admin1_matches, admin2_matches):
+            admin1_match = admin1_spine_match.row if admin1_spine_match is not None else None
+            admin2_match = admin2_spine_match.row if admin2_spine_match is not None else None
             item["admin1_match"] = admin1_match
             item["admin2_match"] = admin2_match
             if target_admin_level is not None and target_admin_level <= 0:
@@ -1229,22 +1233,18 @@ def resolve_points_to_locations(
                 if df is None or df.empty:
                     continue
                 stage_started = time.perf_counter()
-                for item in grouped_items:
-                    lon = float(item["lon"])
-                    lat = float(item["lat"])
-                    candidates = _filter_df_for_point(df, lon, lat)
-                    if candidates.empty:
-                        continue
+                deep_index = geometry_spine_index_for_frame(df)
+
+                def _deep_parent_filter(row, item):
                     parent_scope = item.get("parent_scope")
-                    if parent_scope and "parent_id" in candidates.columns:
-                        parent_mask = (
-                            (candidates["parent_id"] == parent_scope) |
-                            candidates["parent_id"].astype(str).str.startswith(str(parent_scope) + "-", na=False)
-                        )
-                        scoped = candidates[parent_mask]
-                        if not scoped.empty:
-                            candidates = scoped
-                    match_row = _find_containing_row(candidates, lon, lat)
+                    if not parent_scope or "parent_id" not in row.index:
+                        return True
+                    parent_id = str(row.get("parent_id") or "")
+                    return parent_id == str(parent_scope) or parent_id.startswith(str(parent_scope) + "-")
+
+                deep_matches = deep_index.match_points(grouped_items, row_filter=_deep_parent_filter) if deep_index is not None else [None] * len(grouped_items)
+                for item, deep_spine_match in zip(grouped_items, deep_matches):
+                    match_row = deep_spine_match.row if deep_spine_match is not None else None
                     if match_row is not None:
                         item["deepest_row"] = match_row
                         item["parent_scope"] = canonicalize_loc_id(match_row.get("loc_id"))

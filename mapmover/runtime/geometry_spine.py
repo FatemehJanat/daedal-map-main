@@ -131,12 +131,58 @@ class RuntimeGeometrySpineIndex:
         *,
         row_filter: Callable[[pd.Series, dict[str, Any]], bool] | None = None,
     ) -> list[RuntimeGeometryMatch | None]:
-        results: list[RuntimeGeometryMatch | None] = []
-        for point in points:
-            item_filter = None
-            if row_filter is not None:
-                item_filter = lambda row, point=point: row_filter(row, point)
-            results.append(self.match_point(point.get("lon"), point.get("lat"), row_filter=item_filter))
+        point_items = list(points)
+        if self._tree is None or not point_items:
+            return [None] * len(point_items)
+
+        query_points: list[Point] = []
+        query_to_item: list[int] = []
+        for item_index, item in enumerate(point_items):
+            try:
+                lon = float(item.get("lon"))
+                lat = float(item.get("lat"))
+            except Exception:
+                continue
+            if pd.isna(lon) or pd.isna(lat):
+                continue
+            query_to_item.append(item_index)
+            query_points.append(Point(lon, lat))
+        if not query_points:
+            return [None] * len(point_items)
+
+        try:
+            raw_pairs = self._tree.query(query_points, predicate="covered_by")
+        except Exception:
+            return [
+                self.match_point(
+                    item.get("lon"),
+                    item.get("lat"),
+                    row_filter=(lambda row, item=item: row_filter(row, item)) if row_filter is not None else None,
+                )
+                for item in point_items
+            ]
+
+        best: dict[int, tuple[float, str, int]] = {}
+        counts: dict[int, int] = {}
+        for query_index, geometry_index in zip(raw_pairs[0], raw_pairs[1]):
+            item_index = query_to_item[int(query_index)]
+            row_position = self._row_positions[int(geometry_index)]
+            row = self._frame.iloc[row_position]
+            if row_filter is not None and not row_filter(row, point_items[item_index]):
+                continue
+            counts[item_index] = counts.get(item_index, 0) + 1
+            geometry = self._geometries[int(geometry_index)]
+            candidate = (float(geometry.area), str(row.get(self.loc_id_column) or ""), row_position)
+            current = best.get(item_index)
+            if current is None or candidate < current:
+                best[item_index] = candidate
+
+        results: list[RuntimeGeometryMatch | None] = [None] * len(point_items)
+        for item_index, (_, _, row_position) in best.items():
+            results[item_index] = RuntimeGeometryMatch(
+                row=self._frame.iloc[row_position],
+                candidate_count=counts.get(item_index, 0),
+            )
         return results
 
 

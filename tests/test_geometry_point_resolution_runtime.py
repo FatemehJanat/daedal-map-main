@@ -39,6 +39,34 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(match.row["loc_id"], "USA-CA-037")
         self.assertEqual(match.candidate_count, 3)
 
+    def test_runtime_geometry_spine_matches_points_in_one_batch(self):
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "loc_id": "A",
+                    "name": "A",
+                    "admin_level": 1,
+                    "geometry": '{"type":"Polygon","coordinates":[[[0,0],[0,10],[10,10],[10,0],[0,0]]]}',
+                },
+                {
+                    "loc_id": "B",
+                    "name": "B",
+                    "admin_level": 1,
+                    "geometry": '{"type":"Polygon","coordinates":[[[20,20],[20,30],[30,30],[30,20],[20,20]]]}',
+                },
+            ]
+        )
+
+        matches = geometry_spine_index_for_frame(frame).match_points(
+            [{"lon": 1, "lat": 1}, {"lon": 21, "lat": 21}, {"lon": 99, "lat": 99}]
+        )
+
+        self.assertEqual(matches[0].row["loc_id"], "A")
+        self.assertEqual(matches[1].row["loc_id"], "B")
+        self.assertIsNone(matches[2])
+
     def test_california_block_point_resolves_through_admin5_spine(self):
         """Regression: audited CA Admin 5 must not stop at legacy geometry admin2."""
         result = resolve_point_to_loc_id_stack(-116.710700, 34.320563, include_geometry=False)
