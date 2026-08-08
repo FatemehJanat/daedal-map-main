@@ -2,10 +2,43 @@ import unittest
 from unittest.mock import patch
 
 from mapmover.geometry_handlers import resolve_point_to_location, resolve_points_to_locations
+from mapmover.runtime.geometry_spine import geometry_spine_index_for_frame
 from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
 class GeometryPointResolutionRuntimeTests(unittest.TestCase):
+    def test_runtime_geometry_spine_prefers_smallest_covering_polygon(self):
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                },
+                {
+                    "loc_id": "USA-CA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                },
+                {
+                    "loc_id": "USA-CA-037",
+                    "name": "Los Angeles",
+                    "admin_level": 2,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                },
+            ]
+        )
+
+        match = geometry_spine_index_for_frame(frame).match_point(-118.25, 34.05)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.row["loc_id"], "USA-CA-037")
+        self.assertEqual(match.candidate_count, 3)
+
     def test_california_block_point_resolves_through_admin5_spine(self):
         """Regression: audited CA Admin 5 must not stop at legacy geometry admin2."""
         result = resolve_point_to_loc_id_stack(-116.710700, 34.320563, include_geometry=False)

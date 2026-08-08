@@ -50,6 +50,7 @@ from .runtime.country_geography import (
     get_country_supported_deep_admin_levels,
 )
 from .runtime.geometry_loader import resolve_country_geometry_source
+from .runtime.geometry_spine import match_point_in_frame
 from .runtime.marine_geometry import load_marine_geometry
 from .runtime.read_posture import geometry_read_mode, prefer_local_geometry_reads
 
@@ -912,37 +913,15 @@ def _filter_df_for_point(df, lon: float, lat: float):
 
 
 def _find_containing_row(df, lon: float, lat: float):
-    """Return the first candidate row whose polygon covers the point."""
+    """Return the smallest geometry-spine row whose polygon covers the point."""
     if df is None or len(df) == 0:
         return None
 
     try:
-        from shapely.geometry import Point, shape
+        return match_point_in_frame(df, lon, lat)
     except Exception:
-        logger.warning("shapely not available for point resolution")
+        logger.warning("geometry spine point resolution failed", exc_info=True)
         return None
-
-    point = Point(float(lon), float(lat))
-    candidates = _filter_df_for_point(df, lon, lat)
-    if candidates.empty:
-        return None
-
-    if "admin_level" in candidates.columns:
-        candidates = candidates.sort_values(["admin_level"], ascending=[False])
-
-    for _, row in candidates.iterrows():
-        geom_value = row.get("geometry")
-        if not geom_value:
-            continue
-        try:
-            geometry = fast_json_loads(geom_value) if isinstance(geom_value, str) else geom_value
-            if not geometry or geometry.get("type") == "Point":
-                continue
-            if shape(geometry).covers(point):
-                return row
-        except Exception:
-            continue
-    return None
 
 
 def _find_containing_country_with_fallback(country_df, lon: float, lat: float):
