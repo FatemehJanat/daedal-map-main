@@ -612,6 +612,35 @@ def _shape_geometry_reference(
     return _clean_json(payload)
 
 
+def _metadata_geometry_reference(
+    loc_id: str,
+    row: dict[str, Any] | None,
+    *,
+    include_info: bool = True,
+) -> dict[str, Any]:
+    canonical = canonicalize_loc_id(loc_id)
+    if not row:
+        return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
+    payload = {
+        "ok": True,
+        "has_shape": True,
+        "loc_id": row.get("loc_id") or row.get("source_loc_id") or canonical,
+        "name": row.get("name"),
+        "family": classify_loc_id_family(canonical),
+        "admin_level": row.get("admin_level"),
+        "centroid": {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")},
+        "bbox": [
+            row.get("bbox_min_lon"),
+            row.get("bbox_min_lat"),
+            row.get("bbox_max_lon"),
+            row.get("bbox_max_lat"),
+        ],
+    }
+    if include_info:
+        payload["info"] = get_location_info(canonical)
+    return _clean_json(payload)
+
+
 def get_geometry_references(
     loc_ids: list[str],
     *,
@@ -620,6 +649,28 @@ def get_geometry_references(
 ) -> dict[str, Any]:
     """Return geometry metadata for one or more loc_ids using one geometry fetch pipeline."""
     canonical_ids = [canonicalize_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
+    if not include_polygon:
+        rows = get_selection_geometry_metadata(canonical_ids)
+        by_loc_id: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            row_loc_id = row.get("loc_id") or row.get("source_loc_id")
+            if row_loc_id:
+                by_loc_id[canonicalize_loc_id(str(row_loc_id))] = row
+        results = [
+            _metadata_geometry_reference(loc_id, by_loc_id.get(loc_id), include_info=include_info)
+            for loc_id in canonical_ids
+        ]
+        available = sum(1 for result in results if result.get("has_shape"))
+        return _clean_json(
+            {
+                "ok": bool(results),
+                "requested": len(canonical_ids),
+                "available": available,
+                "missing": len(canonical_ids) - available,
+                "results": results,
+            }
+        )
+
     feature_payload = get_selection_geometries(canonical_ids)
     features = (feature_payload or {}).get("features") or []
     by_loc_id: dict[str, dict[str, Any]] = {}
@@ -660,6 +711,7 @@ def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
         item = {
             "loc_id": loc_id,
             "has_shape": has_shape,
+            "name": result.get("name") if result else None,
             "family": classify_loc_id_family(loc_id) if has_shape else None,
             "admin_level": result.get("admin_level") if result else None,
             "centroid": {"lon": result.get("centroid_lon"), "lat": result.get("centroid_lat")} if has_shape else None,

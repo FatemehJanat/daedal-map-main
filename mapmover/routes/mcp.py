@@ -1203,7 +1203,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         limit = _tool_batch_item_limit("resolve_point", default=25, fallback_env_names=("POINT_LOOKUP_BATCH_LIMIT",))
         paid_limit = _point_lookup_paid_batch_limit(limit)
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
-        if len(points) > paid_limit:
+        if len(points) > paid_limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
                 request,
                 event="mcp_tool",
@@ -2339,8 +2339,9 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             _parse_env_int_optional("MCP_TOOL_POLYGON_BATCH_LIMIT_GET_GEOMETRY")
             if include_polygon
             else None
-        ) or _tool_batch_item_limit("get_geometry", default=10 if include_polygon else 100, fallback_env_names=("GEOMETRY_GET_BATCH_LIMIT",))
-        if len(loc_ids) > limit:
+        ) or _tool_batch_item_limit("get_geometry", default=1000, fallback_env_names=("GEOMETRY_GET_BATCH_LIMIT",))
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
+        if len(loc_ids) > limit and trusted_token is None:
             error_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
@@ -2398,6 +2399,8 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             row_count=len(loc_ids),
             query_granularity=f"bulk_{len(loc_ids)}",
             response_payload=result_payload,
+            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            artifact_token_id=trusted_token_id,
             metadata={
                 "event": "geometry_lookup",
                 "tool_mode": "bulk",
@@ -2408,6 +2411,8 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
                 "batch_id": batch_id,
                 "include_polygon": include_polygon,
                 "batch_limit": limit,
+                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "artifact_token_id": trusted_token_id,
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,
@@ -2630,8 +2635,9 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
                 metadata={"event": "geometry_availability", "tool_mode": "bulk", "quantity": 0, "loc_id_count": 0, "batch_id": batch_id},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        limit = _tool_batch_item_limit("check_geometry", default=100, fallback_env_names=("GEOMETRY_CHECK_BATCH_LIMIT",))
-        if len(loc_ids) > limit:
+        limit = _tool_batch_item_limit("check_geometry", default=1000, fallback_env_names=("GEOMETRY_CHECK_BATCH_LIMIT",))
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
+        if len(loc_ids) > limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
                 request,
                 event="mcp_tool",
@@ -2720,6 +2726,8 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
             row_count=len(loc_ids),
             query_granularity=f"bulk_{len(loc_ids)}",
             response_payload=result_payload,
+            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            artifact_token_id=trusted_token_id,
             metadata={
                 "event": "geometry_availability",
                 "tool_mode": "bulk",
@@ -2729,6 +2737,8 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
                 "available_count": available,
                 "missing_count": missing,
                 "batch_limit": limit,
+                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "artifact_token_id": trusted_token_id,
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,

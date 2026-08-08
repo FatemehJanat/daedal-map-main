@@ -67,6 +67,53 @@ _country_bounds_cache = None
 
 _GEOMETRY_CACHE_MAX_BYTES = max(32 * 1024 * 1024, int(float(os.environ.get("GEOMETRY_CACHE_MAX_MB", "256")) * 1024 * 1024))
 
+GEOMETRY_INDEX_COLUMNS = [
+    "loc_id",
+    "local_loc_id",
+    "source_loc_id",
+    "parent_id",
+    "admin_level",
+    "name",
+    "code",
+    "iso_3166_2",
+    "bbox_min_lon",
+    "bbox_min_lat",
+    "bbox_max_lon",
+    "bbox_max_lat",
+    "centroid_lon",
+    "centroid_lat",
+    "has_polygon",
+    "iso_a3",
+]
+
+GEOMETRY_METADATA_COLUMNS = list(GEOMETRY_INDEX_COLUMNS)
+
+
+def _project_frame(df, columns: list[str] | None):
+    if df is None or not columns:
+        return df
+    available = [column for column in columns if column in df.columns]
+    return df[available].copy() if available else pd.DataFrame(columns=columns)
+
+
+def _ensure_loc_id_projection(columns: list[str] | None) -> list[str] | None:
+    if not columns:
+        return None
+    selected = list(dict.fromkeys(columns))
+    if "loc_id" not in selected:
+        selected.insert(0, "loc_id")
+    return selected
+
+
+def _physical_parquet_columns(path: Path, columns: list[str] | None) -> list[str] | None:
+    if not columns:
+        return None
+    try:
+        available_columns = parquet_columns(path)
+    except Exception:
+        return columns
+    return [column for column in columns if column in available_columns]
+
 
 def _frame_bytes(df) -> int:
     try:
@@ -112,7 +159,7 @@ def get_geometry_path():
     return None
 
 
-def load_country_parquet(iso3: str, admin_level: int = None):
+def load_country_parquet(iso3: str, admin_level: int = None, columns: list[str] | None = None):
     """
     Load country geometry parquet file into cache.
     Returns DataFrame or None if file doesn't exist.
@@ -124,8 +171,17 @@ def load_country_parquet(iso3: str, admin_level: int = None):
 
     If admin_level is specified, uses predicate pushdown for efficiency.
     """
-    # Check cache - if admin_level specified, cache by (iso3, level)
-    cache_key = (iso3, admin_level) if admin_level is not None else iso3
+    columns = _ensure_loc_id_projection(columns)
+    projected_read = bool(columns)
+
+    # Check cache - if admin_level specified, cache by (iso3, level). Projected
+    # reads get their own cache key so they never masquerade as full geometry.
+    full_cache_key = (iso3, admin_level) if admin_level is not None else iso3
+    cache_key = (
+        (full_cache_key, tuple(columns))
+        if projected_read and columns
+        else full_cache_key
+    )
     wait_event = None
     owns_fetch = False
 
@@ -134,12 +190,17 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             _country_parquet_cache.move_to_end(cache_key)
             return _country_parquet_cache[cache_key]
 
+        if projected_read and full_cache_key in _country_parquet_cache:
+            _country_parquet_cache.move_to_end(full_cache_key)
+            return _project_frame(_country_parquet_cache[full_cache_key], columns)
+
         # If we have the full dataframe cached, filter from it
         if admin_level is not None and iso3 in _country_parquet_cache:
             full_df = _country_parquet_cache[iso3]
             filtered = full_df[full_df['admin_level'] == admin_level]
-            _cache_country_frame(cache_key, filtered)
-            return filtered
+            if not projected_read:
+                _cache_country_frame(full_cache_key, filtered)
+            return _project_frame(filtered, columns)
 
         # If another thread is already fetching this key, wait for it to finish
         # so repeated hot geometry requests reuse the same cold-load work.
@@ -158,11 +219,15 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             if cache_key in _country_parquet_cache:
                 _country_parquet_cache.move_to_end(cache_key)
                 return _country_parquet_cache[cache_key]
+            if projected_read and full_cache_key in _country_parquet_cache:
+                _country_parquet_cache.move_to_end(full_cache_key)
+                return _project_frame(_country_parquet_cache[full_cache_key], columns)
             if admin_level is not None and iso3 in _country_parquet_cache:
                 full_df = _country_parquet_cache[iso3]
                 filtered = full_df[full_df['admin_level'] == admin_level]
-                _cache_country_frame(cache_key, filtered)
-                return filtered
+                if not projected_read:
+                    _cache_country_frame(full_cache_key, filtered)
+                return _project_frame(filtered, columns)
         return None
 
     resolved = resolve_country_geometry_source(iso3, admin_level=admin_level)
@@ -178,6 +243,13 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             waiter.set()
         return None
     logger.debug(f"Using {resolved['source_kind']} geometry: {parquet_file}")
+    read_columns = None
+    if columns:
+        try:
+            available_columns = parquet_columns(parquet_file)
+            read_columns = [column for column in columns if column in available_columns]
+        except Exception:
+            read_columns = columns
 
     try:
         # Use predicate pushdown if admin_level specified
@@ -185,33 +257,37 @@ def load_country_parquet(iso3: str, admin_level: int = None):
             if parquet_file.exists():
                 df = pd.read_parquet(
                     parquet_file,
+                    columns=read_columns,
                     filters=[('admin_level', '==', admin_level)]
                 )
             else:
                 df = select_rows(
                     parquet_file,
+                    columns=read_columns,
                     exact_filters={"admin_level": admin_level},
                 )
                 if df.empty and not is_cloud_mode():
                     df = pd.read_parquet(
                         parquet_file,
+                        columns=read_columns,
                         filters=[('admin_level', '==', admin_level)]
                     )
         else:
             if parquet_file.exists():
-                df = pd.read_parquet(parquet_file)
+                df = pd.read_parquet(parquet_file, columns=read_columns)
             else:
                 if is_cloud_mode():
-                    df = select_rows(parquet_file)
+                    df = select_rows(parquet_file, columns=read_columns)
                 else:
-                    df = pd.read_parquet(parquet_file)
+                    df = pd.read_parquet(parquet_file, columns=read_columns)
 
         # If crosswalk exists, add reverse mapping for lookup
         # This allows data with local loc_ids to find GADM geometry
         if crosswalk_data:
             _, reverse_map = build_crosswalk_maps(crosswalk_data)
             # Add local_loc_id column for joining
-            df['local_loc_id'] = df['loc_id'].map(reverse_map)
+            if "loc_id" in df.columns:
+                df['local_loc_id'] = df['loc_id'].map(reverse_map)
             logger.debug(f"Applied crosswalk: {len(reverse_map)} mappings")
 
         # In S3 mode, do not cache empty DataFrames - an empty result from a cold
@@ -245,7 +321,7 @@ def load_country_parquet(iso3: str, admin_level: int = None):
         return None
 
 
-def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
+def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, columns: list[str] | None = None):
     """
     Load only the geometry rows for one country/admin level that intersect a viewport bbox.
 
@@ -271,8 +347,11 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
     else:
         return None
 
+    columns = _ensure_loc_id_projection(columns)
+
     try:
         available_cols = parquet_columns(parquet_file)
+        read_columns = [column for column in (columns or []) if column in available_cols] or None
         has_bbox = all(
             col in available_cols
             for col in ("bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat")
@@ -311,10 +390,11 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
                     ("centroid_lat", ">=", min_lat),
                     ("centroid_lat", "<=", max_lat),
                 ])
-            df = pd.read_parquet(parquet_file, filters=filters)
+            df = pd.read_parquet(parquet_file, columns=read_columns, filters=filters)
         else:
             df = select_rows(
                 parquet_file,
+                columns=read_columns,
                 exact_filters={"admin_level": admin_level},
                 compare_filters=compare_filters,
             )
@@ -335,11 +415,12 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple):
                         ("centroid_lat", ">=", min_lat),
                         ("centroid_lat", "<=", max_lat),
                     ])
-                df = pd.read_parquet(parquet_file, filters=filters)
+                df = pd.read_parquet(parquet_file, columns=read_columns, filters=filters)
 
         if crosswalk_data and not df.empty:
             _, reverse_map = build_crosswalk_maps(crosswalk_data)
-            df['local_loc_id'] = df['loc_id'].map(reverse_map)
+            if "loc_id" in df.columns:
+                df['local_loc_id'] = df['loc_id'].map(reverse_map)
 
         return df
     except Exception as e:
@@ -401,7 +482,7 @@ def _is_marine_family(family: str | None) -> bool:
     return str(family or "").strip().lower() in {"marine_eez", "water_body"}
 
 
-def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
+def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[str] | None = None):
     """
     Load exact geometry rows for a country by loc_id list.
 
@@ -412,6 +493,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     requested_ids = [canonicalize_loc_id(loc_id) for loc_id in loc_ids if loc_id]
     if not requested_ids:
         return pd.DataFrame()
+    columns = _ensure_loc_id_projection(columns)
     prefer_local = _prefer_local_geometry_reads()
 
     families = {classify_loc_id_family(loc_id) for loc_id in requested_ids}
@@ -427,20 +509,23 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
             if not family_ids or family == "event_or_entity":
                 continue
             if _is_marine_family(family):
-                frames.append(load_marine_geometry(family_ids))
+                frames.append(load_marine_geometry(family_ids, columns=columns))
                 continue
-            frames.append(load_geometry_rows_by_loc_ids(iso3, family_ids))
+            frames.append(load_geometry_rows_by_loc_ids(iso3, family_ids, columns=columns))
         return _concat_geometry_frames(frames, requested_ids)
 
     def _load_direct_family_bank(parquet_file: Path) -> pd.DataFrame:
+        read_columns = _physical_parquet_columns(parquet_file, columns)
         if prefer_local and parquet_file.exists():
             return pd.read_parquet(
                 parquet_file,
+                columns=read_columns,
                 filters=[("loc_id", "in", requested_ids)],
             )
         try:
             df = select_rows(
                 parquet_file,
+                columns=read_columns,
                 in_filters={"loc_id": requested_ids},
             )
         except Exception as e:
@@ -449,6 +534,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         if prefer_local and (df is None or df.empty) and parquet_file.exists():
             df = pd.read_parquet(
                 parquet_file,
+                columns=read_columns,
                 filters=[("loc_id", "in", requested_ids)],
             )
         return df if df is not None else pd.DataFrame()
@@ -461,7 +547,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         return pd.DataFrame()
 
     if _is_marine_family(direct_family):
-        return load_marine_geometry(requested_ids)
+        return load_marine_geometry(requested_ids, columns=columns)
 
     county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
     crosswalk_data = load_country_crosswalk(iso3) or {}
@@ -491,20 +577,26 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
                         _country_parquet_cache.move_to_end(county_cache_key)
                 if cached_counties is not None:
                     df = cached_counties[cached_counties["loc_id"].isin(county_query_ids)].copy()
+                    df = _project_frame(df, columns)
                 elif prefer_local and county_geom_file.exists():
+                    read_columns = _physical_parquet_columns(county_geom_file, columns)
                     df = pd.read_parquet(
                         county_geom_file,
+                        columns=read_columns,
                         filters=[("loc_id", "in", county_query_ids)],
                     )
                 else:
+                    read_columns = _physical_parquet_columns(county_geom_file, columns)
                     df = select_rows(
                         county_geom_file,
+                        columns=read_columns,
                         in_filters={"loc_id": county_query_ids},
                     )
 
                     if df.empty and not is_cloud_mode():
                         df = pd.read_parquet(
                             county_geom_file,
+                            columns=read_columns,
                             filters=[("loc_id", "in", county_query_ids)],
                         )
 
@@ -556,19 +648,24 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
 
     try:
         if prefer_local and parquet_file.exists():
+            read_columns = _physical_parquet_columns(parquet_file, columns)
             df = pd.read_parquet(
                 parquet_file,
+                columns=read_columns,
                 filters=[("loc_id", "in", query_ids)],
             )
         else:
+            read_columns = _physical_parquet_columns(parquet_file, columns)
             df = select_rows(
                 parquet_file,
+                columns=read_columns,
                 in_filters={"loc_id": query_ids},
             )
 
             if df.empty and not is_cloud_mode():
                 df = pd.read_parquet(
                     parquet_file,
+                    columns=read_columns,
                     filters=[("loc_id", "in", query_ids)],
                 )
 
@@ -586,7 +683,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
             if len(admin_levels) == 1:
                 fallback_level = next(iter(admin_levels))
                 if fallback_level in {1, 2}:
-                    level_df = load_country_parquet(iso3, admin_level=fallback_level)
+                    level_df = load_country_parquet(iso3, admin_level=fallback_level, columns=columns)
                     if level_df is not None and not level_df.empty:
                         fallback = level_df.copy()
                         if "local_loc_id" not in fallback.columns:
@@ -640,7 +737,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         return pd.DataFrame()
 
 
-def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
+def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[str] | None = None):
     """
     Load exact deep-admin geometry rows for canonical local loc_ids.
 
@@ -650,6 +747,7 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
     requested_ids = [canonicalize_loc_id(loc_id) for loc_id in loc_ids if loc_id]
     if not requested_ids:
         return pd.DataFrame()
+    columns = _ensure_loc_id_projection(columns)
 
     sub_admin_levels = get_country_sub_admin_levels(iso3)
     if not sub_admin_levels:
@@ -674,6 +772,7 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str]):
         df = load_subcounty_geometry(
             iso3, admin_level=admin_level, state_abbrev=state_abbrev,
             loc_ids=group_ids,
+            columns=columns,
         )
         if df is None or df.empty:
             continue
@@ -796,7 +895,7 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
                 parent_loc_id=parent_loc_id,
             )
         else:
-            df = load_country_parquet(iso3, admin_level=target_level)
+            df = load_country_parquet(iso3, admin_level=target_level, columns=GEOMETRY_INDEX_COLUMNS)
         if df is None or df.empty:
             return {"rows": [], "count": 0, "parent_loc_id": parent_loc_id, "admin_level": target_level}
 
@@ -822,7 +921,7 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
             countries = get_countries_in_bbox(*bbox)
             frames = []
             for iso3 in countries:
-                viewport_df = load_country_parquet_viewport(iso3, target_level, bbox)
+                viewport_df = load_country_parquet_viewport(iso3, target_level, bbox, columns=GEOMETRY_INDEX_COLUMNS)
                 if viewport_df is not None and not viewport_df.empty:
                     frames.append(viewport_df)
             df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -856,19 +955,7 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
             )
             df = df[mask]
 
-    index_columns = [
-        "loc_id",
-        "parent_id",
-        "admin_level",
-        "name",
-        "code",
-        "bbox_min_lon",
-        "bbox_min_lat",
-        "bbox_max_lon",
-        "bbox_max_lat",
-        "centroid_lon",
-        "centroid_lat",
-    ]
+    index_columns = GEOMETRY_INDEX_COLUMNS
     available = [col for col in index_columns if col in df.columns]
     rows = df[available].to_dict("records") if df is not None and not df.empty else []
 
@@ -1180,17 +1267,21 @@ def resolve_points_to_locations(
         max_lat = max(float(item["lat"]) for item in country_items)
         bbox = (min_lon, min_lat, max_lon, max_lat)
 
-        stage_started = time.perf_counter()
-        admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
-        if admin1_df is None or admin1_df.empty:
-            admin1_df = load_country_parquet(iso3, admin_level=1)
-        _add_timing_ms(timing_ms, f"{iso3}_admin1_load_ms", stage_started)
+        admin1_df = pd.DataFrame()
+        admin2_df = pd.DataFrame()
+        if target_admin_level is None or target_admin_level >= 1:
+            stage_started = time.perf_counter()
+            admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
+            if admin1_df is None or admin1_df.empty:
+                admin1_df = load_country_parquet(iso3, admin_level=1)
+            _add_timing_ms(timing_ms, f"{iso3}_admin1_load_ms", stage_started)
 
-        stage_started = time.perf_counter()
-        admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
-        if admin2_df is None or admin2_df.empty:
-            admin2_df = load_country_parquet(iso3, admin_level=2)
-        _add_timing_ms(timing_ms, f"{iso3}_admin2_load_ms", stage_started)
+        if target_admin_level is None or target_admin_level >= 2:
+            stage_started = time.perf_counter()
+            admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
+            if admin2_df is None or admin2_df.empty:
+                admin2_df = load_country_parquet(iso3, admin_level=2)
+            _add_timing_ms(timing_ms, f"{iso3}_admin2_load_ms", stage_started)
 
         stage_started = time.perf_counter()
         admin1_index = geometry_spine_index_for_frame(admin1_df)
@@ -2858,7 +2949,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
     remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
 
     if marine_ids:
-        marine_df = load_marine_geometry(marine_ids)
+        marine_df = load_marine_geometry(marine_ids, columns=GEOMETRY_METADATA_COLUMNS)
         if marine_df is not None and not marine_df.empty:
             for _, row in marine_df.iterrows():
                 item = _geometry_metadata_row(row)
@@ -2896,7 +2987,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
                         rows.append(item)
 
         if deep_level_ids:
-            deep_df = _load_subcounty_rows_by_loc_ids(iso3, deep_level_ids)
+            deep_df = _load_subcounty_rows_by_loc_ids(iso3, deep_level_ids, columns=GEOMETRY_METADATA_COLUMNS)
             if deep_df is not None and not deep_df.empty:
                 for _, row in deep_df.iterrows():
                     item = _geometry_metadata_row(row)
@@ -2904,7 +2995,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
                         rows.append(item)
 
         if regular_sub_level_ids:
-            country_df = load_geometry_rows_by_loc_ids(iso3, regular_sub_level_ids)
+            country_df = load_geometry_rows_by_loc_ids(iso3, regular_sub_level_ids, columns=GEOMETRY_METADATA_COLUMNS)
             if country_df is not None and not country_df.empty:
                 for _, row in country_df.iterrows():
                     item = _geometry_metadata_row(row)

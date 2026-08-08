@@ -263,6 +263,55 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
         self.assertEqual(results[1]["matched"]["loc_id"], "USA-CA-037")
 
+    def test_resolve_points_to_locations_skips_county_load_for_state_target(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 24,
+                    "bbox_max_lon": -66,
+                    "bbox_max_lat": 50,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                }
+            ]
+        )
+        admin1_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA",
+                    "parent_id": "USA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 32,
+                    "bbox_max_lon": -113,
+                    "bbox_max_lat": 42,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                }
+            ]
+        )
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport", return_value=admin1_df) as viewport_mock,
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[]),
+        ):
+            results = resolve_points_to_locations(
+                [{"lon": -118.25, "lat": 34.05}],
+                include_geometry=False,
+                target_admin_level=1,
+            )
+
+        viewport_mock.assert_called_once()
+        self.assertEqual(viewport_mock.call_args.args[1], 1)
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA")
+        self.assertEqual(results[0]["target_admin_level"], "admin_1")
+
     def test_resolve_points_country_scope_skips_global_country_overlay(self):
         import pandas as pd
 

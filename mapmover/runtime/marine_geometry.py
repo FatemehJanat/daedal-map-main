@@ -120,29 +120,33 @@ def resolve_marine_geometry_source(loc_id: str | None) -> dict:
     }
 
 
-def _read_bank(path: Path, want: Optional[set]) -> pd.DataFrame:
+def _read_bank(path: Path, want: Optional[set], columns: Optional[list[str]] = None) -> pd.DataFrame:
+    selected_columns = [column for column in (columns or _MARINE_COLUMNS) if column in _MARINE_COLUMNS]
+    if "loc_id" not in selected_columns:
+        selected_columns.insert(0, "loc_id")
     if not parquet_available(path):
-        return pd.DataFrame(columns=_MARINE_COLUMNS)
+        return pd.DataFrame(columns=selected_columns)
     try:
-        df = select_columns_from_parquet(path, _MARINE_COLUMNS)
+        df = select_columns_from_parquet(path, selected_columns)
     except Exception:
         df = None
     if df is None or df.empty:
         try:
-            df = pd.read_parquet(path, columns=_MARINE_COLUMNS)
+            df = pd.read_parquet(path, columns=selected_columns)
         except Exception:
-            return pd.DataFrame(columns=_MARINE_COLUMNS)
+            return pd.DataFrame(columns=selected_columns)
     if want is not None and "loc_id" in df.columns:
         df = df[df["loc_id"].isin(want)]
     return df
 
 
-def load_marine_geometry(loc_ids: Optional[Iterable[str]] = None) -> pd.DataFrame:
+def load_marine_geometry(loc_ids: Optional[Iterable[str]] = None, *, columns: Optional[list[str]] = None) -> pd.DataFrame:
     """Load marine geometry rows for the given loc_ids (or all marine geometry).
 
     Returns columns [loc_id, name, geometry, centroid_lon, centroid_lat]. Only
     the bank(s) actually referenced by the requested loc_ids are read, so an
-    EEZ-only query never touches the water-body bank and vice versa.
+    EEZ-only query never touches the water-body bank and vice versa. Callers
+    that only need availability metadata can omit the heavy geometry column.
     """
     want = {str(x).strip() for x in loc_ids} if loc_ids is not None else None
     need_eez = want is None or any(is_eez_loc_id(x) for x in want)
@@ -151,16 +155,16 @@ def load_marine_geometry(loc_ids: Optional[Iterable[str]] = None) -> pd.DataFram
 
     frames = []
     if need_eez:
-        frames.append(_read_bank(EEZ_PATH, want))
+        frames.append(_read_bank(EEZ_PATH, want, columns=columns))
     if need_wb:
-        frames.append(_read_bank(WATER_BODIES_PATH, want))
+        frames.append(_read_bank(WATER_BODIES_PATH, want, columns=columns))
     if need_named_water:
         if want is None or any(str(x).strip().upper().startswith("IHO1953-") for x in want):
             if named_water_bank_approved("IHO1953-0"):
-                frames.append(_read_bank(IHO1953_NAMED_WATER_PATH, want))
+                frames.append(_read_bank(IHO1953_NAMED_WATER_PATH, want, columns=columns))
         if want is None or any(str(x).strip().upper().startswith("MRGID-") for x in want):
             if named_water_bank_approved("MRGID-0"):
-                frames.append(_read_bank(LEGACY_NAMED_WATER_PATH, want))
+                frames.append(_read_bank(LEGACY_NAMED_WATER_PATH, want, columns=columns))
     if not frames:
-        return pd.DataFrame(columns=_MARINE_COLUMNS)
+        return pd.DataFrame(columns=columns or _MARINE_COLUMNS)
     return pd.concat(frames, ignore_index=True).reset_index(drop=True)

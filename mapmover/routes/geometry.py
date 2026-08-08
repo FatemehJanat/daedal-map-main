@@ -310,7 +310,7 @@ async def resolve_points_json_endpoint(req: Request):
     limit = _point_lookup_batch_limit()
     paid_limit = _point_lookup_paid_batch_limit()
     trusted_token, trusted_token_id = _trusted_artifact_access(req)
-    if len(points) > paid_limit:
+    if len(points) > paid_limit and trusted_token is None:
         return JSONResponse(
             {
                 "error": f"points must contain at most {paid_limit} items",

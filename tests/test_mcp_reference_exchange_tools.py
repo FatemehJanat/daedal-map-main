@@ -6,7 +6,7 @@ from unittest import mock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mapmover.runtime.reference_exchange import get_geometry_availability
+from mapmover.runtime.reference_exchange import get_geometry_availability, get_geometry_references
 from mapmover.routes.mcp import _tool_rate_limit_for_tier, router as mcp_router
 
 
@@ -284,6 +284,33 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["has_shape"], True)
         self.assertEqual(payload["items"][1]["has_shape"], False)
 
+    def test_get_geometry_metadata_uses_metadata_only_fetch(self) -> None:
+        metadata_rows = [
+            {
+                "loc_id": "USA-CA-037",
+                "name": "Los Angeles County",
+                "admin_level": 2,
+                "centroid_lon": -118.25,
+                "centroid_lat": 34.05,
+                "bbox_min_lon": -119.0,
+                "bbox_min_lat": 33.0,
+                "bbox_max_lon": -117.0,
+                "bbox_max_lat": 35.0,
+            }
+        ]
+        with (
+            mock.patch("mapmover.runtime.reference_exchange.get_selection_geometry_metadata", return_value=metadata_rows) as metadata_mock,
+            mock.patch("mapmover.runtime.reference_exchange.get_selection_geometries") as geometry_mock,
+            mock.patch("mapmover.runtime.reference_exchange.get_location_info", return_value={"loc_id": "USA-CA-037"}),
+        ):
+            payload = get_geometry_references(["USA-CA-037", "USA-NOPE"], include_polygon=False)
+
+        metadata_mock.assert_called_once_with(["USA-CA-037", "USA-NOPE"])
+        geometry_mock.assert_not_called()
+        self.assertEqual(payload["available"], 1)
+        self.assertEqual(payload["results"][0]["name"], "Los Angeles County")
+        self.assertNotIn("geometry", payload["results"][0])
+
     def test_check_geometry_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_CHECK_GEOMETRY": "2"}):
             with mock.patch("mapmover.routes.mcp.log_api_query_event"):
@@ -332,6 +359,38 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 1)
         self.assertEqual(analytics["metadata"]["compute"]["include_polygon"], False)
         self.assertIn("geometry_fetch_ms", analytics["metadata"]["compute"]["stage_ms"])
+
+    def test_get_geometry_tool_trusted_token_bypasses_batch_limit(self) -> None:
+        with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass", "MCP_TOOL_BATCH_LIMIT_GET_GEOMETRY": "2"}):
+            with (
+                mock.patch(
+                    "mapmover.runtime.reference_exchange.get_geometry_references",
+                    return_value={
+                        "ok": True,
+                        "requested": 3,
+                        "available": 3,
+                        "missing": 0,
+                        "results": [
+                            {"ok": True, "loc_id": "USA-CA-037", "has_shape": True},
+                            {"ok": True, "loc_id": "USA-NY-061", "has_shape": True},
+                            {"ok": True, "loc_id": "USA-IL-031", "has_shape": True},
+                        ],
+                    },
+                ) as geometry_mock,
+                mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+            ):
+                payload = _tool_call(
+                    self.client,
+                    "get_geometry",
+                    {"loc_ids": ["USA-CA-037", "USA-NY-061", "USA-IL-031"]},
+                    headers={"Authorization": "Bearer tok_test_bypass"},
+                )
+
+        geometry_mock.assert_called_once()
+        self.assertEqual(payload["requested"], 3)
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["payment_rail"], "trusted_artifact")
+        self.assertIsNotNone(analytics["artifact_token_id"])
 
     def test_loc_id_info_can_include_references(self) -> None:
         with (
@@ -711,7 +770,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             )
 
         index_mock.assert_called_once()
-        base_mock.assert_called_once_with("USA", admin_level=2)
+        base_mock.assert_called_once()
+        self.assertEqual(base_mock.call_args.kwargs["admin_level"], 2)
+        self.assertIn("loc_id", base_mock.call_args.kwargs["columns"])
+        self.assertNotIn("geometry", base_mock.call_args.kwargs["columns"])
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["total_count"], 3)
         self.assertEqual(payload["returned_count"], 2)

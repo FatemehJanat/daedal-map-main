@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any
 
-from ..geometry_handlers import get_geometry_index, load_country_parquet
+from ..geometry_handlers import GEOMETRY_INDEX_COLUMNS, get_geometry_index, load_country_parquet
 from .admin_hierarchy import infer_admin_level_from_loc_id
 from .country_geography import get_country_supported_deep_admin_levels
 from .geography_reference import translate_geometry_id_to_local_id
@@ -82,7 +82,7 @@ def _base_admin_scope_rows(parent_loc_id: str, admin_level: int, bbox: tuple[flo
     if parent_level is None or admin_level > 2:
         return []
     iso3 = _country_code_from_loc_id(parent_loc_id)
-    df = load_country_parquet(iso3, admin_level=admin_level)
+    df = load_country_parquet(iso3, admin_level=admin_level, columns=GEOMETRY_INDEX_COLUMNS)
     if df is None or df.empty:
         return []
     if parent_level > 0 and "parent_id" in df.columns:
