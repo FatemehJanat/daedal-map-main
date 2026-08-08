@@ -202,6 +202,68 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
         self.assertEqual(results[1]["matched"]["loc_id"], "USA-CA-037")
 
+    def test_resolve_points_defaults_to_admin2_and_reports_deeper_levels(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA",
+                    "name": "United States",
+                    "admin_level": 0,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 24,
+                    "bbox_max_lon": -66,
+                    "bbox_max_lat": 50,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+                }
+            ]
+        )
+        admin1_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA",
+                    "parent_id": "USA",
+                    "name": "California",
+                    "admin_level": 1,
+                    "bbox_min_lon": -125,
+                    "bbox_min_lat": 32,
+                    "bbox_max_lon": -113,
+                    "bbox_max_lat": 42,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+                }
+            ]
+        )
+        admin2_df = pd.DataFrame(
+            [
+                {
+                    "loc_id": "USA-CA-037",
+                    "parent_id": "USA-CA",
+                    "name": "Los Angeles",
+                    "admin_level": 2,
+                    "bbox_min_lon": -119,
+                    "bbox_min_lat": 33,
+                    "bbox_max_lon": -117,
+                    "bbox_max_lat": 35,
+                    "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                }
+            ]
+        )
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]),
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[3, 4, 5]),
+            patch("mapmover.geometry_handlers.load_subcounty_geometry") as deep_mock,
+        ):
+            results = resolve_points_to_locations([{"lon": -118.25, "lat": 34.05}])
+
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
+        self.assertEqual(results[0]["target_admin_level"], "admin_2")
+        self.assertTrue(results[0]["deeper_available"])
+        self.assertEqual(results[0]["available_deeper_admin_levels"], ["admin_3", "admin_4", "admin_5"])
+        deep_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

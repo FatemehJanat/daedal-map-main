@@ -1125,7 +1125,13 @@ def _add_timing_ms(timing_ms: dict[str, int] | None, key: str, started_at: float
     timing_ms[key] = timing_ms.get(key, 0) + int((time.perf_counter() - started_at) * 1000)
 
 
-def resolve_points_to_locations(points: list[dict], include_geometry: bool = False, timing_ms: dict[str, int] | None = None):
+def resolve_points_to_locations(
+    points: list[dict],
+    include_geometry: bool = False,
+    timing_ms: dict[str, int] | None = None,
+    target_admin_level: int | None = 2,
+    max_admin_level: int | None = None,
+):
     """Resolve multiple points through one shared geometry-loading pass.
 
     The single-point resolver is intentionally exact, but calling it in a loop
@@ -1133,6 +1139,8 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
     cloud mode. This helper keeps the result shape compatible while grouping
     geometry reads by country/state and admin level.
     """
+    if target_admin_level is None and max_admin_level is not None:
+        target_admin_level = max_admin_level
     normalized_points: list[dict] = []
     for index, point in enumerate(points or []):
         try:
@@ -1195,7 +1203,11 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
             admin2_match = _find_containing_row(admin2_df, lon, lat)
             item["admin1_match"] = admin1_match
             item["admin2_match"] = admin2_match
-            if admin2_match is not None:
+            if target_admin_level is not None and target_admin_level <= 0:
+                item["deepest_row"] = item["country_match"]
+            elif target_admin_level == 1:
+                item["deepest_row"] = admin1_match if admin1_match is not None else item["country_match"]
+            elif admin2_match is not None:
                 item["deepest_row"] = admin2_match
             elif admin1_match is not None:
                 item["deepest_row"] = admin1_match
@@ -1209,7 +1221,14 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
         _add_timing_ms(timing_ms, f"{iso3}_admin_match_ms", stage_started)
 
         stage_started = time.perf_counter()
-        deep_levels = get_country_supported_deep_admin_levels(iso3)
+        supported_deep_levels = get_country_supported_deep_admin_levels(iso3)
+        for item in country_items:
+            item["supported_deep_levels"] = supported_deep_levels
+        deep_levels = supported_deep_levels
+        if target_admin_level is not None:
+            deep_levels = [level for level in deep_levels if level <= target_admin_level]
+        if target_admin_level is not None and target_admin_level < 3:
+            deep_levels = []
         _add_timing_ms(timing_ms, f"{iso3}_deep_config_ms", stage_started)
         for admin_level in deep_levels:
             groups: dict[str, list[dict]] = {}
@@ -1263,6 +1282,12 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
             deepest_loc_id = deepest_row.get("loc_id") if deepest_row is not None else iso3
             deepest_name = deepest_row.get("name") if deepest_row is not None else country_name
             deepest_level = int(deepest_row.get("admin_level", 0)) if deepest_row is not None else 0
+            supported_deep_levels = item.get("supported_deep_levels") or []
+            available_deeper_levels = [
+                f"admin_{level}"
+                for level in supported_deep_levels
+                if target_admin_level is None or level > target_admin_level
+            ]
             stack = []
             for row in (country_match, item.get("admin1_match"), item.get("admin2_match")):
                 if row is None:
@@ -1281,6 +1306,9 @@ def resolve_points_to_locations(points: list[dict], include_geometry: bool = Fal
                     "iso3": iso3,
                 },
                 "stack": stack,
+                "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
+                "deeper_available": bool(available_deeper_levels),
+                "available_deeper_admin_levels": available_deeper_levels,
             }
             if include_geometry:
                 result["geojson"] = get_selection_geometries([deepest_loc_id])

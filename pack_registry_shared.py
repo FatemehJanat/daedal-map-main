@@ -377,7 +377,7 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "convert_reference", "summary": "one reference or reference batch -> loc_id -> target reference system"},
             {"name": "check_geometry", "summary": "loc_id or loc_ids -> available/missing shape preflight"},
             {"name": "get_geometry", "summary": "loc_id or loc_ids -> geometry metadata, bbox, centroid, and optional polygon"},
-            {"name": "resolve_point", "summary": "one point or point batch -> deepest loc_ids plus ancestor chains"},
+            {"name": "resolve_point", "summary": "one point or point batch -> target admin-level loc_ids plus ancestor chains"},
             {"name": "loc_id_info", "summary": "loc_id or loc_ids -> metadata, optional hierarchy, optional external references"},
             {"name": "resolve_loc_id_scope", "summary": "parent loc_id + admin level -> descendant loc_id count/list"},
             {"name": "estimate_geometry_package", "summary": "dry-run geometry export count/bytes/price/delivery estimate"},
@@ -398,7 +398,7 @@ PACK_REGISTRY: dict[str, dict] = {
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
-                "Latitude/longitude to the deepest administrative loc_id",
+                "Latitude/longitude to a requested administrative loc_id level",
                 "Small point batches in one MCP call for table cleanup",
                 "Full parent chain so you can clip to any admin level",
                 "Free; maps coordinates onto the shared loc_id spine",
@@ -406,7 +406,7 @@ PACK_REGISTRY: dict[str, dict] = {
         },
         "routing": {"preferred_tool": "resolve_point"},
         "tool_summaries": (
-            {"name": "resolve_point", "summary": "one point or point batch -> deepest loc_ids plus ancestor chains"},
+            {"name": "resolve_point", "summary": "one point or point batch -> target admin-level loc_ids plus ancestor chains"},
         ),
     },
     "boundaries": {
@@ -522,7 +522,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
         important_rules = [
             "These are free utility tools, not a query_dataset pack.",
             "Coordinates must be WGS84 decimal degrees.",
-            "resolve_point returns the deepest loc_id plus the full ancestor chain.",
+            "resolve_point defaults to admin_2 and returns the requested loc_id level plus the full ancestor chain; use target_admin_level when you need admin_3+.",
             "get_geometry returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
             "Use convert_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone conversions in either direction.",
             "Use loc_id_info with include_references=true when you already have a loc_id and want attached or overlapping references.",

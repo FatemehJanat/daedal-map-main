@@ -210,6 +210,26 @@ def _parse_env_int_optional(name: str) -> int | None:
         return None
 
 
+def _parse_admin_level_value(value: Any, default: int | None = 2) -> int | None:
+    raw = str(value if value is not None else default).strip().lower()
+    if raw in {"", "none", "null", "deepest", "all"}:
+        return None
+    if raw.startswith("admin_"):
+        raw = raw.split("_", 1)[1]
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
+    import os
+
+    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "2"))
+    value = payload.get("target_admin_level", payload.get("max_admin_level"))
+    return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=2))
+
+
 def _tool_env_suffix(tool_name: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in str(tool_name or "").upper()).strip("_")
 
@@ -1127,6 +1147,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
 
         include_geometry = bool(payload.get("include_geometry", False))
+        target_admin_level = _point_lookup_target_admin_level(payload)
         results: list[dict[str, Any]] = []
         resolved_count = 0
         unresolved_count = 0
@@ -1191,7 +1212,12 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             valid_points.append({"index": index, "row_index": row_index, "id": caller_point_id, "lat": lat, "lon": lon})
         resolver_stages: dict[str, int] = {}
         try:
-            raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stages)
+            raw_results = resolve_points_to_locations(
+                valid_points,
+                include_geometry=include_geometry,
+                timing_ms=resolver_stages,
+                target_admin_level=target_admin_level,
+            )
         except Exception as exc:
             raw_results = [{"error": str(exc), "point": {"lat": point.get("lat"), "lon": point.get("lon")}} for point in valid_points]
 
@@ -1233,6 +1259,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "point_count": len(points),
             "resolved_count": resolved_count,
             "unresolved_count": unresolved_count,
+            "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
             "results": results,
         }
         _log_mcp_tool_usage_event(
@@ -1254,6 +1281,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "resolved_count": resolved_count,
                 "unresolved_count": unresolved_count,
                 "batch_limit": limit,
+                "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,
@@ -1313,9 +1341,15 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
     try:
         from mapmover.geometry_handlers import resolve_points_to_locations
 
+        target_admin_level = _point_lookup_target_admin_level(payload)
         runtime_started = time.perf_counter()
         resolver_stages: dict[str, int] = {}
-        raw_results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=False, timing_ms=resolver_stages)
+        raw_results = resolve_points_to_locations(
+            [{"lon": lon, "lat": lat}],
+            include_geometry=False,
+            timing_ms=resolver_stages,
+            target_admin_level=target_admin_level,
+        )
         raw = raw_results[0] if raw_results else {"error": "point did not resolve", "point": {"lon": lon, "lat": lat}}
         stages = {"point_resolver_ms": _elapsed_ms(runtime_started), **resolver_stages}
     except Exception as exc:  # surface a clean tool error, never a 500
@@ -1357,6 +1391,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "point_count": 1,
             "resolved_count": 1 if resolved else 0,
             "unresolved_count": 0 if resolved else 1,
+            "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
             **_compute_metadata(response_payload=result, stages=stages, input_count=1, output_count=1 if resolved else 0),
         },
     )

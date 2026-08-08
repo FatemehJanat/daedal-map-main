@@ -132,7 +132,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Free geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains in one MCP tool call. Use lat/lon for one point or points for table-style batches; do not call this repeatedly for bulk. No payment required.",
+            "description": "Free geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; responses say when deeper admin_3+ levels exist so callers can ask intentionally. Use lat/lon for one point or points for table-style batches; do not call this repeatedly for bulk. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -153,6 +153,10 @@ def build_tool_definitions() -> list[dict]:
                             "additionalProperties": False,
                         },
                         "description": "Points to resolve. Hosted default maximum is 25 points per call.",
+                    },
+                    "target_admin_level": {
+                        "anyOf": [{"type": "string"}, {"type": "integer"}],
+                        "description": "Requested administrative level such as admin_0, admin_1, admin_2, admin_3, admin_4, or admin_5. Default admin_2. Use deepest/all only when the caller explicitly needs the deepest supported local geometry.",
                     },
                     "include_geometry": {"type": "boolean", "description": "When true, include geometry in resolver internals where available. Default false to keep responses small."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id echoed in the result."},

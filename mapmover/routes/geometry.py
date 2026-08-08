@@ -42,6 +42,19 @@ def _point_lookup_batch_limit() -> int:
         return 25
 
 
+def _point_lookup_target_admin_level(value=None) -> int | None:
+    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "2"))
+    raw = str(value if value is not None else default).strip().lower()
+    if raw in {"", "none", "null", "deepest", "all"}:
+        return None
+    if raw.startswith("admin_"):
+        raw = raw.split("_", 1)[1]
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 2
+
+
 async def decode_request_body(request: Request) -> dict:
     """Decode MessagePack request body."""
     body_bytes = await request.body()
@@ -200,7 +213,8 @@ async def resolve_point_endpoint(req: Request):
         if lon is None or lat is None:
             return msgpack_error("lon and lat are required", 400)
 
-        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True)
+        target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True, target_admin_level=target_admin_level)
         result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return msgpack_response(result, status_code=404)
@@ -224,8 +238,9 @@ async def resolve_point_json_endpoint(req: Request):
         return JSONResponse({"error": "lon and lat are required"}, status_code=400)
 
     include_geometry = bool(body.get("include_geometry", False))
+    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
     try:
-        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=include_geometry)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=include_geometry, target_admin_level=target_admin_level)
         result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return JSONResponse(result, status_code=404)
@@ -285,6 +300,7 @@ async def resolve_points_json_endpoint(req: Request):
         return JSONResponse({"error": f"points must contain at most {limit} items", "limit": limit}, status_code=413)
 
     include_geometry = bool(body.get("include_geometry", False))
+    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
     source = str(body.get("source") or "").strip()[:80] or "unknown"
     batch_id = str(body.get("batch_id") or "").strip()[:120] or None
     valid_points = []
@@ -315,7 +331,7 @@ async def resolve_points_json_endpoint(req: Request):
 
     resolver_stage_ms = {}
     try:
-        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stage_ms)
+        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry, timing_ms=resolver_stage_ms, target_admin_level=target_admin_level)
     except Exception as exc:
         raw_results = [{"error": str(exc), "point": {"lon": point.get("lon"), "lat": point.get("lat")}} for point in valid_points]
 
@@ -342,6 +358,7 @@ async def resolve_points_json_endpoint(req: Request):
         "point_count": len(points),
         "resolved_count": resolved_count,
         "unresolved_count": unresolved_count,
+        "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "results": results,
     }
 
@@ -356,6 +373,7 @@ async def resolve_points_json_endpoint(req: Request):
         "resolved_count": resolved_count,
         "unresolved_count": unresolved_count,
         "limit": limit,
+        "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "resolver_stage_ms": resolver_stage_ms,
     }
 
