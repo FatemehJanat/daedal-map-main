@@ -110,7 +110,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
             response = self.client.post(
                 "/api/v1/resolve/points",
-                json={"source": "try_dataset", "batch_id": "too-many", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+                json={"source": "try_dataset", "batch_id": "too-many", "parent_loc_id": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
             )
 
         self.assertEqual(response.status_code, 402)
@@ -144,14 +144,16 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                     response = self.client.post(
                         "/api/v1/resolve/points",
                         headers={"Authorization": "Bearer tok_test_bypass"},
-                        json={"source": "try_dataset", "batch_id": "trusted-50", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
+                        json={"source": "try_dataset", "batch_id": "trusted-50", "parent_loc_id": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
                     )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["point_count"], 50)
+        self.assertEqual(body["country_scope"], "USA")
         self.assertEqual(body["resolved_count"], 50)
         bulk_mock.assert_called_once()
+        self.assertEqual(bulk_mock.call_args.kwargs["country_scope"], "USA")
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "allow")
         self.assertEqual(analytics["payment_rail"], "trusted_artifact")
