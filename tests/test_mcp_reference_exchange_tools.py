@@ -10,21 +10,23 @@ from mapmover.runtime.reference_exchange import get_geometry_availability
 from mapmover.routes.mcp import _tool_rate_limit_for_tier, router as mcp_router
 
 
-def _mcp_call(client: TestClient, method: str, params: dict | None = None, *, path: str = "/mcp/geography") -> dict:
+def _mcp_call(client: TestClient, method: str, params: dict | None = None, *, path: str = "/mcp/geography", headers: dict | None = None) -> dict:
     response = client.post(
         path,
+        headers=headers or {},
         json={"jsonrpc": "2.0", "id": "test-1", "method": method, "params": params or {}},
     )
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def _tool_call(client: TestClient, name: str, arguments: dict | None = None, *, path: str = "/mcp/geography") -> dict:
+def _tool_call(client: TestClient, name: str, arguments: dict | None = None, *, path: str = "/mcp/geography", headers: dict | None = None) -> dict:
     envelope = _mcp_call(
         client,
         "tools/call",
         {"name": name, "arguments": arguments or {}},
         path=path,
+        headers=headers,
     )
     return envelope["result"]["structuredContent"]
 
@@ -155,6 +157,40 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "challenge")
         self.assertEqual(analytics["payment_rail"], "commercial_access")
+
+    def test_resolve_point_tool_trusted_token_executes_over_free_limit(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [
+                {
+                    "point": {"lon": point["lon"], "lat": point["lat"]},
+                    "matched": {"loc_id": f"TEST-{point['row_index']}", "admin_level": 2, "iso3": "USA"},
+                    "stack": [{"loc_id": "USA"}, {"loc_id": f"TEST-{point['row_index']}"}],
+                    "target_admin_level": "admin_2",
+                    "deeper_available": False,
+                    "available_deeper_admin_levels": [],
+                }
+                for point in points
+            ]
+
+        with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass"}):
+            with (
+                mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve) as bulk_mock,
+                mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+            ):
+                payload = _tool_call(
+                    self.client,
+                    "resolve_point",
+                    {"points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
+                    headers={"Authorization": "Bearer tok_test_bypass"},
+                )
+
+        self.assertEqual(payload["point_count"], 50)
+        self.assertEqual(payload["resolved_count"], 50)
+        bulk_mock.assert_called_once()
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "trusted_artifact")
+        self.assertIsNotNone(analytics["artifact_token_id"])
 
     def test_resolve_point_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 import uuid
 from typing import Any
@@ -23,6 +24,7 @@ from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
+from mapmover.api_query_commercial import get_trusted_artifact_token
 from mapmover.routes.disasters.related import (
     get_disaster_link_chain_for_exact_event,
     get_disaster_links_for_exact_event,
@@ -281,6 +283,13 @@ def _point_lookup_quote_payload(
     }
 
 
+def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
+    token = get_trusted_artifact_token(request)
+    if token is None:
+        return None, None
+    return token, hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
+
+
 def _tool_env_suffix(tool_name: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in str(tool_name or "").upper()).strip("_")
 
@@ -449,6 +458,7 @@ def _log_mcp_tool_usage_event(
     response_payload: Any | None = None,
     error_code: str | None = None,
     payment_rail: str | None = "free_preview",
+    artifact_token_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     merged_metadata = {
@@ -468,6 +478,7 @@ def _log_mcp_tool_usage_event(
             source_id=tool_name,
             decision=decision,
             payment_rail=payment_rail,
+            artifact_token_id=artifact_token_id,
             auth_user_id=getattr(request.state, "auth_user_id", None),
             ip_hash=hash_ip_for_analytics(get_client_ip(request)),
             user_agent=request.headers.get("user-agent", "").strip() or None,
@@ -1176,6 +1187,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         limit = _tool_batch_item_limit("resolve_point", default=25, fallback_env_names=("POINT_LOOKUP_BATCH_LIMIT",))
         paid_limit = _point_lookup_paid_batch_limit(limit)
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
         if len(points) > paid_limit:
             _stamp_mcp_tool_analytics(
                 request,
@@ -1210,7 +1222,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit, "paid_batch_limit": paid_limit},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        if len(points) > limit:
+        if len(points) > limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
                 request,
                 event="mcp_tool",
@@ -1390,6 +1402,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "resolved_count": resolved_count,
                 "unresolved_count": unresolved_count,
                 "batch_limit": limit,
+                "paid_batch_limit": paid_limit,
+                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
                 **_compute_metadata(
                     response_payload=result_payload,
@@ -1400,6 +1415,8 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                     batch_limit=limit,
                 ),
             },
+            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            artifact_token_id=trusted_token_id,
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 

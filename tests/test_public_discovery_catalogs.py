@@ -126,6 +126,37 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(analytics["row_count"], 26)
         self.assertEqual(analytics["metadata"]["surface"], "test_data")
 
+    def test_point_lookup_batch_endpoint_trusted_token_executes_over_free_limit(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [
+                {
+                    "matched": {"loc_id": f"TEST-{point['row_index']}", "admin_level": 2},
+                    "target_admin_level": "admin_2",
+                    "deeper_available": False,
+                    "available_deeper_admin_levels": [],
+                }
+                for point in points
+            ]
+
+        with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass"}):
+            with mock.patch("mapmover.routes.geometry.resolve_points_to_locations", side_effect=fake_resolve) as bulk_mock:
+                with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
+                    response = self.client.post(
+                        "/api/v1/resolve/points",
+                        headers={"Authorization": "Bearer tok_test_bypass"},
+                        json={"source": "try_dataset", "batch_id": "trusted-50", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["point_count"], 50)
+        self.assertEqual(body["resolved_count"], 50)
+        bulk_mock.assert_called_once()
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "trusted_artifact")
+        self.assertIsNotNone(analytics["artifact_token_id"])
+
     def test_geometry_catalog_loads_from_object_store_in_cloud_mode(self) -> None:
         class FakeObjectStore:
             def get_object(self, **kwargs):

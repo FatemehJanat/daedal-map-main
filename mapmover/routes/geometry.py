@@ -1,6 +1,7 @@
 """Geometry API router endpoints."""
 
 import os
+import hashlib
 import time
 import msgpack
 from fastapi import APIRouter, Request
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from mapmover import logger
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
+from mapmover.api_query_commercial import get_trusted_artifact_token
 from mapmover.security import get_client_ip
 from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
@@ -73,6 +75,13 @@ def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None,
         "retry_hint": "Fund account credits or satisfy the x402 payment challenge, then retry the same request.",
         "error": {"code": "payment_required", "message": f"{point_count} points exceeds the free preview limit of {free_limit}."},
     }
+
+
+def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
+    token = get_trusted_artifact_token(request)
+    if token is None:
+        return None, None
+    return token, hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
 
 
 def _point_lookup_target_admin_level(value=None) -> int | None:
@@ -298,6 +307,7 @@ async def resolve_points_json_endpoint(req: Request):
 
     limit = _point_lookup_batch_limit()
     paid_limit = _point_lookup_paid_batch_limit()
+    trusted_token, trusted_token_id = _trusted_artifact_access(req)
     if len(points) > paid_limit:
         return JSONResponse(
             {
@@ -308,7 +318,7 @@ async def resolve_points_json_endpoint(req: Request):
             },
             status_code=413,
         )
-    if len(points) > limit:
+    if len(points) > limit and trusted_token is None:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
         batch_id = str(body.get("batch_id") or "").strip()[:120] or None
         quote_payload = _point_lookup_quote_payload(
@@ -426,6 +436,9 @@ async def resolve_points_json_endpoint(req: Request):
         "resolved_count": resolved_count,
         "unresolved_count": unresolved_count,
         "limit": limit,
+        "paid_batch_limit": paid_limit,
+        "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+        "artifact_token_id": trusted_token_id,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "resolver_stage_ms": resolver_stage_ms,
     }
@@ -437,7 +450,8 @@ async def resolve_points_json_endpoint(req: Request):
             pack_id="geography_tools",
             source_id="resolve_points",
             decision="allow",
-            payment_rail="free_preview",
+            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            artifact_token_id=trusted_token_id,
             auth_user_id=None,
             ip_hash=hash_ip_for_analytics(get_client_ip(req)),
             user_agent=req.headers.get("user-agent", "").strip() or None,
