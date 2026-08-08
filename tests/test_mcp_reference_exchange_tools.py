@@ -91,6 +91,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                     "deepest_resolved_loc_id": f"TEST-{point['lat']}-{point['lon']}",
                     "deepest_resolved_admin_level": "admin_2",
                     "stack": [{"loc_id": "USA"}, {"loc_id": f"TEST-{point['lat']}-{point['lon']}"}],
+                    "target_admin_level": "admin_2",
+                    "deeper_available": True,
+                    "available_deeper_admin_levels": ["admin_3"],
                 }
                 for point in points
             ]
@@ -118,6 +121,8 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["resolved_count"], 2)
         self.assertEqual(payload["results"][0]["row_index"], 10)
         self.assertEqual(payload["results"][0]["deepest_resolved_loc_id"], "TEST-49.2--123.1")
+        self.assertTrue(payload["results"][0]["deeper_available"])
+        self.assertEqual(payload["results"][0]["available_deeper_admin_levels"], ["admin_3"])
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["capability_id"], "point_lookup")
         self.assertEqual(analytics["pack_id"], "geography_tools")
