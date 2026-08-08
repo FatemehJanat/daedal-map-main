@@ -71,16 +71,19 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             self.assertEqual(_rate_limit_config_for_surface("point_lookup"), (25, 60))
 
     def test_point_lookup_batch_endpoint_returns_one_bulk_payload(self) -> None:
-        def fake_resolve(lon, lat, include_geometry=False):
-            return {
-                "deepest_resolved_loc_id": f"TEST-{lat}-{lon}",
-                "matched": {"loc_id": f"TEST-{lat}-{lon}"},
-            }
+        def fake_resolve(points, include_geometry=False):
+            return [
+                {
+                    "deepest_resolved_loc_id": f"TEST-{point['lat']}-{point['lon']}",
+                    "matched": {"loc_id": f"TEST-{point['lat']}-{point['lon']}"},
+                }
+                for point in points
+            ]
 
         with mock.patch(
-            "mapmover.routes.geometry.resolve_point_to_loc_id_stack",
+            "mapmover.routes.geometry.resolve_points_to_locations",
             side_effect=fake_resolve,
-        ), mock.patch(
+        ) as bulk_mock, mock.patch(
             "mapmover.routes.geometry.log_api_query_event",
         ):
             response = self.client.post(
@@ -101,6 +104,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(payload["point_count"], 2)
         self.assertEqual(payload["resolved_count"], 2)
         self.assertEqual(payload["results"][0]["row_index"], 10)
+        bulk_mock.assert_called_once()
 
     def test_point_lookup_batch_endpoint_rejects_over_limit(self) -> None:
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:

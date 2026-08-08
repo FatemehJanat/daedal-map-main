@@ -19,9 +19,9 @@ from mapmover.geometry_handlers import (
     get_location_places as get_location_places_handler,
     get_selection_geometries as get_selection_geometries_handler,
     get_viewport_geometry as get_viewport_geometry_handler,
+    resolve_points_to_locations,
 )
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
-from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 from mapmover.runtime.reference_exchange import (
     convert_reference,
     get_geometry_reference,
@@ -200,7 +200,8 @@ async def resolve_point_endpoint(req: Request):
         if lon is None or lat is None:
             return msgpack_error("lon and lat are required", 400)
 
-        result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=True)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True)
+        result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return msgpack_response(result, status_code=404)
         return msgpack_response(result)
@@ -224,7 +225,8 @@ async def resolve_point_json_endpoint(req: Request):
 
     include_geometry = bool(body.get("include_geometry", False))
     try:
-        result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=include_geometry)
+        result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return JSONResponse(result, status_code=404)
         return JSONResponse(result)
@@ -285,34 +287,51 @@ async def resolve_points_json_endpoint(req: Request):
     include_geometry = bool(body.get("include_geometry", False))
     source = str(body.get("source") or "").strip()[:80] or "unknown"
     batch_id = str(body.get("batch_id") or "").strip()[:120] or None
-    results = []
+    valid_points = []
+    invalid_by_index = {}
     resolved_count = 0
     unresolved_count = 0
 
     for index, point in enumerate(points):
         if not isinstance(point, dict):
-            unresolved_count += 1
-            results.append({"index": index, "error": "point must be an object"})
+            invalid_by_index[index] = {"index": index, "error": "point must be an object"}
             continue
         lon = point.get("lon")
         lat = point.get("lat")
         row_index = point.get("row_index", index)
         if lon is None or lat is None:
-            unresolved_count += 1
-            results.append({"index": index, "row_index": row_index, "error": "lon and lat are required"})
+            invalid_by_index[index] = {"index": index, "row_index": row_index, "error": "lon and lat are required"}
             continue
         try:
-            result = resolve_point_to_loc_id_stack(lon, lat, include_geometry=include_geometry)
-            if result.get("error"):
-                unresolved_count += 1
-            elif result.get("deepest_resolved_loc_id") or (result.get("matched") or {}).get("loc_id"):
-                resolved_count += 1
-            else:
-                unresolved_count += 1
-            results.append({"index": index, "row_index": row_index, **result})
-        except Exception as exc:
+            lon_value = float(lon)
+            lat_value = float(lat)
+        except (TypeError, ValueError):
+            invalid_by_index[index] = {"index": index, "row_index": row_index, "error": "lon and lat must be numbers"}
+            continue
+        if not (-90.0 <= lat_value <= 90.0) or not (-180.0 <= lon_value <= 180.0):
+            invalid_by_index[index] = {"index": index, "row_index": row_index, "error": "lat must be within -90..90 and lon within -180..180"}
+            continue
+        valid_points.append({"index": index, "row_index": row_index, "lon": lon_value, "lat": lat_value})
+
+    try:
+        raw_results = resolve_points_to_locations(valid_points, include_geometry=include_geometry)
+    except Exception as exc:
+        raw_results = [{"error": str(exc), "point": {"lon": point.get("lon"), "lat": point.get("lat")}} for point in valid_points]
+
+    by_index = dict(invalid_by_index)
+    for point, result in zip(valid_points, raw_results):
+        by_index[point["index"]] = {"index": point["index"], "row_index": point["row_index"], **result}
+
+    results = []
+    for index in range(len(points)):
+        item = by_index.get(index) or {"index": index, "error": "point did not produce a result"}
+        if item.get("error"):
             unresolved_count += 1
-            results.append({"index": index, "row_index": row_index, "error": str(exc)})
+        elif item.get("deepest_resolved_loc_id") or (item.get("matched") or {}).get("loc_id"):
+            resolved_count += 1
+        else:
+            unresolved_count += 1
+        results.append(item)
 
     status_code = 200
     payload = {

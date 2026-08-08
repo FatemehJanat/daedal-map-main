@@ -1310,10 +1310,11 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             rpc_request_id,
         )
     try:
-        from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
+        from mapmover.geometry_handlers import resolve_points_to_locations
 
         runtime_started = time.perf_counter()
-        raw = resolve_point_to_loc_id_stack(lon, lat)
+        raw_results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=False)
+        raw = raw_results[0] if raw_results else {"error": "point did not resolve", "point": {"lon": lon, "lat": lat}}
         stages = {"point_resolver_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:  # surface a clean tool error, never a 500
         error_payload = {"request_id": request_id, "error": {"code": "resolve_failed", "message": str(exc)}}
