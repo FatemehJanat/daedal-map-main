@@ -1888,5 +1888,700 @@
         "placement_semantics": "containing_loc_id"
       }
     }
+  },
+  {
+    "case": "2018 Opportunity Zone designation on fixed 2010 tracts",
+    "source_system": "US Treasury / IRS Qualified Opportunity Zones",
+    "source_url": "https://www.irs.gov/irb/2021-22_IRB",
+    "sample_kind": "program_designation_set",
+    "id": "USA-TREASURY-DESIG-QOZ-2018",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Department of the Treasury",
+      "authority_snapshot": "IRS Notices 2018-48 and 2019-42",
+      "status": "active_generation",
+      "valid_from": "2018",
+      "base_geography_family": "census_tract",
+      "base_geography_vintage": "census_2010",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "census_tract"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "The designation remains tied to 2010 tract boundaries even after Census publishes 2020 tracts.",
+      "A future Opportunity Zone generation must not silently rewrite the 2018 generation."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_independent_clocks": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "HUD 2026 DDA mixed ZCTA and county membership",
+    "source_system": "HUD Difficult Development Areas",
+    "source_url": "https://www.federalregister.gov/documents/2025/09/30/2025-19007/statutorily-mandated-designation-of-difficult-development-areas-and-qualified-census-tracts-for-2026",
+    "sample_kind": "mixed_family_program_designation",
+    "id": "USA-HUD-DESIG-DDA-2026",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Department of Housing and Urban Development",
+      "authority_snapshot": "2026 DDA Federal Register notice",
+      "status": "active_generation",
+      "valid_from": "2026-01-01",
+      "base_geography_family": "mixed",
+      "base_geography_vintage": "census_2020",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "overlay_zcta",
+        "admin_2_county"
+      ],
+      "member_attributes": [
+        "metro_status"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "One statutory designation uses ZCTAs in metropolitan areas and counties outside them.",
+      "The member family must remain explicit on each row."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_independent_clocks": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "SBA HUBZone heterogeneous designation families",
+    "source_system": "US Small Business Administration HUBZone",
+    "source_url": "https://www.ecfr.gov/current/title-13/chapter-I/part-126/subpart-A/section-126.103",
+    "sample_kind": "mixed_family_program_designation",
+    "id": "USA-SBA-DESIG-HUBZONE-2023",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Small Business Administration",
+      "authority_snapshot": "HUBZone map effective 2023-07-01",
+      "status": "active_generation",
+      "valid_from": "2023-07-01",
+      "base_geography_family": "mixed",
+      "base_geography_vintage": "mixed_by_member_type",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "census_tract",
+        "admin_2_county",
+        "tribal_land",
+        "base_closure_area",
+        "disaster_area",
+        "governor_designated_area",
+        "redesignated_area"
+      ],
+      "member_attributes": [
+        "designation_type",
+        "member_valid_from",
+        "member_valid_to"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "The current regulation and historical reports enumerate the program differently, so authority snapshot is part of the claim.",
+      "Member refresh cadence belongs to the member type, not only to the set."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_independent_clocks": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "SBA HUBZone QCT dependency bound to SBA map snapshot",
+    "source_system": "SBA HUBZone dependency on HUD QCT",
+    "source_url": "https://www.congress.gov/crs-product/R41268",
+    "sample_kind": "designation_dependency_snapshot",
+    "id": "USA-SBA-DESIG-HUBZONE-2023-QCT-BINDING",
+    "family_id": "membership_set",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Small Business Administration",
+      "authority_snapshot": "HUBZone map effective 2023-07-01",
+      "status": "active_generation",
+      "valid_from": "2023-07-01",
+      "base_geography_family": "census_tract",
+      "base_geography_vintage": "census_2020",
+      "dependencies": [
+        {
+          "membership_set_id": "USA-HUD-DESIG-QCT",
+          "binding_policy": "steward_snapshot",
+          "snapshot": "SBA-2023-07-01"
+        }
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "A definition can depend on HUD QCT without adopting every annual HUD refresh immediately.",
+      "Dependency edges need live-versus-snapshot binding semantics."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_independent_clocks": true,
+        "preserves_dependency_binding": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "CEJST retired set with unchanged tract members",
+    "source_system": "Council on Environmental Quality CEJST",
+    "source_url": "https://www.whitehouse.gov/presidential-actions/2025/01/initial-rescissions-of-harmful-executive-orders-and-actions/",
+    "sample_kind": "retired_program_designation",
+    "id": "USA-CEQ-DESIG-CEJST-1-0",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Council on Environmental Quality",
+      "authority_snapshot": "CEJST 1.0 federal release",
+      "status": "retired",
+      "valid_to": "2025-01",
+      "superseded_by": null,
+      "base_geography_family": "mixed",
+      "base_geography_vintage": "census_2010_and_tribal_areas",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "census_tract",
+        "tribal_land"
+      ],
+      "mirror_of": "withdrawn_federal_artifact",
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "The set retires without retiring its member geographies and without requiring a successor.",
+      "A third-party mirror must not impersonate the withdrawn federal authority."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_set_lifecycle": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "Population HPSA compound population-within-geography subject",
+    "source_system": "HRSA Health Professional Shortage Areas",
+    "source_url": "https://data.hrsa.gov/topics/health-workforce/shortage-areas/hpsa-find",
+    "sample_kind": "compound_subject_designation",
+    "id": "USA-HRSA-DESIG-HPSA-POPULATION-SAMPLE",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Health Resources and Services Administration",
+      "authority_snapshot": "HRSA HPSA source release",
+      "status": "active",
+      "member_target_kinds": [
+        "population_within_geography"
+      ],
+      "member_families": [
+        "compound_subject"
+      ],
+      "member_attributes": [
+        "population_definition_id",
+        "scope_loc_id",
+        "discipline",
+        "hpsa_score",
+        "as_of"
+      ],
+      "geometry_truth": "scope_geography_not_subject_identity"
+    },
+    "design_questions": [
+      "A population within a service area is a compound subject, not a new loc_id.",
+      "Do international examples eventually justify a reusable population_group_id?"
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_compound_subject": true,
+        "preserves_member_attributes": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "Facility HPSA entity member with score",
+    "source_system": "HRSA Health Professional Shortage Areas",
+    "source_url": "https://data.hrsa.gov/topics/health-workforce/shortage-areas/hpsa-find",
+    "sample_kind": "entity_member_designation",
+    "id": "USA-HRSA-DESIG-HPSA-FACILITY-SAMPLE",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "US Health Resources and Services Administration",
+      "authority_snapshot": "HRSA HPSA source release",
+      "status": "active",
+      "member_target_kinds": [
+        "entity"
+      ],
+      "member_families": [
+        "health_facility"
+      ],
+      "member_attributes": [
+        "discipline",
+        "hpsa_score",
+        "as_of"
+      ],
+      "geometry_truth": "entity_location_derived"
+    },
+    "design_questions": [
+      "An entity designation must not coerce a facility into loc_id identity."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_member_attributes": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "RPA megaregions static display membership set",
+    "source_system": "Regional Plan Association America 2050",
+    "source_url": "https://s3.us-east-1.amazonaws.com/rpa-org/pdfs/2050-Paper-Defining-US-Megaregions.pdf",
+    "sample_kind": "static_expert_judgment_membership",
+    "id": "RPA-DESIG-MEGAREGION-2006",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "Regional Plan Association",
+      "authority_snapshot": "America 2050 source-derived 2006 set",
+      "status": "static",
+      "valid_from": "2006",
+      "base_geography_family": "admin_2_county",
+      "base_geography_vintage": "source_publication_vintage",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "admin_2_county"
+      ],
+      "member_attributes": [
+        "method_expert_judgment",
+        "method_unreproducible"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "National extent does not imply federal authority; the namespace remains source-first.",
+      "A static display set is not promoted to a maintained analytical geography."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_set_lifecycle": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "EU regional aid map 2022 to 2027",
+    "source_system": "European Commission regional State aid maps",
+    "source_url": "https://competition-policy.ec.europa.eu/state-aid/legislation/modernisation/regional-aid_en",
+    "sample_kind": "supranational_program_designation",
+    "id": "EC-DESIG-REGIONAL-AID-2022-2027",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "European Commission and Member State aid maps",
+      "authority_snapshot": "Regional aid Guidelines 2022-2027 with mid-term review",
+      "status": "active_generation",
+      "valid_from": "2022-01-01",
+      "valid_to": "2027-12-31",
+      "base_geography_family": "NUTS_and_member_state_map_units",
+      "base_geography_vintage": "map_decision_specific",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "nuts_region",
+        "member_state_defined_area"
+      ],
+      "member_attributes": [
+        "aid_area_class",
+        "maximum_aid_intensity",
+        "decision_id"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "Supranational rules and member-state map decisions are separate authority layers.",
+      "A mid-period revision should create dated membership changes without erasing the original decision."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_independent_clocks": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "Australia Modified Monash Model 2023 classification",
+    "source_system": "Australian Government Modified Monash Model",
+    "source_url": "https://www.health.gov.au/topics/rural-health-workforce/classifications/mmm",
+    "sample_kind": "derived_program_classification",
+    "id": "AUS-DOH-DESIG-MMM-2023",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "Australian Government Department of Health",
+      "authority_snapshot": "Modified Monash Model 2023",
+      "status": "active_generation",
+      "valid_from": "2025-04-13",
+      "base_geography_family": "ASGS_Remoteness_Area",
+      "base_geography_vintage": "ASGS_RA_2021",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "asgs_remoteness_area",
+        "town_distance_derived_area",
+        "island_exception"
+      ],
+      "dependencies": [
+        {
+          "membership_set_id": "AUS-ABS-ASGS-RA-2021",
+          "binding_policy": "source_snapshot",
+          "snapshot": "ASGS_RA_2021"
+        }
+      ],
+      "member_attributes": [
+        "mm_category",
+        "town_population_band",
+        "road_distance_rule"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "The model version, ASGS base vintage, and downstream program implementation date are separate clocks.",
+      "Derived exceptions such as island rules remain attributes and provenance, not admin hierarchy."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_independent_clocks": true,
+        "preserves_dependency_binding": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "Brazilian Semi-Arid 2024 transitional municipality membership",
+    "source_system": "IBGE / SUDENE Brazilian Semi-Arid Region",
+    "source_url": "https://www.ibge.gov.br/geociencias/cartas-e-mapas/mapas-regionais/15974-semiarido",
+    "sample_kind": "legal_region_transition_membership",
+    "id": "BRA-SUDENE-DESIG-SEMIARID-2024",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "SUDENE with IBGE publication",
+      "authority_snapshot": "Brazilian Semi-Arid delimitation through 2024-12-31",
+      "status": "active_generation",
+      "valid_from": "2024-01",
+      "base_geography_family": "municipality",
+      "base_geography_vintage": "IBGE_2024",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "municipality"
+      ],
+      "member_attributes": [
+        "membership_basis",
+        "appeal_status",
+        "transition_valid_to"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "Members retained temporarily during an exclusion appeal need row-level lifecycle without inventing new municipality identities.",
+      "The legal designation snapshot and IBGE municipality vintage are independent."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_independent_clocks": true,
+        "preserves_set_lifecycle": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "India Aspirational Districts program cohort and rankings",
+    "source_system": "NITI Aayog Aspirational Districts Programme",
+    "source_url": "https://www.niti.gov.in/aspirational-districts-programme",
+    "sample_kind": "ranked_admin_membership_set",
+    "id": "IND-NITI-DESIG-ADP-2018",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "NITI Aayog",
+      "authority_snapshot": "Aspirational Districts cohort",
+      "status": "active",
+      "valid_from": "2018-01",
+      "base_geography_family": "district",
+      "base_geography_vintage": "program_cohort_snapshot",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "admin_district"
+      ],
+      "member_attributes": [
+        "monthly_delta_rank",
+        "indicator_values",
+        "as_of"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "A relatively stable program cohort and monthly measurements must not be conflated into one clock.",
+      "District reorganization requires an explicit program-to-admin-vintage bridge."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_independent_clocks": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "India Aspirational Blocks related lower-level cohort",
+    "source_system": "NITI Aayog Aspirational Blocks Programme",
+    "source_url": "https://www.niti.gov.in/sites/default/files/2025-06/Manual-4%20ABP%2CADP%2CGTCE%2CSJE%2CWL.pdf",
+    "sample_kind": "related_program_different_admin_level",
+    "id": "IND-NITI-DESIG-ABP-2023",
+    "family_id": "membership_set",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "designation": {
+      "authority": "NITI Aayog",
+      "authority_snapshot": "Aspirational Blocks cohort",
+      "status": "active",
+      "valid_from": "2023-01",
+      "base_geography_family": "development_block",
+      "base_geography_vintage": "program_cohort_snapshot",
+      "member_target_kinds": [
+        "geography"
+      ],
+      "member_families": [
+        "development_block"
+      ],
+      "member_attributes": [
+        "indicator_values",
+        "award_status",
+        "as_of"
+      ],
+      "geometry_truth": "members_primary_union_derived"
+    },
+    "design_questions": [
+      "Related district and block programs must preserve different administrative member families.",
+      "The English word block does not establish a globally portable admin depth."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "membership_set_id",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "designation": {
+        "status": "verified",
+        "represents_membership_set": true,
+        "preserves_member_family": true,
+        "preserves_independent_clocks": true,
+        "preserves_member_attributes": true,
+        "treats_union_as_derived": true,
+        "preserves_authority_snapshot": true
+      }
+    }
+  },
+  {
+    "case": "USA ZCTA explicit namespace coverage",
+    "source_system": "US Census ZIP Code Tabulation Areas",
+    "source_url": "https://www.census.gov/programs-surveys/geography/guidance/geo-areas/zctas.html",
+    "sample_kind": "statistical_postal_approximation",
+    "id": "USA-Z-00601",
+    "family_id": "overlay_zcta",
+    "public_promise": "public_alias",
+    "reference_level": "label_4",
+    "reference_level_reason": "scale_hint",
+    "bridge_required": true,
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_4",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
+  },
+  {
+    "case": "Provider-derived admin geometry storage namespace",
+    "source_system": "DaedalMap geometry bank storage identity",
+    "sample_kind": "admin_geometry_storage_id",
+    "id": "USA-GADM1-GCA",
+    "family_id": "admin_geometry",
+    "public_promise": "internal",
+    "reference_level": "label_2",
+    "reference_level_reason": "admin_spine",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_hierarchy",
+        "parent_semantics": "strict_admin_parent",
+        "reference_level": "label_2",
+        "placement_semantics": "identity_parent"
+      }
+    }
   }
 ]

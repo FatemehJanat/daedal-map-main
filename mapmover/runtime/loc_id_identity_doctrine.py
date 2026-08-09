@@ -117,6 +117,18 @@ ORACLE_FIELDS = {
     "placement_semantics": "expected_placement_semantics",
 }
 
+DESIGNATION_ORACLE_FIELDS = {
+    "represents_membership_set": "membership_set_representation",
+    "preserves_member_family": "heterogeneous_member_targets",
+    "preserves_compound_subject": "compound_subject_targets",
+    "preserves_independent_clocks": "independent_designation_clocks",
+    "preserves_dependency_binding": "dependency_binding_edges",
+    "preserves_set_lifecycle": "independent_set_lifecycle",
+    "preserves_member_attributes": "designation_member_attributes",
+    "treats_union_as_derived": "derived_union_geometry",
+    "preserves_authority_snapshot": "authority_snapshot_provenance",
+}
+
 DOCTRINE_RULE_KEYS = (
     "normalization",
     "declared_family_precedence",
@@ -130,6 +142,7 @@ DOCTRINE_RULE_KEYS = (
     "parent_semantics",
     "reference_level",
     "placement_policy",
+    *DESIGNATION_ORACLE_FIELDS.values(),
 )
 
 BASE_DOCTRINE_RULES: dict[str, Any] = {
@@ -145,6 +158,15 @@ BASE_DOCTRINE_RULES: dict[str, Any] = {
     "parent_semantics": "strict_admin_parent_else_bridge_or_not_applicable",
     "reference_level": "admin_dash_depth_clamped_0_5",
     "placement_policy": "bridge_only",
+    "membership_set_representation": False,
+    "heterogeneous_member_targets": False,
+    "compound_subject_targets": False,
+    "independent_designation_clocks": False,
+    "dependency_binding_edges": False,
+    "independent_set_lifecycle": False,
+    "designation_member_attributes": False,
+    "derived_union_geometry": False,
+    "authority_snapshot_provenance": False,
 }
 
 WIND_TUNNEL_CONTRACT: dict[str, str] = {
@@ -152,6 +174,7 @@ WIND_TUNNEL_CONTRACT: dict[str, str] = {
     "legacy_doctrine_expectations": "open_policy_excluded_from_scoring",
     "known_issue_semantics": "visible_debt_not_required_output",
     "raw_mode": "unscored_without_explicit_oracle.raw",
+    "designation_mode": "scored_only_with_explicit_oracle.designation",
     "comparison_basis": "same_corpus_same_oracle",
     "correctness_objective": "oracle_assertions_plus_clean_case_counts",
     "simplicity_objective": "separate_complexity_vector",
@@ -227,6 +250,33 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
             "id": "solid-005",
             "decision": "Adopted city loc_ids use an explicit family token in the DaedalMap public form.",
             "effect": "A core city loc_id can look like USA-CA-CITY-LosAngeles while source codes, abbreviations, translations, and nicknames remain aliases/crosswalks.",
+        },
+    ],
+    "designation_reference_graph": [
+        {
+            "id": "designation-001",
+            "decision": "Program designations are membership-set identities, not replacement loc_ids.",
+            "effect": "One set can reference multiple geography families, entities, or compound population subjects.",
+        },
+        {
+            "id": "designation-002",
+            "decision": "Designation validity and member geography vintage are independent clocks.",
+            "effect": "A legal program generation remains reproducible when its source geography is revised.",
+        },
+        {
+            "id": "designation-003",
+            "decision": "Dependencies declare live or snapshotted binding instead of implying automatic propagation.",
+            "effect": "An upstream redesignation does not silently rewrite a downstream steward's published set.",
+        },
+        {
+            "id": "designation-004",
+            "decision": "Set lifecycle is independent of member lifecycle and may end without a successor.",
+            "effect": "Retired programs remain citable without retiring their tracts, counties, facilities, or other members.",
+        },
+        {
+            "id": "designation-005",
+            "decision": "Membership rows may carry typed attributes and rendered unions are derived views.",
+            "effect": "Scores, tiers, subprograms, and mixed members remain primary facts instead of being baked into polygons.",
         },
     ],
 }
@@ -436,6 +486,23 @@ SOLIDIFIED_SIBLING_LAYER_REGISTRY: list[dict[str, Any]] = [
     if entry["namespace"] != "historical_or_claim_area"
 ]
 
+DESIGNATION_REFERENCE_GRAPH_REGISTRY: list[dict[str, Any]] = [
+    *SOLIDIFIED_SIBLING_LAYER_REGISTRY,
+    {
+        "namespace": "designation_membership_set",
+        "pattern": r"^(?:[A-Z0-9]+-)*DESIG-[A-Z0-9-]+$",
+        "identity_role": "membership_set_id",
+        "family_id": "membership_set",
+        "scope_type": "authority_scope",
+        "public_promise": "source_alias_only",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "typed_membership_graph",
+        "lifecycle_policy": "designation_generation",
+        "license_policy": "source_specific",
+    },
+]
+
 PRESENT_SYSTEM_REGISTRY: list[dict[str, Any]] = [
     {
         "namespace": "current_admin_iso3",
@@ -514,6 +581,25 @@ DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
             **BASE_DOCTRINE_RULES,
             "admin_fallback_precedence": "last",
             "placement_policy": "containing_loc_id",
+            "membership_set_representation": True,
+        },
+    },
+    "designation_reference_graph": {
+        "description": "Solidified sibling-layer doctrine plus typed, versioned, provenance-aware program designation membership sets.",
+        "registry": DESIGNATION_REFERENCE_GRAPH_REGISTRY,
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+            "membership_set_representation": True,
+            "heterogeneous_member_targets": True,
+            "compound_subject_targets": True,
+            "independent_designation_clocks": True,
+            "dependency_binding_edges": True,
+            "independent_set_lifecycle": True,
+            "designation_member_attributes": True,
+            "derived_union_geometry": True,
+            "authority_snapshot_provenance": True,
         },
     },
 }
@@ -588,6 +674,8 @@ def infer_identity_role(identifier: str | None, *, family_id: str | None = None,
             return "segment_id"
         if family in {"grid", "raster", "cell"}:
             return "grid_id"
+        if family in {"membership_set", "designation_set"}:
+            return "membership_set_id"
         if family == "source_alias":
             return "source_alias"
         return None
@@ -825,6 +913,91 @@ def _oracle_for_case(case: dict[str, Any], *, mode: str) -> dict[str, Any]:
 
 def _expected_value(oracle: dict[str, Any], result_key: str) -> Any:
     return (oracle.get("expectations") or {}).get(result_key)
+
+
+def _designation_oracle_for_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Return the explicit, doctrine-independent designation capability oracle."""
+    explicit_root = case.get("oracle") or {}
+    explicit = explicit_root.get("designation") if isinstance(explicit_root, dict) else None
+    if not isinstance(explicit, dict):
+        return {
+            "source": "none",
+            "status": "unscored",
+            "expectations": {},
+            "open_policy_fields": [],
+            "policy_options": {},
+            "scored": False,
+        }
+    status = str(explicit.get("status") or "verified")
+    open_policy_fields = sorted(
+        set(str(value) for value in explicit.get("open_policy_fields") or [])
+    )
+    expectations = {
+        field: explicit[field]
+        for field in DESIGNATION_ORACLE_FIELDS
+        if field in explicit and field not in open_policy_fields
+    }
+    if status in {"open", "unscored"}:
+        expectations = {}
+    return {
+        "source": "explicit",
+        "status": status,
+        "expectations": expectations,
+        "open_policy_fields": open_policy_fields,
+        "policy_options": dict(explicit.get("policy_options") or {}),
+        "scored": bool(expectations),
+    }
+
+
+def evaluate_designation_case(
+    case: dict[str, Any], *, doctrine: str | None = None
+) -> dict[str, Any]:
+    """Test the designation capabilities required by one evidence case."""
+    doctrine_name = str(doctrine or "proposed_changes")
+    oracle = _designation_oracle_for_case(case)
+    capabilities = {
+        result_field: bool(_rule(doctrine_name, rule_key))
+        for result_field, rule_key in DESIGNATION_ORACLE_FIELDS.items()
+    }
+    checks = [
+        {
+            "field": field,
+            "expected": expected,
+            "actual": capabilities[field],
+            "passed": capabilities[field] == expected,
+        }
+        for field, expected in (oracle.get("expectations") or {}).items()
+    ]
+    failed = [check for check in checks if not check["passed"]]
+    signal = "oracle_failure" if failed else "pass"
+    if not oracle["scored"]:
+        signal = "unscored"
+    return {
+        "case": case.get("case"),
+        "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
+        "source_system": case.get("source_system"),
+        "doctrine": doctrine_name,
+        "designation": case.get("designation"),
+        "capabilities": capabilities,
+        "oracle": oracle,
+        "oracle_checks": checks,
+        "oracle_assertions": len(checks),
+        "oracle_assertions_passed": sum(check["passed"] for check in checks),
+        "failed_capabilities": [check["field"] for check in failed],
+        "ok": not failed,
+        "gate_ok": not failed,
+        "signal": signal,
+    }
+
+
+def evaluate_designation_cases(
+    cases: list[dict[str, Any]], *, doctrine: str | None = None
+) -> list[dict[str, Any]]:
+    return [
+        evaluate_designation_case(case, doctrine=doctrine)
+        for case in cases
+        if _designation_oracle_for_case(case)["source"] == "explicit"
+    ]
 
 
 def evaluate_identity_case(
@@ -1074,6 +1247,8 @@ def evaluate_dual_mode_cases(cases: list[dict[str, Any]], *, doctrine: str | Non
 def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system", right: str = "proposed_changes") -> dict[str, Any]:
     left_result = evaluate_dual_mode_case(case, doctrine=left)
     right_result = evaluate_dual_mode_case(case, doctrine=right)
+    left_designation = evaluate_designation_case(case, doctrine=left)
+    right_designation = evaluate_designation_case(case, doctrine=right)
     deltas: list[str] = []
     for mode in ("declared", "raw"):
         for key in (
@@ -1089,8 +1264,21 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
                 deltas.append(
                     f"{mode}.{key}: {left}={left_result[mode].get(key)} {right}={right_result[mode].get(key)}"
                 )
+    if left_designation["oracle"]["source"] == "explicit":
+        for key in DESIGNATION_ORACLE_FIELDS:
+            if left_designation["capabilities"][key] != right_designation["capabilities"][key]:
+                deltas.append(
+                    f"designation.{key}: {left}={left_designation['capabilities'][key]} "
+                    f"{right}={right_designation['capabilities'][key]}"
+                )
     signal = "pass" if not deltas else "doctrine_delta"
-    if not right_result.get("gate_ok") or not left_result.get("gate_ok"):
+    designation_scored = left_designation["oracle"]["source"] == "explicit"
+    if (
+        not right_result.get("gate_ok")
+        or not left_result.get("gate_ok")
+        or (designation_scored and not left_designation.get("gate_ok"))
+        or (designation_scored and not right_designation.get("gate_ok"))
+    ):
         signal = "oracle_failure"
     return {
         "case": case.get("case"),
@@ -1100,9 +1288,17 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
         "right_doctrine": right,
         "left": left_result,
         "right": right_result,
+        "left_designation": left_designation,
+        "right_designation": right_designation,
         "deltas": deltas,
-        "ok": bool(left_result.get("gate_ok")) and bool(right_result.get("gate_ok")),
-        "gate_ok": bool(left_result.get("gate_ok")) and bool(right_result.get("gate_ok")),
+        "ok": bool(left_result.get("gate_ok"))
+        and bool(right_result.get("gate_ok"))
+        and (not designation_scored or bool(left_designation.get("gate_ok")))
+        and (not designation_scored or bool(right_designation.get("gate_ok"))),
+        "gate_ok": bool(left_result.get("gate_ok"))
+        and bool(right_result.get("gate_ok"))
+        and (not designation_scored or bool(left_designation.get("gate_ok")))
+        and (not designation_scored or bool(right_designation.get("gate_ok"))),
         "signal": signal,
     }
 
@@ -1161,6 +1357,12 @@ def doctrine_manifest(doctrine: str | None = None) -> dict[str, Any]:
         "decisions": doctrine_decisions(doctrine_name),
         "complexity": {
             "policy_rule_count": len(rules),
+            "nonbaseline_policy_rule_count": sum(
+                rules[key] != BASE_DOCTRINE_RULES[key] for key in DOCTRINE_RULE_KEYS
+            ),
+            "enabled_designation_capability_count": sum(
+                bool(rules[rule_key]) for rule_key in DESIGNATION_ORACLE_FIELDS.values()
+            ),
             "namespace_rule_count": len(registry),
             "regex_alternative_terms_estimate": sum(pattern.count("|") + 1 for pattern in patterns),
             "pattern_characters": sum(len(pattern) for pattern in patterns),
@@ -1277,6 +1479,7 @@ def oracle_fingerprint(cases: list[dict[str, Any]]) -> str:
                 "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
                 "declared": _oracle_for_case(case, mode="declared"),
                 "raw": _oracle_for_case(case, mode="raw"),
+                "designation": _designation_oracle_for_case(case),
             }
         )
     return _stable_fingerprint(payload)
@@ -1298,8 +1501,10 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
     doctrine_override_cases = []
     explicit_declared = 0
     explicit_raw = 0
+    explicit_designation = 0
     declared_scored = 0
     raw_scored = 0
+    designation_scored = 0
     legacy_expectation_cases = []
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -1312,15 +1517,36 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
         *ORACLE_FIELDS.keys(),
         *ORACLE_FIELDS.values(),
     }
+    allowed_designation_fields = {
+        "status",
+        "open_policy_fields",
+        "policy_options",
+        *DESIGNATION_ORACLE_FIELDS,
+    }
     for index, case in enumerate(cases):
         explicit = case.get("oracle") or {}
         if "oracle" in case and not isinstance(case.get("oracle"), dict):
             errors.append({"code": "INVALID_ORACLE_ROOT", "index": index, "case": case.get("case")})
             explicit = {}
+        if isinstance(explicit, dict):
+            unknown_modes = sorted(set(explicit) - {"declared", "raw", "designation"})
+            if unknown_modes:
+                errors.append(
+                    {
+                        "code": "UNKNOWN_ORACLE_MODES",
+                        "index": index,
+                        "case": case.get("case"),
+                        "modes": unknown_modes,
+                    }
+                )
         explicit_declared += int(isinstance(explicit, dict) and isinstance(explicit.get("declared"), dict))
         explicit_raw += int(isinstance(explicit, dict) and isinstance(explicit.get("raw"), dict))
+        explicit_designation += int(
+            isinstance(explicit, dict) and isinstance(explicit.get("designation"), dict)
+        )
         declared_scored += int(_oracle_for_case(case, mode="declared")["scored"])
         raw_scored += int(_oracle_for_case(case, mode="raw")["scored"])
+        designation_scored += int(_designation_oracle_for_case(case)["scored"])
         override_keys = sorted(key for key in case if key.endswith("_by_doctrine"))
         if override_keys:
             doctrine_override_cases.append(
@@ -1405,6 +1631,137 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
                             "value": role,
                         }
                     )
+            designation_oracle = explicit.get("designation")
+            if designation_oracle is not None:
+                if not isinstance(designation_oracle, dict):
+                    errors.append(
+                        {
+                            "code": "INVALID_DESIGNATION_ORACLE",
+                            "index": index,
+                            "case": case.get("case"),
+                        }
+                    )
+                else:
+                    unknown_fields = sorted(
+                        set(designation_oracle) - allowed_designation_fields
+                    )
+                    if unknown_fields:
+                        errors.append(
+                            {
+                                "code": "UNKNOWN_DESIGNATION_ORACLE_FIELDS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": unknown_fields,
+                            }
+                        )
+                    status = str(designation_oracle.get("status") or "verified")
+                    if status not in ORACLE_STATUSES:
+                        errors.append(
+                            {
+                                "code": "INVALID_DESIGNATION_ORACLE_STATUS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "value": status,
+                            }
+                        )
+                    open_fields = [
+                        str(value)
+                        for value in designation_oracle.get("open_policy_fields") or []
+                    ]
+                    invalid_open = sorted(
+                        set(open_fields) - set(DESIGNATION_ORACLE_FIELDS)
+                    )
+                    if invalid_open:
+                        errors.append(
+                            {
+                                "code": "INVALID_DESIGNATION_OPEN_POLICY_FIELDS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": invalid_open,
+                            }
+                        )
+                    asserted_open = sorted(
+                        field for field in open_fields if field in designation_oracle
+                    )
+                    if asserted_open:
+                        errors.append(
+                            {
+                                "code": "DESIGNATION_OPEN_POLICY_FIELD_ASSERTED",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": asserted_open,
+                            }
+                        )
+                    non_boolean = sorted(
+                        field
+                        for field in DESIGNATION_ORACLE_FIELDS
+                        if field in designation_oracle
+                        and not isinstance(designation_oracle[field], bool)
+                    )
+                    if non_boolean:
+                        errors.append(
+                            {
+                                "code": "INVALID_DESIGNATION_CAPABILITY_VALUE",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": non_boolean,
+                            }
+                        )
+                    if not isinstance(case.get("designation"), dict):
+                        errors.append(
+                            {
+                                "code": "MISSING_DESIGNATION_METADATA",
+                                "index": index,
+                                "case": case.get("case"),
+                            }
+                        )
+                    else:
+                        metadata = case["designation"]
+                        required_metadata: dict[str, bool] = {
+                            "represents_membership_set": case.get("family_id")
+                            in {"membership_set", "designation_set"},
+                            "preserves_member_family": bool(metadata.get("member_families")),
+                            "preserves_compound_subject": "population_within_geography"
+                            in (metadata.get("member_target_kinds") or []),
+                            "preserves_independent_clocks": bool(
+                                metadata.get("base_geography_vintage")
+                                and (metadata.get("valid_from") or metadata.get("valid_to"))
+                            ),
+                            "preserves_dependency_binding": bool(
+                                metadata.get("dependencies")
+                                and all(
+                                    isinstance(dependency, dict)
+                                    and dependency.get("membership_set_id")
+                                    and dependency.get("binding_policy")
+                                    for dependency in metadata.get("dependencies") or []
+                                )
+                            ),
+                            "preserves_set_lifecycle": bool(metadata.get("status"))
+                            and (
+                                metadata.get("status") != "retired"
+                                or "superseded_by" in metadata
+                            ),
+                            "preserves_member_attributes": bool(metadata.get("member_attributes")),
+                            "treats_union_as_derived": metadata.get("geometry_truth")
+                            == "members_primary_union_derived",
+                            "preserves_authority_snapshot": bool(
+                                metadata.get("authority") and metadata.get("authority_snapshot")
+                            ),
+                        }
+                        missing_evidence = sorted(
+                            field
+                            for field, supported in required_metadata.items()
+                            if designation_oracle.get(field) is True and not supported
+                        )
+                        if missing_evidence:
+                            errors.append(
+                                {
+                                    "code": "MISSING_DESIGNATION_EVIDENCE",
+                                    "index": index,
+                                    "case": case.get("case"),
+                                    "fields": missing_evidence,
+                                }
+                            )
     if missing_case_names:
         errors.append({"code": "MISSING_CASE_NAME", "indexes": missing_case_names})
     if missing_identifiers:
@@ -1432,8 +1789,10 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "oracle_coverage": {
             "explicit_declared_cases": explicit_declared,
             "explicit_raw_cases": explicit_raw,
+            "explicit_designation_cases": explicit_designation,
             "declared_scored_cases": declared_scored,
             "raw_scored_cases": raw_scored,
+            "designation_scored_cases": designation_scored,
         },
         "legacy_doctrine_override_cases": doctrine_override_cases,
         "legacy_doctrine_override_case_count": len(doctrine_override_cases),
@@ -1452,6 +1811,11 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
     declared_assertions_passed = sum(result["oracle_assertions_passed"] for result in declared)
     raw_assertions = sum(result["oracle_assertions"] for result in raw)
     raw_assertions_passed = sum(result["oracle_assertions_passed"] for result in raw)
+    designation = evaluate_designation_cases(cases, doctrine=doctrine_name)
+    designation_assertions = sum(result["oracle_assertions"] for result in designation)
+    designation_assertions_passed = sum(
+        result["oracle_assertions_passed"] for result in designation
+    )
     audit = registry_audit(cases, doctrine=doctrine_name)
     return {
         "doctrine": doctrine_name,
@@ -1485,6 +1849,23 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
             "assertion_accuracy": round(raw_assertions_passed / raw_assertions, 6) if raw_assertions else None,
             "declared_delta_cases": sum(bool(result["deltas"]) for result in dual_results),
         },
+        "designation": {
+            "case_count": len(designation),
+            "scored_cases": sum(bool(result["oracle"]["scored"]) for result in designation),
+            "unscored_cases": sum(not result["oracle"]["scored"] for result in designation),
+            "oracle_assertions": designation_assertions,
+            "oracle_assertions_passed": designation_assertions_passed,
+            "assertion_accuracy": (
+                round(designation_assertions_passed / designation_assertions, 6)
+                if designation_assertions
+                else None
+            ),
+            "clean_scored_cases": sum(
+                bool(result["oracle"]["scored"]) and bool(result["gate_ok"])
+                for result in designation
+            ),
+            "oracle_failure_cases": sum(result["signal"] == "oracle_failure" for result in designation),
+        },
         "registry": {
             "recognized_cases": audit["recognized_cases"],
             "overlap_count": audit["overlap_count"],
@@ -1492,5 +1873,6 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
             "unused_namespace_rule_count": len(audit["unused_namespace_rules"]),
         },
         "complexity": doctrine_manifest(doctrine_name)["complexity"],
-        "gate_ok": all(bool(result["gate_ok"]) for result in dual_results),
+        "gate_ok": all(bool(result["gate_ok"]) for result in dual_results)
+        and all(bool(result["gate_ok"]) for result in designation),
     }

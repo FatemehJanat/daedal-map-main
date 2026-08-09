@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from mapmover.runtime.loc_id_identity_doctrine import (
+    DESIGNATION_ORACLE_FIELDS,
     DOCTRINE_RULE_KEYS,
     DOCTRINE_PROFILES,
     compare_doctrine_cases,
@@ -15,6 +16,7 @@ from mapmover.runtime.loc_id_identity_doctrine import (
     doctrine_scorecard,
     evaluate_dual_mode_case,
     evaluate_dual_mode_cases,
+    evaluate_designation_cases,
     evaluate_identity_case,
     evaluate_identity_cases,
     registry_audit,
@@ -139,6 +141,22 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
             ["placement_policy"],
         )
 
+        designation_differences = compare_doctrine_rules(
+            "solidified_sibling_layer", "designation_reference_graph"
+        )
+        changed_policy_rules = {
+            difference["rule"]
+            for difference in designation_differences
+            if difference["kind"] == "policy"
+        }
+        self.assertEqual(changed_policy_rules, set(DESIGNATION_ORACLE_FIELDS.values()) - {"membership_set_representation"})
+        self.assertTrue(
+            any(
+                difference["rule"] == "designation_membership_set"
+                for difference in designation_differences
+            )
+        )
+
     def test_doctrine_specific_expected_answers_are_open_policy_not_oracle(self) -> None:
         result = evaluate_identity_case(
             {
@@ -208,17 +226,92 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         with FIXTURE_PATH.open(encoding="utf-8") as handle:
             cases = json.load(handle)
 
-        audit = registry_audit(cases, doctrine="solidified_sibling_layer")
+        audit = registry_audit(cases, doctrine="designation_reference_graph")
         corpus = corpus_audit(cases)
         self.assertEqual(audit["case_count"], len(cases))
         self.assertGreater(audit["overlap_count"], 0)
         self.assertGreater(audit["specific_collision_count"], 0)
-        self.assertTrue(audit["unused_namespace_rules"])
+        self.assertFalse(audit["unused_namespace_rules"])
         self.assertTrue(corpus["valid"])
         self.assertEqual(corpus["oracle_coverage"]["explicit_declared_cases"], len(cases))
         self.assertEqual(corpus["oracle_coverage"]["raw_scored_cases"], 0)
         self.assertEqual(corpus["legacy_doctrine_override_case_count"], 0)
         self.assertEqual(corpus["legacy_expectation_case_count"], 0)
+
+    def test_designation_cases_score_capabilities_separately(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        solidified = evaluate_designation_cases(cases, doctrine="solidified_sibling_layer")
+        designation = evaluate_designation_cases(cases, doctrine="designation_reference_graph")
+        self.assertGreaterEqual(len(designation), 13)
+        self.assertEqual(len(solidified), len(designation))
+        self.assertTrue(any(result["signal"] == "oracle_failure" for result in solidified))
+        self.assertTrue(all(result["signal"] == "pass" for result in designation))
+
+        score = doctrine_scorecard(cases, doctrine="designation_reference_graph")
+        self.assertEqual(
+            score["designation"]["oracle_assertions"],
+            score["designation"]["oracle_assertions_passed"],
+        )
+        self.assertEqual(score["designation"]["assertion_accuracy"], 1.0)
+
+    def test_designation_corpus_spans_multiple_governance_systems(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        designation_cases = [case for case in cases if "designation" in (case.get("oracle") or {})]
+        identifiers = {case["id"] for case in designation_cases}
+        for prefix in ("USA-", "EC-", "AUS-", "BRA-", "IND-", "RPA-"):
+            with self.subTest(prefix=prefix):
+                self.assertTrue(any(identifier.startswith(prefix) for identifier in identifiers))
+
+    def test_corpus_audit_rejects_non_boolean_designation_capability(self) -> None:
+        audit = corpus_audit(
+            [
+                {
+                    "case": "invalid designation capability",
+                    "id": "TEST-DESIG-1",
+                    "designation": {"authority": "test"},
+                    "oracle": {
+                        "designation": {
+                            "status": "verified",
+                            "represents_membership_set": "yes",
+                        }
+                    },
+                }
+            ]
+        )
+
+        self.assertFalse(audit["valid"])
+        self.assertIn(
+            "INVALID_DESIGNATION_CAPABILITY_VALUE",
+            {error["code"] for error in audit["errors"]},
+        )
+
+    def test_corpus_audit_requires_evidence_for_designation_capabilities(self) -> None:
+        audit = corpus_audit(
+            [
+                {
+                    "case": "missing designation clock evidence",
+                    "id": "TEST-DESIG-2",
+                    "family_id": "membership_set",
+                    "designation": {"authority": "test", "status": "active"},
+                    "oracle": {
+                        "designation": {
+                            "status": "verified",
+                            "preserves_independent_clocks": True,
+                        }
+                    },
+                }
+            ]
+        )
+
+        self.assertFalse(audit["valid"])
+        self.assertIn(
+            "MISSING_DESIGNATION_EVIDENCE",
+            {error["code"] for error in audit["errors"]},
+        )
 
     def test_corpus_audit_rejects_an_asserted_open_policy_field(self) -> None:
         audit = corpus_audit(
