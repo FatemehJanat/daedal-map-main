@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from collections import Counter
 from typing import Any
 
 from .geography_reference import classify_loc_id_family
@@ -105,6 +108,62 @@ ROUTE_PREFIXES = {"ROUTE", "ROAD", "TRAIL", "RIVER"}
 SEGMENT_PREFIXES = {"SEGMENT", "REACH", "WAY", "LINE"}
 
 SPATIALLY_PLACEABLE_ROLES = {"loc_id", "entity_id", "route_id", "segment_id"}
+
+ORACLE_FIELDS = {
+    "role": "expected_role",
+    "first_segment_scope": "expected_first_segment_scope",
+    "parent_semantics": "expected_parent_semantics",
+    "reference_level": "expected_reference_level",
+    "placement_semantics": "expected_placement_semantics",
+}
+
+DOCTRINE_RULE_KEYS = (
+    "normalization",
+    "declared_family_precedence",
+    "namespace_resolution",
+    "admin_fallback_precedence",
+    "runtime_classifier_fallback",
+    "heuristic_fallback",
+    "unknown_identity_role",
+    "unknown_first_segment_scope",
+    "admin_hierarchy_eligibility",
+    "parent_semantics",
+    "reference_level",
+    "placement_policy",
+)
+
+BASE_DOCTRINE_RULES: dict[str, Any] = {
+    "normalization": "strip_and_uppercase",
+    "declared_family_precedence": "before_namespace_registry",
+    "namespace_resolution": "ordered_registry_with_named_admin_fallback",
+    "admin_fallback_precedence": "last",
+    "runtime_classifier_fallback": True,
+    "heuristic_fallback": True,
+    "unknown_identity_role": "source_alias",
+    "unknown_first_segment_scope": "unknown",
+    "admin_hierarchy_eligibility": "admin_families_only",
+    "parent_semantics": "strict_admin_parent_else_bridge_or_not_applicable",
+    "reference_level": "admin_dash_depth_clamped_0_5",
+    "placement_policy": "bridge_only",
+}
+
+WIND_TUNNEL_CONTRACT: dict[str, str] = {
+    "oracle_ownership": "doctrine_independent",
+    "legacy_doctrine_expectations": "open_policy_excluded_from_scoring",
+    "known_issue_semantics": "visible_debt_not_required_output",
+    "raw_mode": "unscored_without_explicit_oracle.raw",
+    "comparison_basis": "same_corpus_same_oracle",
+    "correctness_objective": "oracle_assertions_plus_clean_case_counts",
+    "simplicity_objective": "separate_complexity_vector",
+    "failure_gate": "unexpected_findings_only",
+}
+
+ORACLE_STATUSES = {"verified", "provisional", "open", "unscored"}
+
+
+def _stable_fingerprint(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
     "present_system": [
@@ -424,27 +483,38 @@ DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
     "present_system": {
         "description": "Broad current runtime-style parsing where ISO3-dash strings tend to become admin/local loc_ids.",
         "registry": PRESENT_SYSTEM_REGISTRY,
-        "admin_fallback_precedence": "first",
-        "placement_policy": "parent_id",
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "first",
+            "placement_policy": "parent_id",
+        },
     },
     "proposed_changes": {
         "description": "Registry-first present admin spine with explicit sidechain/source/entity/event/grid roles.",
         "registry": PROPOSED_NAMESPACE_REGISTRY,
-        "admin_fallback_precedence": "last",
-        "placement_policy": "bridge_only",
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "bridge_only",
+        },
     },
     "containing_loc_id": {
         "description": "Registry-first doctrine where every location-like family may declare reference_level and containing_loc_id placement without becoming admin hierarchy.",
         "registry": PROPOSED_NAMESPACE_REGISTRY,
-        "admin_fallback_precedence": "last",
-        "placement_policy": "containing_loc_id",
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+        },
     },
     "solidified_sibling_layer": {
         "description": "Next-pass doctrine that solidifies spatial sibling placement, temporal/claim sidechains, relationship artifacts, and country-scoped sidechains before admin fallback.",
         "registry": SOLIDIFIED_SIBLING_LAYER_REGISTRY,
-        "admin_fallback_precedence": "last",
-        "placement_policy": "containing_loc_id",
-        "generic_expected_issues": "retired",
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+        },
     },
 }
 
@@ -468,6 +538,14 @@ def _profile(doctrine: str | None = None) -> dict[str, Any]:
     return DOCTRINE_PROFILES.get(str(doctrine or "proposed_changes"), DOCTRINE_PROFILES["proposed_changes"])
 
 
+def _rule(doctrine: str | None, key: str) -> Any:
+    profile = _profile(doctrine)
+    rules = profile.get("rules") or {}
+    if key not in rules:
+        raise ValueError(f"doctrine {doctrine or 'proposed_changes'} does not declare rule {key!r}")
+    return rules[key]
+
+
 def doctrine_decisions(doctrine: str | None = None) -> list[dict[str, str]]:
     """Return the explicit policy decisions attached to a doctrine profile."""
     return list(DOCTRINE_DECISIONS.get(str(doctrine or "proposed_changes"), []))
@@ -480,7 +558,7 @@ def lookup_namespace(identifier: str | None, *, doctrine: str | None = None) -> 
         return None
     profile = _profile(doctrine)
     registry = profile["registry"]
-    admin_fallback_precedence = str(profile.get("admin_fallback_precedence") or "last")
+    admin_fallback_precedence = str(_rule(doctrine, "admin_fallback_precedence"))
     fallback: dict[str, Any] | None = None
     for entry in registry:
         if re.fullmatch(str(entry["pattern"]), value):
@@ -496,41 +574,58 @@ def infer_identity_role(identifier: str | None, *, family_id: str | None = None,
     value = _clean(identifier)
     family = _clean(family_id).lower()
     parts = _parts(value)
-    if family in ADMIN_FAMILIES or family in SIDECHAIN_FAMILIES:
-        return "loc_id"
-    if family in {"entity", "entity_point", "entity_area"}:
-        return "entity_id"
-    if family == "event":
-        return "event_id"
-    if family in {"route", "network_route"}:
-        return "route_id"
-    if family in {"segment", "reach", "network_segment"}:
-        return "segment_id"
-    if family in {"grid", "raster", "cell"}:
-        return "grid_id"
-    if family == "source_alias":
-        return "source_alias"
+
+    def declared_family_role() -> str | None:
+        if family in ADMIN_FAMILIES or family in SIDECHAIN_FAMILIES:
+            return "loc_id"
+        if family in {"entity", "entity_point", "entity_area"}:
+            return "entity_id"
+        if family == "event":
+            return "event_id"
+        if family in {"route", "network_route"}:
+            return "route_id"
+        if family in {"segment", "reach", "network_segment"}:
+            return "segment_id"
+        if family in {"grid", "raster", "cell"}:
+            return "grid_id"
+        if family == "source_alias":
+            return "source_alias"
+        return None
+
+    family_precedence = str(_rule(doctrine, "declared_family_precedence"))
+    if family_precedence == "before_namespace_registry":
+        family_role = declared_family_role()
+        if family_role:
+            return family_role
 
     registry = lookup_namespace(value, doctrine=doctrine)
     if registry:
         return str(registry["identity_role"])
 
-    loc_family = classify_loc_id_family(value)
-    if loc_family in ADMIN_FAMILIES or loc_family in SIDECHAIN_FAMILIES:
-        return "loc_id"
-    if loc_family == "event_or_entity":
-        return "event_id"
-    if _looks_like_country_scoped_sidechain(value):
-        return "loc_id"
-    if parts and (parts[0] in GRID_PREFIXES or any(part in GRID_PREFIXES for part in parts[:2])):
-        return "grid_id"
-    if parts and (parts[0] in ROUTE_PREFIXES):
-        return "route_id"
-    if parts and (parts[0] in SEGMENT_PREFIXES or parts[0] in {"HYDRORIVERS"}):
-        return "segment_id"
-    if any(part in EVENT_MARKERS for part in parts):
-        return "event_id"
-    return "source_alias"
+    if family_precedence == "after_namespace_registry":
+        family_role = declared_family_role()
+        if family_role:
+            return family_role
+
+    if _rule(doctrine, "runtime_classifier_fallback"):
+        loc_family = classify_loc_id_family(value)
+        if loc_family in ADMIN_FAMILIES or loc_family in SIDECHAIN_FAMILIES:
+            return "loc_id"
+        if loc_family == "event_or_entity":
+            return "event_id"
+
+    if _rule(doctrine, "heuristic_fallback"):
+        if _looks_like_country_scoped_sidechain(value):
+            return "loc_id"
+        if parts and (parts[0] in GRID_PREFIXES or any(part in GRID_PREFIXES for part in parts[:2])):
+            return "grid_id"
+        if parts and (parts[0] in ROUTE_PREFIXES):
+            return "route_id"
+        if parts and (parts[0] in SEGMENT_PREFIXES or parts[0] in {"HYDRORIVERS"}):
+            return "segment_id"
+        if any(part in EVENT_MARKERS for part in parts):
+            return "event_id"
+    return str(_rule(doctrine, "unknown_identity_role"))
 
 
 def infer_first_segment_scope(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str | None:
@@ -563,7 +658,7 @@ def infer_first_segment_scope(identifier: str | None, *, family_id: str | None =
         return "country_reference_scope"
     if first in GRID_PREFIXES:
         return "grid_scope"
-    return "unknown"
+    return str(_rule(doctrine, "unknown_first_segment_scope"))
 
 
 def loc_id_may_encode_admin_hierarchy(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> bool:
@@ -607,8 +702,8 @@ def expected_placement_semantics(identifier: str | None, *, family_id: str | Non
     parent_semantics = expected_parent_semantics(identifier, family_id=family_id, doctrine=doctrine)
     if parent_semantics == "strict_admin_parent":
         return "identity_parent"
-    profile = _profile(doctrine)
-    if profile.get("placement_policy") == "containing_loc_id" and infer_identity_role(identifier, family_id=family_id, doctrine=doctrine) in SPATIALLY_PLACEABLE_ROLES:
+    placement_policy = str(_rule(doctrine, "placement_policy"))
+    if placement_policy == "containing_loc_id" and infer_identity_role(identifier, family_id=family_id, doctrine=doctrine) in SPATIALLY_PLACEABLE_ROLES:
         return "containing_loc_id"
     if parent_semantics == "context_or_bridge_only":
         return "bridge_or_context"
@@ -616,87 +711,183 @@ def expected_placement_semantics(identifier: str | None, *, family_id: str | Non
 
 
 def _raw_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Return raw-input metadata for compatibility with older callers.
+
+    New dual-mode evaluation keeps the original case and selects ``oracle.raw``
+    explicitly. Doctrine-specific expectations are always removed because they
+    describe a candidate policy, not independent test truth.
+    """
     raw = dict(case)
     raw.pop("family_id", None)
-    raw.pop("expected_role", None)
-    raw.pop("expected_first_segment_scope", None)
-    raw.pop("expected_parent_semantics", None)
-    raw.pop("expected_reference_level", None)
-    raw.pop("expected_placement_semantics", None)
+    for legacy_key in ORACLE_FIELDS.values():
+        raw.pop(legacy_key, None)
+        raw.pop(f"{legacy_key}_by_doctrine", None)
     raw.pop("expected_issues", None)
+    raw.pop("expected_issue_codes", None)
+    raw.pop("expected_issues_by_doctrine", None)
     return raw
 
 
-def _expected_issues(case: dict[str, Any], *, doctrine: str | None = None) -> list[str]:
-    doctrine_name = str(doctrine or "proposed_changes")
-    by_doctrine = case.get("expected_issues_by_doctrine") or {}
-    if doctrine_name in by_doctrine:
-        return [str(issue) for issue in by_doctrine[doctrine_name]]
-    if _profile(doctrine).get("generic_expected_issues") == "retired":
-        return []
-    return [str(issue) for issue in case.get("expected_issues") or []]
+ISSUE_CODE_PREFIXES = (
+    ("unknown expected_role", "ORACLE_INVALID_ROLE"),
+    ("role mismatch", "ROLE_MISMATCH"),
+    ("first segment scope mismatch", "SCOPE_MISMATCH"),
+    ("parent semantics mismatch", "PARENT_SEMANTICS_MISMATCH"),
+    ("reference level mismatch", "REFERENCE_LEVEL_MISMATCH"),
+    ("placement semantics mismatch", "PLACEMENT_MISMATCH"),
+    ("unknown public_promise", "INVALID_PUBLIC_PROMISE"),
+    ("unknown reference_level_reason", "INVALID_REFERENCE_LEVEL_REASON"),
+    ("unknown reference_level", "INVALID_REFERENCE_LEVEL"),
+    ("unknown containment_method", "INVALID_CONTAINMENT_METHOD"),
+    ("non-admin families must not expose admin_level", "FAKE_ADMIN_DEPTH"),
+    ("non-admin parent_id", "FAKE_ADMIN_PARENT"),
+    ("contested parentage", "MISSING_PARENT_CLAIMS"),
+    ("missing or unverified admin parent", "INVALID_NULL_PARENT"),
+    ("supersession_required", "MISSING_SUPERSESSION_LINK"),
+    ("bridge_required cases", "MISSING_BRIDGE_TYPE"),
+    ("containing_loc_id belongs", "PLACEMENT_POLICY_VIOLATION"),
+    ("containing_loc_id requires", "MISSING_CONTAINMENT_METHOD"),
+    ("cross-boundary geography", "INVALID_FULL_CONTAINMENT"),
+    ("cross-boundary containing_loc_id", "MISSING_OVERLAP_CONTEXT"),
+    ("admin families need", "INVALID_ADMIN_REFERENCE_REASON"),
+    ("non-admin reference_level requires", "MISSING_REFERENCE_REASON"),
+    ("non-admin reference_level must not", "FAKE_ADMIN_REFERENCE_REASON"),
+    ("loc_id case needs", "UNREGISTERED_LOC_ID"),
+)
 
 
-def _expected_value(case: dict[str, Any], key: str, *, doctrine: str | None = None) -> Any:
-    doctrine_name = str(doctrine or "proposed_changes")
-    by_doctrine = case.get(f"{key}_by_doctrine") or {}
-    if doctrine_name in by_doctrine:
-        return by_doctrine[doctrine_name]
-    return case.get(key)
+def _issue_code(message: str) -> str:
+    for prefix, code in ISSUE_CODE_PREFIXES:
+        if message.startswith(prefix):
+            return code
+    if message.endswith("must not be persisted as loc_id"):
+        return "INVALID_LOC_ID_PERSISTENCE"
+    return "UNCLASSIFIED_FINDING"
 
 
-def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None) -> dict[str, Any]:
+def _oracle_for_case(case: dict[str, Any], *, mode: str) -> dict[str, Any]:
+    """Build a doctrine-independent oracle view for one evaluation mode.
+
+    ``oracle.declared`` and ``oracle.raw`` are the preferred schema. Existing
+    flat ``expected_*`` fields remain a compatibility source for declared mode.
+    Any field with a ``*_by_doctrine`` override is treated as an open policy
+    question and excluded from scoring until it is moved into the oracle.
+    """
+    explicit_root = case.get("oracle") or {}
+    explicit = explicit_root.get(mode) if isinstance(explicit_root, dict) else None
+    expectations: dict[str, Any] = {}
+    open_policy_fields: list[str] = []
+    known_issue_messages: list[str] = []
+    known_issue_codes: list[str] = []
+    policy_options: dict[str, Any] = {}
+    source = "none"
+    status = "unscored"
+
+    if isinstance(explicit, dict):
+        source = "explicit"
+        status = str(explicit.get("status") or "verified")
+        for result_key, legacy_key in ORACLE_FIELDS.items():
+            if result_key in explicit:
+                expectations[result_key] = explicit[result_key]
+            elif legacy_key in explicit:
+                expectations[result_key] = explicit[legacy_key]
+        known_issue_messages = [str(value) for value in explicit.get("known_issues") or []]
+        known_issue_codes = [str(value) for value in explicit.get("known_issue_codes") or []]
+        open_policy_fields = [str(value) for value in explicit.get("open_policy_fields") or []]
+        policy_options = dict(explicit.get("policy_options") or {})
+    elif mode == "declared":
+        source = "legacy_flat"
+        status = "provisional"
+        for result_key, legacy_key in ORACLE_FIELDS.items():
+            if case.get(f"{legacy_key}_by_doctrine"):
+                open_policy_fields.append(result_key)
+            elif legacy_key in case:
+                expectations[result_key] = case.get(legacy_key)
+        known_issue_messages = [str(value) for value in case.get("expected_issues") or []]
+        known_issue_codes = [str(value) for value in case.get("expected_issue_codes") or []]
+
+    if status in {"open", "unscored"}:
+        expectations = {}
+    for field in open_policy_fields:
+        expectations.pop(field, None)
+    return {
+        "mode": mode,
+        "source": source,
+        "status": status,
+        "expectations": expectations,
+        "known_issue_messages": known_issue_messages,
+        "known_issue_codes": known_issue_codes,
+        "open_policy_fields": sorted(set(open_policy_fields)),
+        "policy_options": policy_options,
+        "scored": bool(expectations),
+    }
+
+
+def _expected_value(oracle: dict[str, Any], result_key: str) -> Any:
+    return (oracle.get("expectations") or {}).get(result_key)
+
+
+def evaluate_identity_case(
+    case: dict[str, Any],
+    *,
+    doctrine: str | None = None,
+    mode: str = "declared",
+) -> dict[str, Any]:
     """Evaluate one weird-geography fixture against the loc_id doctrine.
 
     This is intentionally deterministic and schema-light. It is a guardrail for
     design fixtures, not a full geometry resolver.
     """
+    if mode not in {"declared", "raw"}:
+        raise ValueError(f"unknown evaluation mode {mode!r}")
     identifier = case.get("id") or case.get("loc_id") or case.get("candidate_id")
-    family_id = case.get("family_id")
+    record = case if mode == "declared" else {}
+    family_id = record.get("family_id")
+    oracle = _oracle_for_case(case, mode=mode)
     role = infer_identity_role(identifier, family_id=family_id, doctrine=doctrine)
     loc_family = classify_loc_id_family(identifier)
     first_segment_scope = infer_first_segment_scope(identifier, family_id=family_id, doctrine=doctrine)
     may_encode_admin = loc_id_may_encode_admin_hierarchy(identifier, family_id=family_id, doctrine=doctrine)
     parent_semantics = expected_parent_semantics(identifier, family_id=family_id, doctrine=doctrine)
     registry = lookup_namespace(identifier, doctrine=doctrine)
-    reference_level = case.get("reference_level") or infer_admin_reference_level(identifier, family_id=family_id, doctrine=doctrine)
-    reference_level_reason = case.get("reference_level_reason")
+    reference_level = record.get("reference_level") or infer_admin_reference_level(identifier, family_id=family_id, doctrine=doctrine)
+    reference_level_reason = record.get("reference_level_reason")
     placement_semantics = expected_placement_semantics(identifier, family_id=family_id, doctrine=doctrine)
     issues: list[str] = []
 
-    expected_role = _expected_value(case, "expected_role", doctrine=doctrine)
+    expected_role = _expected_value(oracle, "role")
     if expected_role and expected_role not in IDENTITY_ROLES:
         issues.append(f"unknown expected_role {expected_role!r}")
     elif expected_role and role != expected_role:
         issues.append(f"role mismatch: expected {expected_role}, got {role}")
 
-    expected_scope = _expected_value(case, "expected_first_segment_scope", doctrine=doctrine)
+    expected_scope = _expected_value(oracle, "first_segment_scope")
     if expected_scope and first_segment_scope != expected_scope:
         issues.append(f"first segment scope mismatch: expected {expected_scope}, got {first_segment_scope}")
 
-    expected_parent = _expected_value(case, "expected_parent_semantics", doctrine=doctrine)
+    expected_parent = _expected_value(oracle, "parent_semantics")
     if expected_parent and parent_semantics != expected_parent:
         issues.append(f"parent semantics mismatch: expected {expected_parent}, got {parent_semantics}")
 
-    expected_reference_level = _expected_value(case, "expected_reference_level", doctrine=doctrine)
+    expected_reference_level = _expected_value(oracle, "reference_level")
     if expected_reference_level and reference_level != expected_reference_level:
         issues.append(f"reference level mismatch: expected {expected_reference_level}, got {reference_level}")
 
-    expected_placement = _expected_value(case, "expected_placement_semantics", doctrine=doctrine)
+    expected_placement = _expected_value(oracle, "placement_semantics")
     if expected_placement and placement_semantics != expected_placement:
         issues.append(f"placement semantics mismatch: expected {expected_placement}, got {placement_semantics}")
 
-    public_promise = case.get("public_promise")
+    public_promise = record.get("public_promise")
     if public_promise and public_promise not in PUBLIC_PROMISES:
         issues.append(f"unknown public_promise {public_promise!r}")
 
-    if role != "loc_id" and case.get("should_persist_as_loc_id"):
+    if role != "loc_id" and record.get("should_persist_as_loc_id"):
         issues.append(f"{role} must not be persisted as loc_id")
 
     if role == "loc_id" and not family_id and not loc_family and not registry:
         issues.append("loc_id case needs a family_id or recognized runtime family")
 
-    if not may_encode_admin and case.get("admin_level") is not None:
+    if not may_encode_admin and record.get("admin_level") is not None:
         issues.append("non-admin families must not expose admin_level as spine depth")
 
     if reference_level and reference_level not in REFERENCE_LEVELS:
@@ -714,13 +905,13 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
     if not may_encode_admin and reference_level_reason == "admin_spine":
         issues.append("non-admin reference_level must not claim admin_spine")
 
-    if parent_semantics != "strict_admin_parent" and case.get("parent_id"):
+    if parent_semantics != "strict_admin_parent" and record.get("parent_id"):
         issues.append("non-admin parent_id must be represented as context or bridge metadata")
 
-    containing_loc_id = case.get("containing_loc_id")
-    containment_method = case.get("containment_method")
-    crosses_admin_boundaries = case.get("crosses_admin_boundaries")
-    if containing_loc_id and _profile(doctrine).get("placement_policy") != "containing_loc_id":
+    containing_loc_id = record.get("containing_loc_id")
+    containment_method = record.get("containment_method")
+    crosses_admin_boundaries = record.get("crosses_admin_boundaries")
+    if containing_loc_id and _rule(doctrine, "placement_policy") != "containing_loc_id":
         issues.append("containing_loc_id belongs to containing_loc_id doctrine or resolver placement output")
 
     if containing_loc_id and not containment_method:
@@ -732,36 +923,68 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
     if crosses_admin_boundaries is True and containment_method == "full_geometry":
         issues.append("cross-boundary geography cannot use full_geometry containment_method")
 
-    if crosses_admin_boundaries is True and containing_loc_id and not case.get("overlapping_admin_loc_ids"):
+    if crosses_admin_boundaries is True and containing_loc_id and not record.get("overlapping_admin_loc_ids"):
         issues.append("cross-boundary containing_loc_id requires overlapping_admin_loc_ids")
 
-    parent_status = case.get("parent_status")
-    if parent_status == "contested" and not case.get("parent_claims"):
+    parent_status = record.get("parent_status")
+    if parent_status == "contested" and not record.get("parent_claims"):
         issues.append("contested parentage requires parent_claims")
     if parent_status in {"missing", "unverified"}:
-        parent_token = _clean(case.get("parent_id"))
+        parent_token = _clean(record.get("parent_id"))
         if parent_token and "NULL" not in parent_token:
             issues.append("missing or unverified admin parent must use NULL<n> sentinel")
 
-    temporal_rule = case.get("temporal_rule")
+    temporal_rule = record.get("temporal_rule")
     if temporal_rule == "supersession_required" and not (
-        case.get("superseded_by") or case.get("supersedes")
+        record.get("superseded_by") or record.get("supersedes")
     ):
         issues.append("supersession_required needs superseded_by or supersedes")
 
-    if case.get("bridge_required") and not case.get("required_bridge_type"):
+    if record.get("bridge_required") and not record.get("required_bridge_type"):
         issues.append("bridge_required cases must declare required_bridge_type")
 
-    expected_issues = _expected_issues(case, doctrine=doctrine)
-    unexpected_issues = [issue for issue in issues if issue not in expected_issues]
-    missing_expected_issues = [issue for issue in expected_issues if issue not in issues]
+    findings = [{"code": _issue_code(issue), "message": issue} for issue in issues]
+    known_messages = set(oracle.get("known_issue_messages") or [])
+    known_codes = set(oracle.get("known_issue_codes") or [])
+    known_findings = [
+        finding
+        for finding in findings
+        if finding["message"] in known_messages or finding["code"] in known_codes
+    ]
+    unexpected_findings = [finding for finding in findings if finding not in known_findings]
+    actual_messages = {finding["message"] for finding in findings}
+    actual_codes = {finding["code"] for finding in findings}
+    resolved_known_issues = sorted(known_messages - actual_messages)
+    resolved_known_issue_codes = sorted(known_codes - actual_codes)
+    oracle_checks = [
+        {
+            "field": result_key,
+            "expected": expected,
+            "actual": {
+                "role": role,
+                "first_segment_scope": first_segment_scope,
+                "parent_semantics": parent_semantics,
+                "reference_level": reference_level,
+                "placement_semantics": placement_semantics,
+            }[result_key],
+            "passed": expected
+            == {
+                "role": role,
+                "first_segment_scope": first_segment_scope,
+                "parent_semantics": parent_semantics,
+                "reference_level": reference_level,
+                "placement_semantics": placement_semantics,
+            }[result_key],
+        }
+        for result_key, expected in (oracle.get("expectations") or {}).items()
+    ]
     signal = "pass"
-    if unexpected_issues:
+    if unexpected_findings:
         signal = "unexpected_issue"
-    elif missing_expected_issues:
-        signal = "missing_expected_issue"
-    elif issues:
-        signal = "expected_issue"
+    elif known_findings:
+        signal = "known_issue"
+    elif not oracle.get("scored"):
+        signal = "unscored"
 
     return {
         "case": case.get("case"),
@@ -769,6 +992,7 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
         "source_system": case.get("source_system"),
         "sample_kind": case.get("sample_kind"),
         "doctrine": doctrine or "proposed_changes",
+        "mode": mode,
         "namespace": (lookup_namespace(identifier, doctrine=doctrine) or {}).get("namespace"),
         "role": role,
         "loc_id_family": loc_family,
@@ -778,12 +1002,26 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
         "reference_level": reference_level,
         "reference_level_reason": reference_level_reason,
         "placement_semantics": placement_semantics,
+        "findings": findings,
         "issues": issues,
-        "expected_issues": expected_issues,
-        "unexpected_issues": unexpected_issues,
-        "missing_expected_issues": missing_expected_issues,
+        "known_findings": known_findings,
+        "unexpected_findings": unexpected_findings,
+        "resolved_known_issues": resolved_known_issues,
+        "resolved_known_issue_codes": resolved_known_issue_codes,
+        "expected_issues": oracle.get("known_issue_messages") or [],
+        "unexpected_issues": [finding["message"] for finding in unexpected_findings],
+        "missing_expected_issues": resolved_known_issues,
+        "oracle": oracle,
+        "oracle_checks": oracle_checks,
+        "oracle_assertions": len(oracle_checks),
+        "oracle_assertions_passed": sum(check["passed"] for check in oracle_checks),
+        "legacy_doctrine_expectations_ignored": sorted(
+            key for key in case if key.endswith("_by_doctrine")
+        ),
         "design_questions": case.get("design_questions") or [],
-        "ok": not unexpected_issues and not missing_expected_issues,
+        "clean": not findings,
+        "ok": not unexpected_findings,
+        "gate_ok": not unexpected_findings,
         "signal": signal,
     }
 
@@ -794,8 +1032,8 @@ def evaluate_identity_cases(cases: list[dict[str, Any]], *, doctrine: str | None
 
 def evaluate_dual_mode_case(case: dict[str, Any], *, doctrine: str | None = None) -> dict[str, Any]:
     """Compare declared-metadata classification with raw-string classification."""
-    declared = evaluate_identity_case(case, doctrine=doctrine)
-    raw = evaluate_identity_case(_raw_case(case), doctrine=doctrine)
+    declared = evaluate_identity_case(case, doctrine=doctrine, mode="declared")
+    raw = evaluate_identity_case(case, doctrine=doctrine, mode="raw")
     deltas: list[str] = []
     for key in (
         "role",
@@ -811,8 +1049,8 @@ def evaluate_dual_mode_case(case: dict[str, Any], *, doctrine: str | None = None
     signal = "pass"
     if deltas:
         signal = "raw_declared_delta"
-    if declared.get("signal") in {"unexpected_issue", "missing_expected_issue"} or raw.get("signal") in {"unexpected_issue", "missing_expected_issue"}:
-        signal = "needs_policy_decision"
+    if not declared.get("gate_ok") or not raw.get("gate_ok"):
+        signal = "oracle_failure"
     if deltas and case.get("allow_doctrine_conflict"):
         signal = "doctrine_conflict"
 
@@ -823,6 +1061,8 @@ def evaluate_dual_mode_case(case: dict[str, Any], *, doctrine: str | None = None
         "declared": declared,
         "raw": raw,
         "deltas": deltas,
+        "ok": bool(declared.get("gate_ok")) and bool(raw.get("gate_ok")),
+        "gate_ok": bool(declared.get("gate_ok")) and bool(raw.get("gate_ok")),
         "signal": signal,
     }
 
@@ -850,8 +1090,8 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
                     f"{mode}.{key}: {left}={left_result[mode].get(key)} {right}={right_result[mode].get(key)}"
                 )
     signal = "pass" if not deltas else "doctrine_delta"
-    if right_result["signal"] == "needs_policy_decision" or left_result["signal"] == "needs_policy_decision":
-        signal = "needs_policy_decision"
+    if not right_result.get("gate_ok") or not left_result.get("gate_ok"):
+        signal = "oracle_failure"
     return {
         "case": case.get("case"),
         "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
@@ -861,6 +1101,8 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
         "left": left_result,
         "right": right_result,
         "deltas": deltas,
+        "ok": bool(left_result.get("gate_ok")) and bool(right_result.get("gate_ok")),
+        "gate_ok": bool(left_result.get("gate_ok")) and bool(right_result.get("gate_ok")),
         "signal": signal,
     }
 
@@ -872,3 +1114,383 @@ def compare_doctrine_cases(
     right: str = "proposed_changes",
 ) -> list[dict[str, Any]]:
     return [compare_doctrine_case(case, left=left, right=right) for case in cases]
+
+
+def doctrine_manifest(doctrine: str | None = None) -> dict[str, Any]:
+    """Return every executable assumption for a doctrine in reportable form."""
+    doctrine_name = str(doctrine or "proposed_changes")
+    profile = _profile(doctrine_name)
+    rules = dict(profile.get("rules") or {})
+    missing = [key for key in DOCTRINE_RULE_KEYS if key not in rules]
+    if missing:
+        raise ValueError(f"doctrine {doctrine_name} is missing explicit rules: {', '.join(missing)}")
+    undeclared = sorted(set(rules) - set(DOCTRINE_RULE_KEYS))
+    if undeclared:
+        raise ValueError(f"doctrine {doctrine_name} has undeclared rules: {', '.join(undeclared)}")
+    registry = []
+    seen_namespaces: set[str] = set()
+    for order, entry in enumerate(profile.get("registry") or [], start=1):
+        namespace = str(entry["namespace"])
+        if namespace in seen_namespaces:
+            raise ValueError(f"doctrine {doctrine_name} repeats namespace {namespace!r}")
+        seen_namespaces.add(namespace)
+        try:
+            re.compile(str(entry["pattern"]))
+        except re.error as exc:
+            raise ValueError(f"doctrine {doctrine_name} has invalid pattern for {namespace}: {exc}") from exc
+        registry.append(
+            {
+                "rule_id": f"namespace:{namespace}",
+                "order": order,
+                "is_admin_fallback": namespace == "current_admin_local",
+                **entry,
+            }
+        )
+    fallback_count = sum(bool(entry["is_admin_fallback"]) for entry in registry)
+    if fallback_count != 1:
+        raise ValueError(f"doctrine {doctrine_name} must declare exactly one admin fallback")
+    patterns = [str(entry.get("pattern") or "") for entry in registry]
+    fingerprint = _stable_fingerprint({"rules": rules, "registry": registry})
+    return {
+        "doctrine": doctrine_name,
+        "fingerprint": fingerprint,
+        "description": profile.get("description"),
+        "harness_contract": dict(WIND_TUNNEL_CONTRACT),
+        "rules": rules,
+        "registry": registry,
+        "decisions": doctrine_decisions(doctrine_name),
+        "complexity": {
+            "policy_rule_count": len(rules),
+            "namespace_rule_count": len(registry),
+            "regex_alternative_terms_estimate": sum(pattern.count("|") + 1 for pattern in patterns),
+            "pattern_characters": sum(len(pattern) for pattern in patterns),
+            "precedence_exceptions": int(rules["admin_fallback_precedence"] == "last"),
+        },
+    }
+
+
+def compare_doctrine_rules(left: str, right: str) -> list[dict[str, Any]]:
+    """Return policy and namespace differences before comparing case outputs."""
+    left_manifest = doctrine_manifest(left)
+    right_manifest = doctrine_manifest(right)
+    differences: list[dict[str, Any]] = []
+    for key in DOCTRINE_RULE_KEYS:
+        left_value = left_manifest["rules"].get(key)
+        right_value = right_manifest["rules"].get(key)
+        if left_value != right_value:
+            differences.append(
+                {"kind": "policy", "rule": key, "left": left_value, "right": right_value}
+            )
+
+    left_registry = {entry["namespace"]: entry for entry in left_manifest["registry"]}
+    right_registry = {entry["namespace"]: entry for entry in right_manifest["registry"]}
+    for namespace in sorted(set(left_registry) | set(right_registry)):
+        left_entry = left_registry.get(namespace)
+        right_entry = right_registry.get(namespace)
+        if left_entry is None or right_entry is None:
+            differences.append(
+                {
+                    "kind": "namespace",
+                    "rule": namespace,
+                    "left": "absent" if left_entry is None else "present",
+                    "right": "absent" if right_entry is None else "present",
+                }
+            )
+            continue
+        ignored_fields = {"rule_id", "namespace", "is_admin_fallback"}
+        for field in sorted((set(left_entry) | set(right_entry)) - ignored_fields):
+            left_value = left_entry.get(field)
+            right_value = right_entry.get(field)
+            if left_value != right_value:
+                differences.append(
+                    {
+                        "kind": "namespace",
+                        "rule": f"{namespace}.{field}",
+                        "left": left_value,
+                        "right": right_value,
+                    }
+                )
+    return differences
+
+
+def registry_audit(cases: list[dict[str, Any]], *, doctrine: str | None = None) -> dict[str, Any]:
+    """Measure recognition, overlaps, precedence, and unused namespace rules."""
+    doctrine_name = str(doctrine or "proposed_changes")
+    registry = _profile(doctrine_name)["registry"]
+    selected_counts: Counter[str] = Counter()
+    matched_counts: Counter[str] = Counter()
+    overlaps: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+    for case in cases:
+        identifier = case.get("id") or case.get("loc_id") or case.get("candidate_id")
+        value = _clean(identifier)
+        matches = [
+            str(entry["namespace"])
+            for entry in registry
+            if re.fullmatch(str(entry["pattern"]), value)
+        ]
+        matched_counts.update(matches)
+        selected = lookup_namespace(identifier, doctrine=doctrine_name)
+        selected_namespace = str(selected["namespace"]) if selected else None
+        if selected_namespace:
+            selected_counts[selected_namespace] += 1
+        else:
+            unmatched.append({"case": case.get("case"), "id": identifier})
+        if len(matches) > 1:
+            specific_matches = [name for name in matches if name != "current_admin_local"]
+            overlaps.append(
+                {
+                    "case": case.get("case"),
+                    "id": identifier,
+                    "matches": matches,
+                    "specific_matches": specific_matches,
+                    "has_specific_collision": len(specific_matches) > 1,
+                    "selected": selected_namespace,
+                }
+            )
+    namespaces = [str(entry["namespace"]) for entry in registry]
+    return {
+        "doctrine": doctrine_name,
+        "case_count": len(cases),
+        "recognized_cases": len(cases) - len(unmatched),
+        "unmatched_cases": unmatched,
+        "overlap_cases": overlaps,
+        "overlap_count": len(overlaps),
+        "specific_collision_count": sum(bool(item["has_specific_collision"]) for item in overlaps),
+        "matched_rule_hits": dict(sorted(matched_counts.items())),
+        "selected_rule_hits": dict(sorted(selected_counts.items())),
+        "unexercised_namespace_rules": [name for name in namespaces if not matched_counts[name]],
+        "shadowed_namespace_rules": [
+            name for name in namespaces if matched_counts[name] and not selected_counts[name]
+        ],
+        "unused_namespace_rules": [name for name in namespaces if not selected_counts[name]],
+    }
+
+
+def oracle_fingerprint(cases: list[dict[str, Any]]) -> str:
+    """Return a stable identity for the exact shared oracle contract."""
+    payload = []
+    for case in cases:
+        payload.append(
+            {
+                "case": case.get("case"),
+                "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
+                "declared": _oracle_for_case(case, mode="declared"),
+                "raw": _oracle_for_case(case, mode="raw"),
+            }
+        )
+    return _stable_fingerprint(payload)
+
+
+def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose fixture provenance, oracle coverage, and legacy hidden assumptions."""
+    case_counts = Counter(str(case.get("case") or "") for case in cases)
+    id_counts = Counter(
+        str(case.get("id") or case.get("loc_id") or case.get("candidate_id") or "")
+        for case in cases
+    )
+    missing_case_names = [index for index, case in enumerate(cases) if not case.get("case")]
+    missing_identifiers = [
+        index
+        for index, case in enumerate(cases)
+        if not (case.get("id") or case.get("loc_id") or case.get("candidate_id"))
+    ]
+    doctrine_override_cases = []
+    explicit_declared = 0
+    explicit_raw = 0
+    declared_scored = 0
+    raw_scored = 0
+    legacy_expectation_cases = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    allowed_explicit_fields = {
+        "status",
+        "known_issues",
+        "known_issue_codes",
+        "open_policy_fields",
+        "policy_options",
+        *ORACLE_FIELDS.keys(),
+        *ORACLE_FIELDS.values(),
+    }
+    for index, case in enumerate(cases):
+        explicit = case.get("oracle") or {}
+        if "oracle" in case and not isinstance(case.get("oracle"), dict):
+            errors.append({"code": "INVALID_ORACLE_ROOT", "index": index, "case": case.get("case")})
+            explicit = {}
+        explicit_declared += int(isinstance(explicit, dict) and isinstance(explicit.get("declared"), dict))
+        explicit_raw += int(isinstance(explicit, dict) and isinstance(explicit.get("raw"), dict))
+        declared_scored += int(_oracle_for_case(case, mode="declared")["scored"])
+        raw_scored += int(_oracle_for_case(case, mode="raw")["scored"])
+        override_keys = sorted(key for key in case if key.endswith("_by_doctrine"))
+        if override_keys:
+            doctrine_override_cases.append(
+                {"case": case.get("case"), "id": case.get("id"), "fields": override_keys}
+            )
+        legacy_keys = sorted(
+            key
+            for key in case
+            if key in {*ORACLE_FIELDS.values(), "expected_issues", "expected_issue_codes"}
+        )
+        if legacy_keys:
+            legacy_expectation_cases.append(
+                {"case": case.get("case"), "id": case.get("id"), "fields": legacy_keys}
+            )
+        if isinstance(explicit, dict):
+            for mode in ("declared", "raw"):
+                mode_oracle = explicit.get(mode)
+                if mode_oracle is None:
+                    continue
+                if not isinstance(mode_oracle, dict):
+                    errors.append(
+                        {"code": "INVALID_ORACLE_MODE", "index": index, "case": case.get("case"), "mode": mode}
+                    )
+                    continue
+                unknown_fields = sorted(set(mode_oracle) - allowed_explicit_fields)
+                if unknown_fields:
+                    errors.append(
+                        {
+                            "code": "UNKNOWN_ORACLE_FIELDS",
+                            "index": index,
+                            "case": case.get("case"),
+                            "mode": mode,
+                            "fields": unknown_fields,
+                        }
+                    )
+                status = str(mode_oracle.get("status") or "verified")
+                if status not in ORACLE_STATUSES:
+                    errors.append(
+                        {
+                            "code": "INVALID_ORACLE_STATUS",
+                            "index": index,
+                            "case": case.get("case"),
+                            "mode": mode,
+                            "value": status,
+                        }
+                    )
+                open_fields = [str(value) for value in mode_oracle.get("open_policy_fields") or []]
+                invalid_open = sorted(set(open_fields) - set(ORACLE_FIELDS))
+                if invalid_open:
+                    errors.append(
+                        {
+                            "code": "INVALID_OPEN_POLICY_FIELDS",
+                            "index": index,
+                            "case": case.get("case"),
+                            "mode": mode,
+                            "fields": invalid_open,
+                        }
+                    )
+                asserted_open = sorted(
+                    field
+                    for field in open_fields
+                    if field in mode_oracle or ORACLE_FIELDS.get(field) in mode_oracle
+                )
+                if asserted_open:
+                    errors.append(
+                        {
+                            "code": "OPEN_POLICY_FIELD_ASSERTED",
+                            "index": index,
+                            "case": case.get("case"),
+                            "mode": mode,
+                            "fields": asserted_open,
+                        }
+                    )
+                role = mode_oracle.get("role", mode_oracle.get("expected_role"))
+                if role is not None and role not in IDENTITY_ROLES:
+                    errors.append(
+                        {
+                            "code": "INVALID_ORACLE_ROLE",
+                            "index": index,
+                            "case": case.get("case"),
+                            "mode": mode,
+                            "value": role,
+                        }
+                    )
+    if missing_case_names:
+        errors.append({"code": "MISSING_CASE_NAME", "indexes": missing_case_names})
+    if missing_identifiers:
+        errors.append({"code": "MISSING_IDENTIFIER", "indexes": missing_identifiers})
+    duplicate_cases = sorted(name for name, count in case_counts.items() if name and count > 1)
+    duplicate_ids = sorted(identifier for identifier, count in id_counts.items() if identifier and count > 1)
+    if duplicate_cases:
+        errors.append({"code": "DUPLICATE_CASE_NAME", "values": duplicate_cases})
+    if duplicate_ids:
+        errors.append({"code": "DUPLICATE_IDENTIFIER", "values": duplicate_ids})
+    if doctrine_override_cases:
+        warnings.append(
+            {"code": "LEGACY_DOCTRINE_EXPECTATIONS", "case_count": len(doctrine_override_cases)}
+        )
+    if legacy_expectation_cases:
+        warnings.append(
+            {"code": "LEGACY_FLAT_EXPECTATIONS", "case_count": len(legacy_expectation_cases)}
+        )
+    return {
+        "case_count": len(cases),
+        "oracle_fingerprint": oracle_fingerprint(cases),
+        "errors": errors,
+        "warnings": warnings,
+        "valid": not errors,
+        "oracle_coverage": {
+            "explicit_declared_cases": explicit_declared,
+            "explicit_raw_cases": explicit_raw,
+            "declared_scored_cases": declared_scored,
+            "raw_scored_cases": raw_scored,
+        },
+        "legacy_doctrine_override_cases": doctrine_override_cases,
+        "legacy_doctrine_override_case_count": len(doctrine_override_cases),
+        "legacy_expectation_cases": legacy_expectation_cases,
+        "legacy_expectation_case_count": len(legacy_expectation_cases),
+    }
+
+
+def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = None) -> dict[str, Any]:
+    """Return doctrine-neutral correctness and separate simplicity measurements."""
+    doctrine_name = str(doctrine or "proposed_changes")
+    dual_results = evaluate_dual_mode_cases(cases, doctrine=doctrine_name)
+    declared = [result["declared"] for result in dual_results]
+    raw = [result["raw"] for result in dual_results]
+    declared_assertions = sum(result["oracle_assertions"] for result in declared)
+    declared_assertions_passed = sum(result["oracle_assertions_passed"] for result in declared)
+    raw_assertions = sum(result["oracle_assertions"] for result in raw)
+    raw_assertions_passed = sum(result["oracle_assertions_passed"] for result in raw)
+    audit = registry_audit(cases, doctrine=doctrine_name)
+    return {
+        "doctrine": doctrine_name,
+        "doctrine_fingerprint": doctrine_manifest(doctrine_name)["fingerprint"],
+        "oracle_fingerprint": oracle_fingerprint(cases),
+        "case_count": len(cases),
+        "declared": {
+            "scored_cases": sum(bool(result["oracle"]["scored"]) for result in declared),
+            "unscored_cases": sum(not result["oracle"]["scored"] for result in declared),
+            "oracle_assertions": declared_assertions,
+            "oracle_assertions_passed": declared_assertions_passed,
+            "assertion_accuracy": (
+                round(declared_assertions_passed / declared_assertions, 6)
+                if declared_assertions
+                else None
+            ),
+            "clean_scored_cases": sum(
+                bool(result["oracle"]["scored"]) and bool(result["clean"])
+                for result in declared
+            ),
+            "known_issue_cases": sum(bool(result["known_findings"]) for result in declared),
+            "unexpected_issue_cases": sum(bool(result["unexpected_findings"]) for result in declared),
+            "resolved_known_issue_count": sum(len(result["resolved_known_issues"]) for result in declared),
+            "open_policy_case_count": sum(bool(result["oracle"]["open_policy_fields"]) for result in declared),
+        },
+        "raw": {
+            "scored_cases": sum(bool(result["oracle"]["scored"]) for result in raw),
+            "unscored_cases": sum(not result["oracle"]["scored"] for result in raw),
+            "oracle_assertions": raw_assertions,
+            "oracle_assertions_passed": raw_assertions_passed,
+            "assertion_accuracy": round(raw_assertions_passed / raw_assertions, 6) if raw_assertions else None,
+            "declared_delta_cases": sum(bool(result["deltas"]) for result in dual_results),
+        },
+        "registry": {
+            "recognized_cases": audit["recognized_cases"],
+            "overlap_count": audit["overlap_count"],
+            "specific_collision_count": audit["specific_collision_count"],
+            "unused_namespace_rule_count": len(audit["unused_namespace_rules"]),
+        },
+        "complexity": doctrine_manifest(doctrine_name)["complexity"],
+        "gate_ok": all(bool(result["gate_ok"]) for result in dual_results),
+    }

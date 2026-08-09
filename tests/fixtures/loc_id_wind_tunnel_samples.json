@@ -6,8 +6,6 @@
     "sample_kind": "coordinate_cell",
     "id": "OLC-87G8P2X7+9P",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
@@ -15,7 +13,14 @@
     "design_questions": [
       "Does a point-cell become a public grid family, or stay an input alias resolved to loc_id context?",
       "How do we avoid implying a Plus Code is a named place?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "what3words proprietary coordinate cell",
@@ -24,14 +29,19 @@
     "sample_kind": "coordinate_cell",
     "id": "W3W-filled.count.soap",
     "family_id": "grid",
-    "expected_role": "grid_id",
     "public_promise": "blocked",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "point_or_cell_overlap",
     "design_questions": [
       "Should proprietary coordinate encodings be accepted as resolver input but never adopted as DaedalMap namespaces?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id"
+      }
+    }
   },
   {
     "case": "S2 cell token",
@@ -40,15 +50,20 @@
     "sample_kind": "grid_cell",
     "id": "S2-89C25C",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "grid_overlap",
     "design_questions": [
       "If H3 and S2 are both supported, does loc_id expose one neutral grid bridge contract?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "MGRS military grid reference",
@@ -57,12 +72,17 @@
     "sample_kind": "grid_cell",
     "id": "MGRS-18SUJ23480647",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "grid_overlap"
+    "required_bridge_type": "grid_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "UN LOCODE port",
@@ -71,14 +91,19 @@
     "sample_kind": "transport_place_code",
     "id": "UNLOCODE-USNYC",
     "family_id": "entity",
-    "expected_role": "entity_id",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "entity_anchor",
     "design_questions": [
       "Is a port code an entity alias, a transport-node id, or a place alias depending on facility granularity?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "entity_id"
+      }
+    }
   },
   {
     "case": "Overture GERS building",
@@ -87,14 +112,19 @@
     "sample_kind": "conflated_entity",
     "id": "GERS-08f2a0b5d72c1234ffff",
     "family_id": "entity",
-    "expected_role": "entity_id",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "entity_anchor",
     "design_questions": [
       "Should GERS IDs become external aliases on entity_id, while Overture divisions may alias loc_id?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "entity_id"
+      }
+    }
   },
   {
     "case": "Overture division",
@@ -103,13 +133,18 @@
     "sample_kind": "division_boundary",
     "id": "GERS-DIVISION-EXAMPLE",
     "family_id": "admin_geometry",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_hierarchy",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "source_id",
     "design_questions": [
       "Does Overture division identity become a source alias to the admin spine rather than a second canonical admin id?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_hierarchy",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "OSM administrative relation",
@@ -118,11 +153,16 @@
     "sample_kind": "admin_boundary_relation",
     "id": "OSM-REL-62422",
     "family_id": "source_alias",
-    "expected_role": "source_alias",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "source_alias"
+    "required_bridge_type": "source_alias",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias"
+      }
+    }
   },
   {
     "case": "OSM road way",
@@ -131,12 +171,17 @@
     "sample_kind": "network_segment",
     "id": "OSM-WAY-123456789",
     "family_id": "segment",
-    "expected_role": "segment_id",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "network_intersection"
+    "required_bridge_type": "network_intersection",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "segment_id",
+        "first_segment_scope": "source_family_scope"
+      }
+    }
   },
   {
     "case": "Wikidata city QID",
@@ -145,14 +190,19 @@
     "sample_kind": "knowledge_graph_item",
     "id": "WIKIDATA-Q60",
     "family_id": "source_alias",
-    "expected_role": "source_alias",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "source_alias",
     "design_questions": [
       "Can a QID act as a supersession oracle when an admin loc_id retires?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias"
+      }
+    }
   },
   {
     "case": "GeoNames populated place",
@@ -161,11 +211,16 @@
     "sample_kind": "gazetteer_feature",
     "id": "GEONAMES-5128581",
     "family_id": "source_alias",
-    "expected_role": "source_alias",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "source_alias"
+    "required_bridge_type": "source_alias",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias"
+      }
+    }
   },
   {
     "case": "GADM admin code",
@@ -174,14 +229,19 @@
     "sample_kind": "admin_boundary",
     "id": "GADM-USA.5.37_1",
     "family_id": "source_alias",
-    "expected_role": "source_alias",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "source_alias",
     "design_questions": [
       "Does a versioned upstream admin code ever become canonical, or only an alias to DaedalMap canonical storage?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias"
+      }
+    }
   },
   {
     "case": "NUTS 2024 region",
@@ -190,14 +250,19 @@
     "sample_kind": "statistical_region",
     "id": "DEU-DE27C",
     "family_id": "regional_base",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_hierarchy",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "public_alias",
     "temporal_rule": "vintage_specific",
     "design_questions": [
       "Do NUTS revisions require alias validity windows even if geometry remains close?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_hierarchy",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Canada DGUID dissemination area",
@@ -206,13 +271,18 @@
     "sample_kind": "census_statistical_area",
     "id": "CAN-DGUID-2021A00055915011",
     "family_id": "country_admin_extension",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_hierarchy",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "public_alias",
     "design_questions": [
       "Should DGUID be stored in the loc_id string or as an alias under a country-specific DaedalMap path?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_hierarchy",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Canada full postal code",
@@ -221,18 +291,23 @@
     "sample_kind": "postal_delivery_code",
     "id": "CAN-PC-V6B1A1",
     "family_id": "postal",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "blocked",
     "bridge_required": true,
     "required_bridge_type": "resolver_only_postal_context",
-    "expected_issues": [
-      "bridge_required cases must declare required_bridge_type"
-    ],
     "design_questions": [
       "A full postal code is semantically obvious but license-blocked; should it be resolver-only until rights are cleared?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "bridge_required cases must declare required_bridge_type"
+        ]
+      }
+    }
   },
   {
     "case": "UK postcode unit",
@@ -241,15 +316,20 @@
     "sample_kind": "postal_delivery_code",
     "id": "GBR-PC-SW1A1AA",
     "family_id": "postal",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "blocked",
     "bridge_required": true,
     "required_bridge_type": "resolver_only_postal_context",
-    "expected_issues": [
-      "bridge_required cases must declare required_bridge_type"
-    ]
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "bridge_required cases must declare required_bridge_type"
+        ]
+      }
+    }
   },
   {
     "case": "Census urban area 2020",
@@ -258,16 +338,21 @@
     "sample_kind": "statistical_urban_area",
     "id": "USA-UA20-63217",
     "family_id": "electoral",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
     "required_bridge_type": "admin_overlap",
     "design_questions": [
       "Urban area is not electoral; this should pressure us to add a statistical_area family."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Congressional district 119",
@@ -276,13 +361,18 @@
     "sample_kind": "electoral_area",
     "id": "USA-CD119-CA-30",
     "family_id": "electoral",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "School district crossing counties",
@@ -291,12 +381,17 @@
     "sample_kind": "education_area",
     "id": "USA-SD-5101260",
     "family_id": "school_district",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "BC health authority",
@@ -305,12 +400,17 @@
     "sample_kind": "health_region",
     "id": "CAN-BC-HA-FRASER",
     "family_id": "health_region",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "PJM balancing authority",
@@ -319,12 +419,17 @@
     "sample_kind": "utility_service_area",
     "id": "USA-POWER-BA-PJM",
     "family_id": "service_territory",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Transmission line",
@@ -333,12 +438,17 @@
     "sample_kind": "network_segment",
     "id": "USA-POWER-LINE-12345",
     "family_id": "segment",
-    "expected_role": "segment_id",
-    "expected_first_segment_scope": "country_reference_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "network_intersection"
+    "required_bridge_type": "network_intersection",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "segment_id",
+        "first_segment_scope": "country_reference_scope"
+      }
+    }
   },
   {
     "case": "HydroLAKES lake",
@@ -347,18 +457,23 @@
     "sample_kind": "water_body",
     "id": "HYDROLAKES-123456",
     "family_id": "water_body",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
     "required_bridge_type": "admin_or_named_water_overlap",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "Should HYDROLAKES be reserved as a source-family prefix?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "WWF ecoregion",
@@ -367,12 +482,17 @@
     "sample_kind": "ecoregion",
     "id": "WWF-ECO-NT0123",
     "family_id": "ecoregion",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "FEMA NFHL flood zone",
@@ -381,13 +501,18 @@
     "sample_kind": "hazard_zone",
     "id": "USA-FEMA-NFHL-AE-12345",
     "family_id": "hazard_zone",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "NWS active alert polygon",
@@ -396,11 +521,16 @@
     "sample_kind": "live_event_polygon",
     "id": "NWS-ALERT-urn:oid:example",
     "family_id": "event",
-    "expected_role": "event_id",
     "public_promise": "stable_public",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "event_affected_area"
+    "required_bridge_type": "event_affected_area",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "event_id"
+      }
+    }
   },
   {
     "case": "NHC forecast cone",
@@ -409,12 +539,17 @@
     "sample_kind": "forecast_event_geometry",
     "id": "NHC-CONE-AL092022-2022092800",
     "family_id": "event",
-    "expected_role": "event_id",
     "public_promise": "internal",
     "should_persist_as_loc_id": false,
     "temporal_rule": "event_window",
     "bridge_required": true,
-    "required_bridge_type": "event_affected_area"
+    "required_bridge_type": "event_affected_area",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "event_id"
+      }
+    }
   },
   {
     "case": "Parcel cadastral lot",
@@ -423,14 +558,19 @@
     "sample_kind": "parcel",
     "id": "USA-VA-059-PARCEL-0504-01-0001",
     "family_id": "entity",
-    "expected_role": "entity_id",
     "public_promise": "blocked",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "entity_anchor",
     "design_questions": [
       "Parcels genuinely nest under admin geography but should not become admin_6 by default."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "entity_id"
+      }
+    }
   },
   {
     "case": "Placekey POI",
@@ -439,18 +579,23 @@
     "sample_kind": "poi_identifier",
     "id": "PLACEKEY-222-227@5vg-7qg-tvz",
     "family_id": "entity",
-    "expected_role": "entity_id",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "entity_anchor",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "Placekey's What@Where split mirrors entity_id plus grid/loc_id context; should DaedalMap expose that split explicitly?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "entity_id",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "Placekey where-only cell",
@@ -459,12 +604,17 @@
     "sample_kind": "grid_cell",
     "id": "PLACEKEY-@5vg-7qg-tvz",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "grid_overlap"
+    "required_bridge_type": "grid_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "Bing quadkey tile",
@@ -473,15 +623,20 @@
     "sample_kind": "display_tile",
     "id": "QUADKEY-1202033021",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "tile_overlap",
     "design_questions": [
       "Display tiles are addressable areas, but should they be accepted only as tile/cache keys rather than analytical grid ids?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "Landsat WRS path row",
@@ -490,12 +645,17 @@
     "sample_kind": "remote_sensing_scene_frame",
     "id": "LANDSAT-WRS2-016-033",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "scene_frame_overlap"
+    "required_bridge_type": "scene_frame_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "Sentinel-2 MGRS tile",
@@ -504,12 +664,17 @@
     "sample_kind": "remote_sensing_tile",
     "id": "SENTINEL2-T11SUJ",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
-    "required_bridge_type": "tile_overlap"
+    "required_bridge_type": "tile_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "GHSL Degree of Urbanisation class cell",
@@ -518,15 +683,20 @@
     "sample_kind": "classification_grid",
     "id": "GHSL-SMOD-2025-R11-C2048",
     "family_id": "grid",
-    "expected_role": "grid_id",
-    "expected_first_segment_scope": "grid_scope",
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "grid_class_overlap",
     "design_questions": [
       "A classification grid is not just a grid: should class value and cell identity be split into grid_id plus observation?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope"
+      }
+    }
   },
   {
     "case": "Copernicus GFM observed flood extent",
@@ -535,7 +705,6 @@
     "sample_kind": "observed_event_extent",
     "id": "GFM-FLOOD-OBSERVED-20260201T1200Z",
     "family_id": "event",
-    "expected_role": "event_id",
     "public_promise": "internal",
     "should_persist_as_loc_id": false,
     "temporal_rule": "event_window",
@@ -543,7 +712,13 @@
     "required_bridge_type": "event_affected_area",
     "design_questions": [
       "Observed extents may be snapshots of an event, not the event identity itself."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "event_id"
+      }
+    }
   },
   {
     "case": "FCC Fabric Location ID",
@@ -552,18 +727,23 @@
     "sample_kind": "serviceable_location_point",
     "id": "FCC-FABRIC-LOCATION-1234567890",
     "family_id": "entity",
-    "expected_role": "entity_id",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "blocked",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
     "required_bridge_type": "entity_anchor",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "Fabric Location IDs are standardized points, but licensed and entity-like rather than public loc_ids."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "entity_id",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "NWS public forecast zone",
@@ -572,13 +752,18 @@
     "sample_kind": "forecast_zone",
     "id": "USA-NWSZ-CAZ043",
     "family_id": "overlay_nws_public_zone",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "NWS public zone future vintage",
@@ -587,16 +772,21 @@
     "sample_kind": "forecast_zone",
     "id": "USA-NWSZ-CAZ043-20260416",
     "family_id": "overlay_nws_public_zone",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
     "required_bridge_type": "admin_overlap",
     "design_questions": [
       "Should vintage live in the loc_id string for operational zones, or only in geometry_vintage/lifecycle fields?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Canadian federal electoral district",
@@ -605,13 +795,18 @@
     "sample_kind": "electoral_area",
     "id": "CAN-FED-2023-35079",
     "family_id": "electoral",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "BC consolidated local health area",
@@ -620,12 +815,17 @@
     "sample_kind": "health_region",
     "id": "CAN-BC-CLHA-23",
     "family_id": "health_region",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "admin_overlap"
+    "required_bridge_type": "admin_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Canadian protected area CPCAD",
@@ -634,15 +834,20 @@
     "sample_kind": "protected_area",
     "id": "CAN-CPCAD-12345",
     "family_id": "protected_area",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
     "required_bridge_type": "admin_or_marine_overlap",
     "design_questions": [
       "Protected areas can have overlapping reporting authorities; bridge rows need authority and overlap semantics."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Canada modern treaty overall treaty area",
@@ -651,15 +856,20 @@
     "sample_kind": "indigenous_treaty_area",
     "id": "CAN-TREATY-MODERN-001-OTA",
     "family_id": "protected_area",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "bridge_required": true,
     "required_bridge_type": "admin_overlap",
     "design_questions": [
       "Treaty areas are source-authoritative cultural/legal geographies; do they need a separate Indigenous/cultural family, not protected_area?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Marine Regions MRGID named feature",
@@ -668,12 +878,17 @@
     "sample_kind": "marine_named_feature",
     "id": "MRGID-1904",
     "family_id": "water_body",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "bridge_required": true,
-    "required_bridge_type": "named_water_overlap"
+    "required_bridge_type": "named_water_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Marine Regions overlapping EEZ claim",
@@ -682,17 +897,28 @@
     "sample_kind": "marine_jurisdiction_claim",
     "id": "MRGID-EEZ-OVERLAP-1",
     "family_id": "marine_jurisdiction",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "CHN", "authority": "sovereign_claim"},
-      {"claimant_loc_id": "VNM", "authority": "sovereign_claim"}
+      {
+        "claimant_loc_id": "CHN",
+        "authority": "sovereign_claim"
+      },
+      {
+        "claimant_loc_id": "VNM",
+        "authority": "sovereign_claim"
+      }
     ],
     "bridge_required": true,
-    "required_bridge_type": "marine_jurisdiction_overlap"
+    "required_bridge_type": "marine_jurisdiction_overlap",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "CShapes Russia 1946 boundary",
@@ -701,22 +927,27 @@
     "sample_kind": "historical_state_boundary",
     "id": "CSHAPES-GW-365-1946",
     "family_id": "historical_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "temporal_rule": "historical_validity_window",
     "bridge_required": true,
     "required_bridge_type": "historical_to_present_admin_crosswalk",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Should historical country/state boundaries be a source-scoped sidechain rather than alternate admin_0?",
       "Does a query like 'Russia in 1946' return a historical geometry plus present-day loc_id overlaps?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "USSR ISO 3166-3 historical country code",
@@ -725,18 +956,23 @@
     "sample_kind": "deleted_country_code",
     "id": "ISO3166-3-SUN",
     "family_id": "historical_admin_alias",
-    "expected_role": "source_alias",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "historical_country_successor_crosswalk",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "ISO deleted country codes should resolve historically, but not become present admin_0 loc_ids.",
       "Should SUN fan out to successor present loc_ids with time and allocation rules?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "Yugoslavia ISO 3166-3 historical country code",
@@ -745,17 +981,22 @@
     "sample_kind": "deleted_country_code",
     "id": "ISO3166-3-YUG",
     "family_id": "historical_admin_alias",
-    "expected_role": "source_alias",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "historical_country_successor_crosswalk",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "Successor mapping can be N-way and date-dependent; a single present loc_id answer is wrong."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "Correlates of War state membership row",
@@ -764,17 +1005,22 @@
     "sample_kind": "historical_state_membership",
     "id": "COW-STATE-365-1816-2024",
     "family_id": "historical_admin_alias",
-    "expected_role": "source_alias",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "historical_state_membership_crosswalk",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "Membership in the international system is not the same as a boundary, but it controls whether a historical country query is meaningful."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "NHGIS 1990 census tract",
@@ -783,21 +1029,26 @@
     "sample_kind": "historical_census_geography",
     "id": "USA-NHGIS-TRACT-1990-51059452400",
     "family_id": "historical_statistical_area",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "temporal_rule": "vintage_specific",
     "bridge_required": true,
     "required_bridge_type": "historical_to_present_admin_crosswalk",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected country_reference_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Historical tracts should not rewrite the present tract loc_id; they need vintage-scoped loc_ids or source aliases plus crosswalks."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected country_reference_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "NHGIS 1990-to-2020 tract crosswalk",
@@ -806,16 +1057,28 @@
     "sample_kind": "historical_crosswalk",
     "id": "NHGIS-XWALK-TRACT-1990-2020",
     "family_id": "relationship",
-    "expected_role": "source_alias",
-    "expected_role_by_doctrine": {
-      "solidified_sibling_layer": "relationship_id"
-    },
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "vintage_crosswalk",
     "design_questions": [
       "Some historical artifacts are relationship identities, not loc_ids. The test harness needs relationship_id as a first-class role."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "open",
+        "open_policy_fields": [
+          "role"
+        ],
+        "policy_options": {
+          "role": {
+            "baseline": "source_alias",
+            "by_doctrine": {
+              "solidified_sibling_layer": "relationship_id"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "case": "Newberry historical county boundary",
@@ -824,21 +1087,26 @@
     "sample_kind": "historical_county_boundary",
     "id": "AHCB-USA-VA-FAIRFAX-1850",
     "family_id": "historical_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "temporal_rule": "historical_validity_window",
     "bridge_required": true,
     "required_bridge_type": "historical_to_present_admin_crosswalk",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Historical county identity may share a name with the present county while having different geometry and sometimes different legal meaning."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "NUTS 2021 to 2024 correspondence",
@@ -847,16 +1115,28 @@
     "sample_kind": "versioned_statistical_crosswalk",
     "id": "NUTS-XWALK-2021-2024-DE",
     "family_id": "relationship",
-    "expected_role": "source_alias",
-    "expected_role_by_doctrine": {
-      "solidified_sibling_layer": "relationship_id"
-    },
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "vintage_crosswalk",
     "design_questions": [
       "NUTS changes are scheduled and legally versioned; loc_id aliases need validity windows and correspondence tables."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "open",
+        "open_policy_fields": [
+          "role"
+        ],
+        "policy_options": {
+          "role": {
+            "baseline": "source_alias",
+            "by_doctrine": {
+              "solidified_sibling_layer": "relationship_id"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "case": "Euro area membership in 1999",
@@ -865,30 +1145,49 @@
     "sample_kind": "temporal_membership_region",
     "id": "EUROAREA-1999",
     "family_id": "temporal_membership_area",
-    "expected_role": "loc_id",
-    "expected_role_by_doctrine": {
-      "solidified_sibling_layer": "relationship_id"
-    },
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_parent_semantics_by_doctrine": {
-      "solidified_sibling_layer": "not_applicable"
-    },
-    "expected_placement_semantics_by_doctrine": {
-      "solidified_sibling_layer": "not_applicable"
-    },
     "public_promise": "internal",
     "temporal_rule": "membership_window",
     "bridge_required": true,
     "required_bridge_type": "membership_to_present_admin_set",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Is the euro area a loc_id-like geography, a membership-set sidechain, or a relationship query over countries and dates?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ],
+        "open_policy_fields": [
+          "parent_semantics",
+          "placement_semantics",
+          "role"
+        ],
+        "policy_options": {
+          "role": {
+            "baseline": "loc_id",
+            "by_doctrine": {
+              "solidified_sibling_layer": "relationship_id"
+            }
+          },
+          "parent_semantics": {
+            "baseline": "context_or_bridge_only",
+            "by_doctrine": {
+              "solidified_sibling_layer": "not_applicable"
+            }
+          },
+          "placement_semantics": {
+            "baseline": null,
+            "by_doctrine": {
+              "solidified_sibling_layer": "not_applicable"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "case": "Euro area membership in 2026",
@@ -897,30 +1196,49 @@
     "sample_kind": "temporal_membership_region",
     "id": "EUROAREA-2026",
     "family_id": "temporal_membership_area",
-    "expected_role": "loc_id",
-    "expected_role_by_doctrine": {
-      "solidified_sibling_layer": "relationship_id"
-    },
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_parent_semantics_by_doctrine": {
-      "solidified_sibling_layer": "not_applicable"
-    },
-    "expected_placement_semantics_by_doctrine": {
-      "solidified_sibling_layer": "not_applicable"
-    },
     "public_promise": "internal",
     "temporal_rule": "membership_window",
     "bridge_required": true,
     "required_bridge_type": "membership_to_present_admin_set",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "The euro area changed membership without being a boundary source; this argues for membership sidechains separate from geometry."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ],
+        "open_policy_fields": [
+          "parent_semantics",
+          "placement_semantics",
+          "role"
+        ],
+        "policy_options": {
+          "role": {
+            "baseline": "loc_id",
+            "by_doctrine": {
+              "solidified_sibling_layer": "relationship_id"
+            }
+          },
+          "parent_semantics": {
+            "baseline": "context_or_bridge_only",
+            "by_doctrine": {
+              "solidified_sibling_layer": "not_applicable"
+            }
+          },
+          "placement_semantics": {
+            "baseline": null,
+            "by_doctrine": {
+              "solidified_sibling_layer": "not_applicable"
+            }
+          }
+        }
+      }
+    }
   },
   {
     "case": "World Historical Gazetteer place with temporal attestations",
@@ -929,17 +1247,22 @@
     "sample_kind": "historical_gazetteer_place",
     "id": "WHG-place:gn:745044",
     "family_id": "historical_gazetteer_alias",
-    "expected_role": "source_alias",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "historical_place_reconciliation",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "WHG's model of names/geometries/time as attestations may be closer to what historical loc_id needs than ordinary current-boundary systems."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "Crimea contested admin1",
@@ -948,26 +1271,37 @@
     "sample_kind": "contested_admin_area",
     "id": "CLAIM-CRIMEA",
     "family_id": "contested_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "UKR", "authority": "internationally_recognized_sovereignty"},
-      {"claimant_loc_id": "RUS", "authority": "de_facto_control_or_claim"}
+      {
+        "claimant_loc_id": "UKR",
+        "authority": "internationally_recognized_sovereignty"
+      },
+      {
+        "claimant_loc_id": "RUS",
+        "authority": "de_facto_control_or_claim"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "claim_to_present_admin_overlap",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Does present admin spine follow internationally recognized sovereignty, de facto control, or source-selected worldview?",
       "Should contested areas be sidechain claim geometries rather than children under one parent?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "Kosovo present disputed sovereignty",
@@ -976,17 +1310,28 @@
     "sample_kind": "contested_admin0",
     "id": "XKS",
     "family_id": "admin_0",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_country",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "XKS", "authority": "coverage_policy_current_entity"},
-      {"claimant_loc_id": "SRB", "authority": "sovereign_claim"}
+      {
+        "claimant_loc_id": "XKS",
+        "authority": "coverage_policy_current_entity"
+      },
+      {
+        "claimant_loc_id": "SRB",
+        "authority": "sovereign_claim"
+      }
     ],
     "bridge_required": true,
-    "required_bridge_type": "country_policy_alias_or_claim"
+    "required_bridge_type": "country_policy_alias_or_claim",
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_country",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Taiwan contested admin0",
@@ -995,18 +1340,29 @@
     "sample_kind": "contested_admin0",
     "id": "TWN",
     "family_id": "admin_0",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_country",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "TWN", "authority": "coverage_policy_current_entity"},
-      {"claimant_loc_id": "CHN", "authority": "sovereign_claim"}
+      {
+        "claimant_loc_id": "TWN",
+        "authority": "coverage_policy_current_entity"
+      },
+      {
+        "claimant_loc_id": "CHN",
+        "authority": "sovereign_claim"
+      }
     ],
     "design_questions": [
       "A stable coverage-universe loc_id can exist without resolving political parentage."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_country",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Palestine contested admin0",
@@ -1015,18 +1371,29 @@
     "sample_kind": "contested_admin0",
     "id": "PSE",
     "family_id": "admin_0",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_country",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "PSE", "authority": "coverage_policy_current_entity"},
-      {"claimant_loc_id": "ISR", "authority": "overlap_or_control_claim"}
+      {
+        "claimant_loc_id": "PSE",
+        "authority": "coverage_policy_current_entity"
+      },
+      {
+        "claimant_loc_id": "ISR",
+        "authority": "overlap_or_control_claim"
+      }
     ],
     "design_questions": [
       "Coverage inclusion, displayed boundary, sovereignty recognition, and de facto control must be separate fields."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_country",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Northern Cyprus de facto territory",
@@ -1035,22 +1402,33 @@
     "sample_kind": "breakaway_de_facto_area",
     "id": "NE-DISPUTED-CYN",
     "family_id": "contested_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "CYP", "authority": "internationally_recognized_sovereignty"},
-      {"claimant_loc_id": "CYN", "authority": "de_facto_control_entity"}
+      {
+        "claimant_loc_id": "CYP",
+        "authority": "internationally_recognized_sovereignty"
+      },
+      {
+        "claimant_loc_id": "CYN",
+        "authority": "de_facto_control_entity"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "claim_to_present_admin_overlap",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ]
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "Somaliland de facto territory",
@@ -1059,22 +1437,33 @@
     "sample_kind": "breakaway_de_facto_area",
     "id": "NE-DISPUTED-SOL",
     "family_id": "contested_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "SOM", "authority": "internationally_recognized_sovereignty"},
-      {"claimant_loc_id": "SOL", "authority": "de_facto_control_entity"}
+      {
+        "claimant_loc_id": "SOM",
+        "authority": "internationally_recognized_sovereignty"
+      },
+      {
+        "claimant_loc_id": "SOL",
+        "authority": "de_facto_control_entity"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "claim_to_present_admin_overlap",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ]
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "Jammu and Kashmir Line of Control",
@@ -1083,17 +1472,22 @@
     "sample_kind": "contested_boundary_line",
     "id": "UN-LOC-JAMMU-KASHMIR",
     "family_id": "boundary_line",
-    "expected_role": "segment_id",
-    "expected_first_segment_scope": "source_family_scope",
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "boundary_line_context",
-    "expected_issues": [
-      "first segment scope mismatch: expected source_family_scope, got unknown"
-    ],
     "design_questions": [
       "A disputed boundary line is not an area loc_id; it is a line/relationship object with adjacent claim areas."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "segment_id",
+        "first_segment_scope": "source_family_scope",
+        "known_issues": [
+          "first segment scope mismatch: expected source_family_scope, got unknown"
+        ]
+      }
+    }
   },
   {
     "case": "Abyei final status undetermined",
@@ -1102,22 +1496,33 @@
     "sample_kind": "contested_status_area",
     "id": "UN-ABYEI-AREA",
     "family_id": "contested_admin",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "SDN", "authority": "claim_or_administration"},
-      {"claimant_loc_id": "SSD", "authority": "claim_or_administration"}
+      {
+        "claimant_loc_id": "SDN",
+        "authority": "claim_or_administration"
+      },
+      {
+        "claimant_loc_id": "SSD",
+        "authority": "claim_or_administration"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "claim_to_present_admin_overlap",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ]
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "Falkland Islands / Malvinas sovereignty dispute",
@@ -1126,18 +1531,29 @@
     "sample_kind": "contested_admin0_or_territory",
     "id": "FLK",
     "family_id": "admin_0",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_country",
-    "expected_parent_semantics": "strict_admin_parent",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "GBR", "authority": "administering_power"},
-      {"claimant_loc_id": "ARG", "authority": "sovereign_claim"}
+      {
+        "claimant_loc_id": "GBR",
+        "authority": "administering_power"
+      },
+      {
+        "claimant_loc_id": "ARG",
+        "authority": "sovereign_claim"
+      }
     ],
     "design_questions": [
       "A territory can have a stable coverage loc_id while sovereignty labels remain viewpoint-dependent."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_country",
+        "parent_semantics": "strict_admin_parent"
+      }
+    }
   },
   {
     "case": "Antarctic overlapping territorial claims",
@@ -1146,26 +1562,40 @@
     "sample_kind": "overlapping_claim_area",
     "id": "CLAIM-ANTARCTICA-OVERLAP",
     "family_id": "claim_area",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "internal",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "ARG", "authority": "territorial_claim"},
-      {"claimant_loc_id": "CHL", "authority": "territorial_claim"},
-      {"claimant_loc_id": "GBR", "authority": "territorial_claim"}
+      {
+        "claimant_loc_id": "ARG",
+        "authority": "territorial_claim"
+      },
+      {
+        "claimant_loc_id": "CHL",
+        "authority": "territorial_claim"
+      },
+      {
+        "claimant_loc_id": "GBR",
+        "authority": "territorial_claim"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "claim_overlap",
-    "expected_issues": [
-      "role mismatch: expected loc_id, got source_alias",
-      "first segment scope mismatch: expected source_family_scope, got unknown",
-      "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
-    ],
     "design_questions": [
       "Overlapping claim polygons cannot be children in a strict admin_0 tree."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "known_issues": [
+          "role mismatch: expected loc_id, got source_alias",
+          "first segment scope mismatch: expected source_family_scope, got unknown",
+          "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
+        ]
+      }
+    }
   },
   {
     "case": "South China Sea overlapping maritime claim",
@@ -1174,24 +1604,47 @@
     "sample_kind": "overlapping_marine_claim",
     "id": "MRGID-49694",
     "family_id": "marine_jurisdiction",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "stable_public",
     "parent_status": "contested",
     "parent_claims": [
-      {"claimant_loc_id": "CHN", "authority": "maritime_claim"},
-      {"claimant_loc_id": "TWN", "authority": "maritime_claim"},
-      {"claimant_loc_id": "VNM", "authority": "maritime_claim"},
-      {"claimant_loc_id": "MYS", "authority": "partial_maritime_claim"},
-      {"claimant_loc_id": "PHL", "authority": "partial_maritime_claim"},
-      {"claimant_loc_id": "BRN", "authority": "partial_maritime_claim"}
+      {
+        "claimant_loc_id": "CHN",
+        "authority": "maritime_claim"
+      },
+      {
+        "claimant_loc_id": "TWN",
+        "authority": "maritime_claim"
+      },
+      {
+        "claimant_loc_id": "VNM",
+        "authority": "maritime_claim"
+      },
+      {
+        "claimant_loc_id": "MYS",
+        "authority": "partial_maritime_claim"
+      },
+      {
+        "claimant_loc_id": "PHL",
+        "authority": "partial_maritime_claim"
+      },
+      {
+        "claimant_loc_id": "BRN",
+        "authority": "partial_maritime_claim"
+      }
     ],
     "bridge_required": true,
     "required_bridge_type": "marine_claim_overlap",
     "design_questions": [
       "Marine claim areas need claimants and legal basis, not one sovereign parent."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
   },
   {
     "case": "Great Lakes label-1-scale water body",
@@ -1199,24 +1652,32 @@
     "sample_kind": "water_body",
     "id": "IHO1953-GREAT-LAKES",
     "family_id": "water_body",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_reference_level": "label_1",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_1",
     "reference_level_reason": "scale_hint",
     "containing_loc_id": "NULL-MULTI-COUNTRY",
     "containment_method": "largest_overlap",
     "crosses_admin_boundaries": true,
-    "overlapping_admin_loc_ids": ["USA", "CAN"],
+    "overlapping_admin_loc_ids": [
+      "USA",
+      "CAN"
+    ],
     "public_promise": "stable_public",
     "bridge_required": true,
     "required_bridge_type": "admin_or_named_water_overlap",
     "design_questions": [
       "A huge lake is label-1 scale for lookup, but must not become an admin_1 child.",
       "Should multi-country containing_loc_id use a NULL sentinel, a set id, or no single containing value?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_1",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Small county-contained lake",
@@ -1224,11 +1685,6 @@
     "sample_kind": "water_body",
     "id": "HYDROLAKES-FAIRFAX-SMALL-LAKE",
     "family_id": "water_body",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_reference_level": "label_4",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_4",
     "reference_level_reason": "scale_hint",
     "containing_loc_id": "USA-VA-059",
@@ -1239,7 +1695,17 @@
     "required_bridge_type": "admin_or_named_water_overlap",
     "design_questions": [
       "A small lake may be neighborhood/tract-scale, but it remains a water-body sidechain."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_4",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Los Angeles city readable alias",
@@ -1247,21 +1713,29 @@
     "sample_kind": "municipality_alias",
     "id": "USA-CA-LosAngeles",
     "family_id": "municipality",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "admin_hierarchy",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_placement_semantics": "containing_loc_id",
     "containing_loc_id": "USA-CA",
     "containment_method": "declared_by_source",
     "crosses_admin_boundaries": false,
     "public_promise": "public_alias",
-    "source_aliases": ["USA-PLACE-0644000", "USA-CA-CITY-LosAngeles"],
+    "source_aliases": [
+      "USA-PLACE-0644000",
+      "USA-CA-CITY-LosAngeles"
+    ],
     "design_questions": [
       "Readable city aliases do not need to be abbreviated.",
       "This is a friendly alias; the core DaedalMap city loc_id should include the CITY family token.",
       "Should case be preserved for display while canonical matching remains case-insensitive?",
       "If the alias does not declare reference_level, should agents derive it from containing_loc_id, source family, or not at all?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "admin_hierarchy",
+        "parent_semantics": "context_or_bridge_only",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Los Angeles city core DaedalMap loc_id",
@@ -1269,21 +1743,30 @@
     "sample_kind": "municipality_alias",
     "id": "USA-CA-CITY-LosAngeles",
     "family_id": "municipality",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "country_reference_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_reference_level": "label_3",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_3",
     "reference_level_reason": "official_admin_equivalent",
     "containing_loc_id": "USA-CA",
     "containment_method": "declared_by_source",
     "crosses_admin_boundaries": false,
     "public_promise": "public_alias",
-    "source_aliases": ["USA-PLACE-0644000", "USA-CA-LosAngeles", "USA-CA-LA"],
+    "source_aliases": [
+      "USA-PLACE-0644000",
+      "USA-CA-LosAngeles",
+      "USA-CA-LA"
+    ],
     "design_questions": [
       "The explicit CITY token fixes human meaning and separates core DaedalMap city identity from source aliases."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_3",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Cross-border city functional area",
@@ -1291,24 +1774,33 @@
     "sample_kind": "cross_border_city_region",
     "id": "URBAN-BASEL-TRINATIONAL",
     "family_id": "urban_area",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_reference_level": "label_3",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_3",
     "reference_level_reason": "scale_hint",
     "containing_loc_id": "NULL-MULTI-COUNTRY",
     "containment_method": "largest_overlap",
     "crosses_admin_boundaries": true,
-    "overlapping_admin_loc_ids": ["CHE", "FRA", "DEU"],
+    "overlapping_admin_loc_ids": [
+      "CHE",
+      "FRA",
+      "DEU"
+    ],
     "public_promise": "internal",
     "bridge_required": true,
     "required_bridge_type": "admin_overlap",
     "design_questions": [
       "Cross-border urban geography stays city-scale even when no single country contains it.",
       "Does the containing doctrine need a formal multi-container sentinel or a set-valued container field?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_3",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Interstate route containing sibling layer",
@@ -1316,16 +1808,29 @@
     "sample_kind": "route_network",
     "id": "ROUTE-USA-I95",
     "family_id": "route",
-    "expected_role": "route_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "not_applicable",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_1",
     "reference_level_reason": "scale_hint",
     "containing_loc_id": "USA",
     "containment_method": "largest_overlap",
     "crosses_admin_boundaries": true,
-    "overlapping_admin_loc_ids": ["USA-ME", "USA-NH", "USA-MA", "USA-RI", "USA-CT", "USA-NY", "USA-NJ", "USA-PA", "USA-DE", "USA-MD", "USA-DC", "USA-VA", "USA-NC", "USA-SC", "USA-GA", "USA-FL"],
+    "overlapping_admin_loc_ids": [
+      "USA-ME",
+      "USA-NH",
+      "USA-MA",
+      "USA-RI",
+      "USA-CT",
+      "USA-NY",
+      "USA-NJ",
+      "USA-PA",
+      "USA-DE",
+      "USA-MD",
+      "USA-DC",
+      "USA-VA",
+      "USA-NC",
+      "USA-SC",
+      "USA-GA",
+      "USA-FL"
+    ],
     "public_promise": "source_id",
     "should_persist_as_loc_id": false,
     "bridge_required": true,
@@ -1333,7 +1838,16 @@
     "design_questions": [
       "Routes are not loc_ids, but they still need reference_level and containing_loc_id for agent routing.",
       "Should route scale be derived from length/admin crossings rather than hand declared?"
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "route_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   },
   {
     "case": "Amazon rainforest named forest region",
@@ -1341,23 +1855,38 @@
     "sample_kind": "forest_region",
     "id": "FOREST-AMAZON",
     "family_id": "forest",
-    "expected_role": "loc_id",
-    "expected_first_segment_scope": "source_family_scope",
-    "expected_parent_semantics": "context_or_bridge_only",
-    "expected_reference_level": "label_1",
-    "expected_placement_semantics": "containing_loc_id",
     "reference_level": "label_1",
     "reference_level_reason": "scale_hint",
     "containing_loc_id": "NULL-MULTI-COUNTRY",
     "containment_method": "largest_overlap",
     "crosses_admin_boundaries": true,
-    "overlapping_admin_loc_ids": ["BRA", "PER", "COL", "BOL", "VEN", "ECU", "GUY", "SUR", "GUF"],
+    "overlapping_admin_loc_ids": [
+      "BRA",
+      "PER",
+      "COL",
+      "BOL",
+      "VEN",
+      "ECU",
+      "GUY",
+      "SUR",
+      "GUF"
+    ],
     "public_promise": "internal",
     "bridge_required": true,
     "required_bridge_type": "admin_or_ecoregion_overlap",
     "design_questions": [
       "Forests behave like lakes when a maintained source boundary exists.",
       "A famous name alone is not enough; the source family must define the polygon."
-    ]
+    ],
+    "oracle": {
+      "declared": {
+        "status": "provisional",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "reference_level": "label_1",
+        "placement_semantics": "containing_loc_id"
+      }
+    }
   }
 ]
