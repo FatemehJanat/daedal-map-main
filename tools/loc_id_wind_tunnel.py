@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from mapmover.runtime.loc_id_identity_doctrine import evaluate_dual_mode_cases, evaluate_identity_cases
+from mapmover.runtime.loc_id_identity_doctrine import (
+    compare_doctrine_cases,
+    evaluate_dual_mode_cases,
+    evaluate_identity_cases,
+)
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "loc_id_wind_tunnel_samples.json"
 
@@ -68,18 +72,48 @@ def _render_dual_markdown(results: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_compare_markdown(results: list[dict[str, Any]]) -> str:
+    lines = [
+        "# loc_id Wind Tunnel Doctrine Comparison",
+        "",
+        "| Signal | Case | System | Deltas |",
+        "|---|---|---|---|",
+    ]
+    for result in results:
+        deltas = "<br>".join(result.get("deltas") or []) or "-"
+        lines.append(
+            "| {signal} | {case} | {system} | {deltas} |".format(
+                signal=result.get("signal"),
+                case=result.get("case"),
+                system=result.get("source_system") or "-",
+                deltas=deltas,
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate sampled geography identifiers against loc_id doctrine.")
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
-    parser.add_argument("--mode", choices=("single", "dual"), default="single")
+    parser.add_argument("--mode", choices=("single", "dual", "compare"), default="single")
+    parser.add_argument("--doctrine", choices=("present_system", "proposed_changes"), default="proposed_changes")
+    parser.add_argument("--left-doctrine", choices=("present_system", "proposed_changes"), default="present_system")
+    parser.add_argument("--right-doctrine", choices=("present_system", "proposed_changes"), default="proposed_changes")
     parser.add_argument("--fail-on-unexpected", action="store_true")
     args = parser.parse_args()
 
     cases = _load_cases(args.fixture)
-    results = evaluate_dual_mode_cases(cases) if args.mode == "dual" else evaluate_identity_cases(cases)
+    if args.mode == "compare":
+        results = compare_doctrine_cases(cases, left=args.left_doctrine, right=args.right_doctrine)
+    elif args.mode == "dual":
+        results = evaluate_dual_mode_cases(cases, doctrine=args.doctrine)
+    else:
+        results = evaluate_identity_cases(cases, doctrine=args.doctrine)
     if args.format == "json":
         print(json.dumps(results, indent=2, sort_keys=True))
+    elif args.mode == "compare":
+        print(_render_compare_markdown(results), end="")
     elif args.mode == "dual":
         print(_render_dual_markdown(results), end="")
     else:

@@ -4,7 +4,11 @@ import json
 import unittest
 from pathlib import Path
 
-from mapmover.runtime.loc_id_identity_doctrine import evaluate_dual_mode_cases, evaluate_identity_cases
+from mapmover.runtime.loc_id_identity_doctrine import (
+    compare_doctrine_cases,
+    evaluate_dual_mode_cases,
+    evaluate_identity_cases,
+)
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "loc_id_wind_tunnel_samples.json"
 
@@ -48,6 +52,17 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         self.assertIn("raw_declared_delta", signals)
         self.assertIn("needs_policy_decision", signals)
         self.assertTrue(any(result["deltas"] for result in results))
+
+    def test_doctrine_profiles_produce_comparison_deltas(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        present = evaluate_dual_mode_cases(cases, doctrine="present_system")
+        proposed = evaluate_dual_mode_cases(cases, doctrine="proposed_changes")
+        compared = compare_doctrine_cases(cases, left="present_system", right="proposed_changes")
+        self.assertEqual(len(present), len(proposed))
+        self.assertEqual(len(compared), len(cases))
+        self.assertTrue(any(result["deltas"] for result in compared))
 
 
 if __name__ == "__main__":

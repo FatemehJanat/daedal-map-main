@@ -82,7 +82,7 @@ GRID_PREFIXES = {"H3", "S2", "OLC", "PLUSCODE", "ERA5", "CMIP", "OISST", "SENTIN
 ROUTE_PREFIXES = {"ROUTE", "ROAD", "TRAIL", "RIVER"}
 SEGMENT_PREFIXES = {"SEGMENT", "REACH", "WAY", "LINE"}
 
-NAMESPACE_REGISTRY: list[dict[str, Any]] = [
+PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     {
         "namespace": "current_admin_iso3",
         "pattern": r"^[A-Z]{3}$",
@@ -254,6 +254,64 @@ NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
 ]
 
+PRESENT_SYSTEM_REGISTRY: list[dict[str, Any]] = [
+    {
+        "namespace": "current_admin_iso3",
+        "pattern": r"^[A-Z]{3}$",
+        "identity_role": "loc_id",
+        "family_id": "admin_0",
+        "scope_type": "admin_country",
+        "public_promise": "stable_public_loc_id",
+    },
+    {
+        "namespace": "current_admin_local",
+        "pattern": r"^[A-Z]{3}(?:-[A-Z0-9]+)+$",
+        "identity_role": "loc_id",
+        "family_id": "admin_local",
+        "scope_type": "admin_hierarchy",
+        "public_promise": "stable_public_alias",
+    },
+    {
+        "namespace": "geoboundaries_storage",
+        "pattern": r"^[A-Z]{3}(?:-G[A-Z0-9]+)+$",
+        "identity_role": "loc_id",
+        "family_id": "admin_geometry",
+        "scope_type": "admin_hierarchy",
+        "public_promise": "canonical_storage_identity",
+    },
+    {
+        "namespace": "known_grid",
+        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL)-.+$",
+        "identity_role": "grid_id",
+        "family_id": "grid",
+        "scope_type": "grid_scope",
+        "public_promise": "source_alias_only",
+    },
+    {
+        "namespace": "known_event",
+        "pattern": r"^(?:EQ|FIRE|FLOOD|HRCN|TORN|TSUN|VOLC|NHC|NWS|GFM)(?:-|:).+$",
+        "identity_role": "event_id",
+        "family_id": "event",
+        "scope_type": "source_family_scope",
+        "public_promise": "event_identity",
+    },
+]
+
+DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
+    "present_system": {
+        "description": "Broad current runtime-style parsing where ISO3-dash strings tend to become admin/local loc_ids.",
+        "registry": PRESENT_SYSTEM_REGISTRY,
+        "admin_fallback_precedence": "first",
+    },
+    "proposed_changes": {
+        "description": "Registry-first present admin spine with explicit sidechain/source/entity/event/grid roles.",
+        "registry": PROPOSED_NAMESPACE_REGISTRY,
+        "admin_fallback_precedence": "last",
+    },
+}
+
+NAMESPACE_REGISTRY = PROPOSED_NAMESPACE_REGISTRY
+
 
 def _clean(value: Any) -> str:
     return str(value or "").strip().upper()
@@ -268,22 +326,29 @@ def _looks_like_country_scoped_sidechain(value: str) -> bool:
     return any(pattern.fullmatch(text) for pattern in COUNTRY_SCOPED_SIDECHAIN_PATTERNS)
 
 
-def lookup_namespace(identifier: str | None) -> dict[str, Any] | None:
+def _profile(doctrine: str | None = None) -> dict[str, Any]:
+    return DOCTRINE_PROFILES.get(str(doctrine or "proposed_changes"), DOCTRINE_PROFILES["proposed_changes"])
+
+
+def lookup_namespace(identifier: str | None, *, doctrine: str | None = None) -> dict[str, Any] | None:
     """Return the first registry entry that matches a raw identifier."""
     value = _clean(identifier)
     if not value:
         return None
+    profile = _profile(doctrine)
+    registry = profile["registry"]
+    admin_fallback_precedence = str(profile.get("admin_fallback_precedence") or "last")
     fallback: dict[str, Any] | None = None
-    for entry in NAMESPACE_REGISTRY:
+    for entry in registry:
         if re.fullmatch(str(entry["pattern"]), value):
-            if entry["namespace"] == "current_admin_local":
+            if entry["namespace"] == "current_admin_local" and admin_fallback_precedence == "last":
                 fallback = entry
                 continue
             return entry
     return fallback
 
 
-def infer_identity_role(identifier: str | None, *, family_id: str | None = None) -> str:
+def infer_identity_role(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str:
     """Return the smallest honest identity role for a candidate identifier."""
     value = _clean(identifier)
     family = _clean(family_id).lower()
@@ -303,7 +368,7 @@ def infer_identity_role(identifier: str | None, *, family_id: str | None = None)
     if family == "source_alias":
         return "source_alias"
 
-    registry = lookup_namespace(value)
+    registry = lookup_namespace(value, doctrine=doctrine)
     if registry:
         return str(registry["identity_role"])
 
@@ -325,7 +390,7 @@ def infer_identity_role(identifier: str | None, *, family_id: str | None = None)
     return "source_alias"
 
 
-def infer_first_segment_scope(identifier: str | None, *, family_id: str | None = None) -> str | None:
+def infer_first_segment_scope(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str | None:
     """Classify what the first loc_id segment is allowed to mean."""
     value = _clean(identifier)
     if not value:
@@ -334,7 +399,7 @@ def infer_first_segment_scope(identifier: str | None, *, family_id: str | None =
     family = _clean(family_id).lower()
     if re.fullmatch(r"[A-Z]{3}", value):
         return "admin_country"
-    registry = lookup_namespace(value)
+    registry = lookup_namespace(value, doctrine=doctrine)
     if registry and family not in ADMIN_FAMILIES:
         return str(registry["scope_type"])
     if first in SOURCE_FAMILY_PREFIXES or value.startswith("WWF-ECO-"):
@@ -358,14 +423,14 @@ def infer_first_segment_scope(identifier: str | None, *, family_id: str | None =
     return "unknown"
 
 
-def loc_id_may_encode_admin_hierarchy(identifier: str | None, *, family_id: str | None = None) -> bool:
-    registry = lookup_namespace(identifier)
+def loc_id_may_encode_admin_hierarchy(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> bool:
+    registry = lookup_namespace(identifier, doctrine=doctrine)
     family = _clean(family_id).lower() or (str(registry.get("family_id")) if registry else None) or classify_loc_id_family(identifier)
     return family in ADMIN_FAMILIES
 
 
-def expected_parent_semantics(identifier: str | None, *, family_id: str | None = None) -> str:
-    registry = lookup_namespace(identifier)
+def expected_parent_semantics(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str:
+    registry = lookup_namespace(identifier, doctrine=doctrine)
     family = _clean(family_id).lower() or (str(registry.get("family_id")) if registry else None) or classify_loc_id_family(identifier)
     if family in ADMIN_FAMILIES:
         return "strict_admin_parent"
@@ -384,7 +449,7 @@ def _raw_case(case: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
+def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None) -> dict[str, Any]:
     """Evaluate one weird-geography fixture against the loc_id doctrine.
 
     This is intentionally deterministic and schema-light. It is a guardrail for
@@ -392,11 +457,11 @@ def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
     """
     identifier = case.get("id") or case.get("loc_id") or case.get("candidate_id")
     family_id = case.get("family_id")
-    role = infer_identity_role(identifier, family_id=family_id)
+    role = infer_identity_role(identifier, family_id=family_id, doctrine=doctrine)
     loc_family = classify_loc_id_family(identifier)
-    first_segment_scope = infer_first_segment_scope(identifier, family_id=family_id)
-    may_encode_admin = loc_id_may_encode_admin_hierarchy(identifier, family_id=family_id)
-    parent_semantics = expected_parent_semantics(identifier, family_id=family_id)
+    first_segment_scope = infer_first_segment_scope(identifier, family_id=family_id, doctrine=doctrine)
+    may_encode_admin = loc_id_may_encode_admin_hierarchy(identifier, family_id=family_id, doctrine=doctrine)
+    parent_semantics = expected_parent_semantics(identifier, family_id=family_id, doctrine=doctrine)
     issues: list[str] = []
 
     expected_role = case.get("expected_role")
@@ -462,7 +527,8 @@ def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
         "id": identifier,
         "source_system": case.get("source_system"),
         "sample_kind": case.get("sample_kind"),
-        "namespace": (lookup_namespace(identifier) or {}).get("namespace"),
+        "doctrine": doctrine or "proposed_changes",
+        "namespace": (lookup_namespace(identifier, doctrine=doctrine) or {}).get("namespace"),
         "role": role,
         "loc_id_family": loc_family,
         "first_segment_scope": first_segment_scope,
@@ -478,14 +544,14 @@ def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate_identity_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [evaluate_identity_case(case) for case in cases]
+def evaluate_identity_cases(cases: list[dict[str, Any]], *, doctrine: str | None = None) -> list[dict[str, Any]]:
+    return [evaluate_identity_case(case, doctrine=doctrine) for case in cases]
 
 
-def evaluate_dual_mode_case(case: dict[str, Any]) -> dict[str, Any]:
+def evaluate_dual_mode_case(case: dict[str, Any], *, doctrine: str | None = None) -> dict[str, Any]:
     """Compare declared-metadata classification with raw-string classification."""
-    declared = evaluate_identity_case(case)
-    raw = evaluate_identity_case(_raw_case(case))
+    declared = evaluate_identity_case(case, doctrine=doctrine)
+    raw = evaluate_identity_case(_raw_case(case), doctrine=doctrine)
     deltas: list[str] = []
     for key in ("role", "first_segment_scope", "parent_semantics", "may_encode_admin_hierarchy"):
         if declared.get(key) != raw.get(key):
@@ -510,5 +576,40 @@ def evaluate_dual_mode_case(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate_dual_mode_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [evaluate_dual_mode_case(case) for case in cases]
+def evaluate_dual_mode_cases(cases: list[dict[str, Any]], *, doctrine: str | None = None) -> list[dict[str, Any]]:
+    return [evaluate_dual_mode_case(case, doctrine=doctrine) for case in cases]
+
+
+def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system", right: str = "proposed_changes") -> dict[str, Any]:
+    left_result = evaluate_dual_mode_case(case, doctrine=left)
+    right_result = evaluate_dual_mode_case(case, doctrine=right)
+    deltas: list[str] = []
+    for mode in ("declared", "raw"):
+        for key in ("role", "first_segment_scope", "parent_semantics", "may_encode_admin_hierarchy", "namespace"):
+            if left_result[mode].get(key) != right_result[mode].get(key):
+                deltas.append(
+                    f"{mode}.{key}: {left}={left_result[mode].get(key)} {right}={right_result[mode].get(key)}"
+                )
+    signal = "pass" if not deltas else "doctrine_delta"
+    if right_result["signal"] == "needs_policy_decision" or left_result["signal"] == "needs_policy_decision":
+        signal = "needs_policy_decision"
+    return {
+        "case": case.get("case"),
+        "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
+        "source_system": case.get("source_system"),
+        "left_doctrine": left,
+        "right_doctrine": right,
+        "left": left_result,
+        "right": right_result,
+        "deltas": deltas,
+        "signal": signal,
+    }
+
+
+def compare_doctrine_cases(
+    cases: list[dict[str, Any]],
+    *,
+    left: str = "present_system",
+    right: str = "proposed_changes",
+) -> list[dict[str, Any]]:
+    return [compare_doctrine_case(case, left=left, right=right) for case in cases]
