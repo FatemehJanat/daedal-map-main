@@ -17,19 +17,29 @@ class LocIdRuntimeTests(unittest.TestCase):
     def test_admin1_bridge_maps_to_geometry_id(self):
         self.assertEqual(
             translate_loc_id_to_geometry_id("USA-VA"),
-            "USA-G125186",
+            "USA-G166186276B53580985925186",
         )
 
     def test_admin2_bridge_maps_to_geometry_id(self):
         self.assertEqual(
             translate_loc_id_to_geometry_id("USA-VA-059"),
-            "USA-G125186-G215213",
+            "USA-G166186276B53580985925186-G252423323B7849589815213",
         )
 
     def test_reverse_bridge_maps_geometry_id_to_canonical_local_id(self):
         self.assertEqual(
-            translate_geometry_id_to_local_id("USA-G125186-G215213"),
+            translate_geometry_id_to_local_id("USA-G166186276B53580985925186-G252423323B7849589815213"),
             "USA-VA-059",
+        )
+
+    def test_legacy_short_geometry_ids_remain_accepted_aliases(self):
+        self.assertEqual(
+            translate_geometry_id_to_local_id("USA-G125186-G282830"),
+            "USA-VA-059",
+        )
+        self.assertEqual(
+            translate_geometry_id_to_local_id("USA-G125186-G215213"),
+            "USA-VA-600",
         )
 
     def test_reverse_bridge_maps_county_fips_style_local_id_to_county_prefix(self):
