@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from mapmover.runtime.loc_id_identity_doctrine import evaluate_identity_cases
+from mapmover.runtime.loc_id_identity_doctrine import evaluate_dual_mode_cases, evaluate_identity_cases
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "loc_id_wind_tunnel_samples.json"
 
@@ -38,6 +38,16 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         unexpected = [result for result in results if result["signal"] == "unexpected_issue"]
         self.assertGreaterEqual(len(unexpected), 1)
         self.assertTrue(all(result["unexpected_issues"] for result in unexpected))
+
+    def test_dual_mode_reports_raw_declared_deltas(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        results = evaluate_dual_mode_cases(cases)
+        signals = {result["signal"] for result in results}
+        self.assertIn("raw_declared_delta", signals)
+        self.assertIn("needs_policy_decision", signals)
+        self.assertTrue(any(result["deltas"] for result in results))
 
 
 if __name__ == "__main__":

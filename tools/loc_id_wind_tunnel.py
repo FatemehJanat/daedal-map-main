@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from mapmover.runtime.loc_id_identity_doctrine import evaluate_identity_cases
+from mapmover.runtime.loc_id_identity_doctrine import evaluate_dual_mode_cases, evaluate_identity_cases
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "loc_id_wind_tunnel_samples.json"
 
@@ -42,16 +42,46 @@ def _render_markdown(results: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_dual_markdown(results: list[dict[str, Any]]) -> str:
+    lines = [
+        "# loc_id Wind Tunnel Raw/Declared Report",
+        "",
+        "| Signal | Case | System | Declared | Raw | Deltas |",
+        "|---|---|---|---|---|---|",
+    ]
+    for result in results:
+        declared = result.get("declared") or {}
+        raw = result.get("raw") or {}
+        deltas = "<br>".join(result.get("deltas") or []) or "-"
+        lines.append(
+            "| {signal} | {case} | {system} | {declared_role}/{declared_scope} | {raw_role}/{raw_scope} | {deltas} |".format(
+                signal=result.get("signal"),
+                case=result.get("case"),
+                system=result.get("source_system") or "-",
+                declared_role=declared.get("role"),
+                declared_scope=declared.get("first_segment_scope"),
+                raw_role=raw.get("role"),
+                raw_scope=raw.get("first_segment_scope"),
+                deltas=deltas,
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate sampled geography identifiers against loc_id doctrine.")
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    parser.add_argument("--mode", choices=("single", "dual"), default="single")
     parser.add_argument("--fail-on-unexpected", action="store_true")
     args = parser.parse_args()
 
-    results = evaluate_identity_cases(_load_cases(args.fixture))
+    cases = _load_cases(args.fixture)
+    results = evaluate_dual_mode_cases(cases) if args.mode == "dual" else evaluate_identity_cases(cases)
     if args.format == "json":
         print(json.dumps(results, indent=2, sort_keys=True))
+    elif args.mode == "dual":
+        print(_render_dual_markdown(results), end="")
     else:
         print(_render_markdown(results), end="")
 

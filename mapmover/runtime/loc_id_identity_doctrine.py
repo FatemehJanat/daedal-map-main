@@ -13,6 +13,9 @@ IDENTITY_ROLES = {
     "segment_id",
     "reach_id",
     "grid_id",
+    "relationship_id",
+    "crosswalk_id",
+    "membership_set_id",
     "source_alias",
 }
 
@@ -79,6 +82,178 @@ GRID_PREFIXES = {"H3", "S2", "OLC", "PLUSCODE", "ERA5", "CMIP", "OISST", "SENTIN
 ROUTE_PREFIXES = {"ROUTE", "ROAD", "TRAIL", "RIVER"}
 SEGMENT_PREFIXES = {"SEGMENT", "REACH", "WAY", "LINE"}
 
+NAMESPACE_REGISTRY: list[dict[str, Any]] = [
+    {
+        "namespace": "current_admin_iso3",
+        "pattern": r"^[A-Z]{3}$",
+        "identity_role": "loc_id",
+        "family_id": "admin_0",
+        "scope_type": "admin_country",
+        "public_promise": "stable_public_loc_id",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": True,
+        "bridge_policy": "admin_spine",
+        "lifecycle_policy": "current_with_supersession",
+        "license_policy": "public",
+    },
+    {
+        "namespace": "current_admin_local",
+        "pattern": r"^[A-Z]{3}(?:-[A-Z0-9]+)+$",
+        "identity_role": "loc_id",
+        "family_id": "admin_local",
+        "scope_type": "admin_hierarchy",
+        "public_promise": "stable_public_alias",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": True,
+        "bridge_policy": "admin_spine_or_country_crosswalk",
+        "lifecycle_policy": "current_with_alias_lifecycle",
+        "license_policy": "public",
+    },
+    {
+        "namespace": "geoboundaries_storage",
+        "pattern": r"^[A-Z]{3}(?:-G[A-Z0-9]+)+$",
+        "identity_role": "loc_id",
+        "family_id": "admin_geometry",
+        "scope_type": "admin_hierarchy",
+        "public_promise": "canonical_storage_identity",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "admin_spine_storage",
+        "lifecycle_policy": "geometry_bank_lifecycle",
+        "license_policy": "public",
+    },
+    {
+        "namespace": "usa_zcta",
+        "pattern": r"^USA-Z-\d{5}$",
+        "identity_role": "loc_id",
+        "family_id": "overlay_zcta",
+        "scope_type": "country_reference_scope",
+        "public_promise": "stable_public_loc_id",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": True,
+        "bridge_policy": "admin_overlap",
+        "lifecycle_policy": "source_vintage",
+        "license_policy": "public",
+    },
+    {
+        "namespace": "country_postal_sidechain",
+        "pattern": r"^[A-Z]{3}-(?:FSA|POA|PC)-[A-Z0-9]+$",
+        "identity_role": "loc_id",
+        "family_id": "postal",
+        "scope_type": "country_reference_scope",
+        "public_promise": "resolver_or_family_specific",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "family_specific",
+        "lifecycle_policy": "source_vintage",
+        "license_policy": "family_specific",
+    },
+    {
+        "namespace": "country_scoped_sidechain",
+        "pattern": r"^[A-Z]{3}-(?:TRIBAL|NWSZ|NWSFZ|HUC\d*|CD\d*|SD|UA\d*|FEMA|POWER|FED|CPCAD|TREATY)[A-Z0-9-]*$",
+        "identity_role": "loc_id",
+        "family_id": "sidechain",
+        "scope_type": "country_reference_scope",
+        "public_promise": "family_specific",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "family_specific",
+        "lifecycle_policy": "family_specific",
+        "license_policy": "family_specific",
+    },
+    {
+        "namespace": "source_family_sidechain",
+        "pattern": r"^(?:EEZ|HYBAS|HYDROLAKES|IHO1953|MRGID|WDPA|WWF-ECO|MRGID-EEZ)-[A-Z0-9-]+$",
+        "identity_role": "loc_id",
+        "family_id": "source_sidechain",
+        "scope_type": "source_family_scope",
+        "public_promise": "family_specific",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "family_specific",
+        "lifecycle_policy": "source_vintage",
+        "license_policy": "family_specific",
+    },
+    {
+        "namespace": "external_source_alias",
+        "pattern": r"^(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|PLACEKEY|WHG|GERS)-.+$",
+        "identity_role": "source_alias",
+        "family_id": "source_alias",
+        "scope_type": "source_family_scope",
+        "public_promise": "source_alias_only",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "reviewed_alias_or_relationship",
+        "lifecycle_policy": "source_lifecycle",
+        "license_policy": "source_specific",
+    },
+    {
+        "namespace": "grid_or_tile",
+        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL|PLACEKEY-@)-.+$",
+        "identity_role": "grid_id",
+        "family_id": "grid",
+        "scope_type": "grid_scope",
+        "public_promise": "source_alias_only",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "grid_overlap",
+        "lifecycle_policy": "source_grid_version",
+        "license_policy": "source_specific",
+    },
+    {
+        "namespace": "event_or_forecast",
+        "pattern": r"^(?:EQ|FIRE|FLOOD|HRCN|TORN|TSUN|VOLC|NHC|NWS|GFM)(?:-|:).+$",
+        "identity_role": "event_id",
+        "family_id": "event",
+        "scope_type": "source_family_scope",
+        "public_promise": "event_identity",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "event_affected_area",
+        "lifecycle_policy": "event_time_window",
+        "license_policy": "source_specific",
+    },
+    {
+        "namespace": "network_or_route",
+        "pattern": r"^(?:ROUTE|ROAD|TRAIL|RIVER|HYDRORIVERS|SEGMENT|REACH|WAY|LINE|UN-LOC).+$",
+        "identity_role": "segment_id",
+        "family_id": "network_segment",
+        "scope_type": "source_family_scope",
+        "public_promise": "source_alias_only",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "network_intersection",
+        "lifecycle_policy": "network_version",
+        "license_policy": "source_specific",
+    },
+    {
+        "namespace": "historical_or_claim_area",
+        "pattern": r"^(?:CSHAPES|AHCB|CLAIM|NE-DISPUTED|UN-ABYEI|EUROAREA)-.+$",
+        "identity_role": "loc_id",
+        "family_id": "temporal_or_claim_sidechain",
+        "scope_type": "source_family_scope",
+        "public_promise": "internal_candidate_identity",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "temporal_or_claim_crosswalk",
+        "lifecycle_policy": "validity_window",
+        "license_policy": "source_specific",
+    },
+    {
+        "namespace": "crosswalk_artifact",
+        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK)-.+$",
+        "identity_role": "crosswalk_id",
+        "family_id": "relationship",
+        "scope_type": "source_family_scope",
+        "public_promise": "source_alias_only",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": False,
+        "bridge_policy": "versioned_crosswalk",
+        "lifecycle_policy": "artifact_version",
+        "license_policy": "source_specific",
+    },
+]
+
 
 def _clean(value: Any) -> str:
     return str(value or "").strip().upper()
@@ -91,6 +266,21 @@ def _parts(value: str) -> list[str]:
 def _looks_like_country_scoped_sidechain(value: str) -> bool:
     text = _clean(value)
     return any(pattern.fullmatch(text) for pattern in COUNTRY_SCOPED_SIDECHAIN_PATTERNS)
+
+
+def lookup_namespace(identifier: str | None) -> dict[str, Any] | None:
+    """Return the first registry entry that matches a raw identifier."""
+    value = _clean(identifier)
+    if not value:
+        return None
+    fallback: dict[str, Any] | None = None
+    for entry in NAMESPACE_REGISTRY:
+        if re.fullmatch(str(entry["pattern"]), value):
+            if entry["namespace"] == "current_admin_local":
+                fallback = entry
+                continue
+            return entry
+    return fallback
 
 
 def infer_identity_role(identifier: str | None, *, family_id: str | None = None) -> str:
@@ -112,6 +302,10 @@ def infer_identity_role(identifier: str | None, *, family_id: str | None = None)
         return "grid_id"
     if family == "source_alias":
         return "source_alias"
+
+    registry = lookup_namespace(value)
+    if registry:
+        return str(registry["identity_role"])
 
     loc_family = classify_loc_id_family(value)
     if loc_family in ADMIN_FAMILIES or loc_family in SIDECHAIN_FAMILIES:
@@ -140,6 +334,9 @@ def infer_first_segment_scope(identifier: str | None, *, family_id: str | None =
     family = _clean(family_id).lower()
     if re.fullmatch(r"[A-Z]{3}", value):
         return "admin_country"
+    registry = lookup_namespace(value)
+    if registry and family not in ADMIN_FAMILIES:
+        return str(registry["scope_type"])
     if first in SOURCE_FAMILY_PREFIXES or value.startswith("WWF-ECO-"):
         return "source_family_scope"
     country_scoped_match = re.match(r"^([A-Z]{3})-", value)
@@ -162,17 +359,29 @@ def infer_first_segment_scope(identifier: str | None, *, family_id: str | None =
 
 
 def loc_id_may_encode_admin_hierarchy(identifier: str | None, *, family_id: str | None = None) -> bool:
-    family = _clean(family_id).lower() or classify_loc_id_family(identifier)
+    registry = lookup_namespace(identifier)
+    family = _clean(family_id).lower() or (str(registry.get("family_id")) if registry else None) or classify_loc_id_family(identifier)
     return family in ADMIN_FAMILIES
 
 
 def expected_parent_semantics(identifier: str | None, *, family_id: str | None = None) -> str:
-    family = _clean(family_id).lower() or classify_loc_id_family(identifier)
+    registry = lookup_namespace(identifier)
+    family = _clean(family_id).lower() or (str(registry.get("family_id")) if registry else None) or classify_loc_id_family(identifier)
     if family in ADMIN_FAMILIES:
         return "strict_admin_parent"
-    if family in SIDECHAIN_FAMILIES:
+    if family in SIDECHAIN_FAMILIES or family in {"sidechain", "source_sidechain", "temporal_or_claim_sidechain"}:
         return "context_or_bridge_only"
     return "not_applicable"
+
+
+def _raw_case(case: dict[str, Any]) -> dict[str, Any]:
+    raw = dict(case)
+    raw.pop("family_id", None)
+    raw.pop("expected_role", None)
+    raw.pop("expected_first_segment_scope", None)
+    raw.pop("expected_parent_semantics", None)
+    raw.pop("expected_issues", None)
+    return raw
 
 
 def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -253,6 +462,7 @@ def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
         "id": identifier,
         "source_system": case.get("source_system"),
         "sample_kind": case.get("sample_kind"),
+        "namespace": (lookup_namespace(identifier) or {}).get("namespace"),
         "role": role,
         "loc_id_family": loc_family,
         "first_segment_scope": first_segment_scope,
@@ -270,3 +480,35 @@ def evaluate_identity_case(case: dict[str, Any]) -> dict[str, Any]:
 
 def evaluate_identity_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [evaluate_identity_case(case) for case in cases]
+
+
+def evaluate_dual_mode_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Compare declared-metadata classification with raw-string classification."""
+    declared = evaluate_identity_case(case)
+    raw = evaluate_identity_case(_raw_case(case))
+    deltas: list[str] = []
+    for key in ("role", "first_segment_scope", "parent_semantics", "may_encode_admin_hierarchy"):
+        if declared.get(key) != raw.get(key):
+            deltas.append(f"{key}: declared={declared.get(key)} raw={raw.get(key)}")
+
+    signal = "pass"
+    if deltas:
+        signal = "raw_declared_delta"
+    if declared.get("signal") in {"unexpected_issue", "missing_expected_issue"} or raw.get("signal") in {"unexpected_issue", "missing_expected_issue"}:
+        signal = "needs_policy_decision"
+    if deltas and case.get("allow_doctrine_conflict"):
+        signal = "doctrine_conflict"
+
+    return {
+        "case": case.get("case"),
+        "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
+        "source_system": case.get("source_system"),
+        "declared": declared,
+        "raw": raw,
+        "deltas": deltas,
+        "signal": signal,
+    }
+
+
+def evaluate_dual_mode_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [evaluate_dual_mode_case(case) for case in cases]
