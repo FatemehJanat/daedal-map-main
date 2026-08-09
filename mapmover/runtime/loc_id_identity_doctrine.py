@@ -49,12 +49,34 @@ SIDECHAIN_FAMILIES = {
     "watershed",
     "protected_area",
     "ecoregion",
+    "forest",
+    "urban_area",
+    "municipality",
     "electoral",
     "school_district",
     "health_region",
     "service_territory",
     "hazard_zone",
     "custom_private",
+}
+
+REFERENCE_LEVELS = {"label_0", "label_1", "label_2", "label_3", "label_4", "label_5"}
+
+REFERENCE_LEVEL_REASONS = {
+    "admin_spine",
+    "official_admin_equivalent",
+    "scale_hint",
+    "source_native_hierarchy",
+    "temporal_spine_version",
+    "unresolved",
+}
+
+CONTAINMENT_METHODS = {
+    "full_geometry",
+    "centroid",
+    "largest_overlap",
+    "declared_by_source",
+    "none",
 }
 
 SOURCE_FAMILY_PREFIXES = {
@@ -81,6 +103,74 @@ EVENT_MARKERS = {"EQ", "FIRE", "FLOOD", "HRCN", "TORN", "TSUN", "VOLC", "ALERT"}
 GRID_PREFIXES = {"H3", "S2", "OLC", "PLUSCODE", "ERA5", "CMIP", "OISST", "SENTINEL"}
 ROUTE_PREFIXES = {"ROUTE", "ROAD", "TRAIL", "RIVER"}
 SEGMENT_PREFIXES = {"SEGMENT", "REACH", "WAY", "LINE"}
+
+SPATIALLY_PLACEABLE_ROLES = {"loc_id", "entity_id", "route_id", "segment_id"}
+
+DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
+    "present_system": [
+        {
+            "id": "present-001",
+            "decision": "ISO3-dash fallback is early and broad.",
+            "effect": "Many unknown country-prefixed strings are treated as admin/local loc_ids.",
+        },
+        {
+            "id": "present-002",
+            "decision": "Sidechains mostly depend on existing ad hoc parser exceptions.",
+            "effect": "Postal, NWS, source, historical, and contested cases can fall through inconsistently.",
+        },
+    ],
+    "proposed_changes": [
+        {
+            "id": "proposed-001",
+            "decision": "Registry-first parsing beats broad string fallback.",
+            "effect": "Known sidechains, events, grids, and source aliases are classified before admin fallback.",
+        },
+        {
+            "id": "proposed-002",
+            "decision": "Non-admin geography uses bridge/context rather than parent_id.",
+            "effect": "ZCTAs, districts, watersheds, zones, and protected areas avoid fake admin hierarchy.",
+        },
+    ],
+    "containing_loc_id": [
+        {
+            "id": "contain-001",
+            "decision": "Spatial sibling layers can declare containing_loc_id placement.",
+            "effect": "Placeable sidechains and spatial objects can be routed without becoming admin children.",
+        },
+        {
+            "id": "contain-002",
+            "decision": "reference_level is a declared depth/scale hint, not raw dash count.",
+            "effect": "Lakes, forests, routes, cities, and zones can carry lookup scale separately from identity.",
+        },
+    ],
+    "solidified_sibling_layer": [
+        {
+            "id": "solid-001",
+            "decision": "Spatial sibling layer is the default for placeable non-admin things.",
+            "effect": "loc_id, entity_id, route_id, and segment_id may all carry placement fields.",
+        },
+        {
+            "id": "solid-002",
+            "decision": "Historical and contested areas are registered temporal/claim sidechains.",
+            "effect": "They stop pretending to be present admin children and stop falling to source_alias.",
+        },
+        {
+            "id": "solid-003",
+            "decision": "Crosswalks and membership sets are relationship identities.",
+            "effect": "NHGIS/NUTS correspondence and Euro area membership are not ordinary loc_ids.",
+        },
+        {
+            "id": "solid-004",
+            "decision": "Country-scoped health/local/statistical sidechains beat admin fallback.",
+            "effect": "Canada health regions and similar operational geographies avoid fake admin hierarchy.",
+        },
+        {
+            "id": "solid-005",
+            "decision": "Adopted city loc_ids use an explicit family token in the DaedalMap public form.",
+            "effect": "A core city loc_id can look like USA-CA-CITY-LosAngeles while source codes, abbreviations, translations, and nicknames remain aliases/crosswalks.",
+        },
+    ],
+}
 
 PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     {
@@ -150,7 +240,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "country_scoped_sidechain",
-        "pattern": r"^[A-Z]{3}-(?:TRIBAL|NWSZ|NWSFZ|HUC\d*|CD\d*|SD|UA\d*|FEMA|POWER|FED|CPCAD|TREATY)[A-Z0-9-]*$",
+        "pattern": r"^[A-Z]{3}-(?:TRIBAL|NWSZ|NWSFZ|HUC\d*|CD\d*|SD|UA\d*|CITY|MUNI|FOREST|PARK|FEMA|POWER|FED|CPCAD|TREATY)[A-Z0-9-]*$",
         "identity_role": "loc_id",
         "family_id": "sidechain",
         "scope_type": "country_reference_scope",
@@ -163,7 +253,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "source_family_sidechain",
-        "pattern": r"^(?:EEZ|HYBAS|HYDROLAKES|IHO1953|MRGID|WDPA|WWF-ECO|MRGID-EEZ)-[A-Z0-9-]+$",
+        "pattern": r"^(?:EEZ|HYBAS|HYDROLAKES|IHO1953|MRGID|WDPA|WWF-ECO|MRGID-EEZ|FOREST|URBAN)-[A-Z0-9-]+$",
         "identity_role": "loc_id",
         "family_id": "source_sidechain",
         "scope_type": "source_family_scope",
@@ -254,6 +344,39 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
 ]
 
+SOLIDIFIED_SIBLING_LAYER_REGISTRY: list[dict[str, Any]] = [
+    {
+        **entry,
+        "pattern": r"^[A-Z]{3}(?:-[A-Z0-9]{2,3})?-(?:HA|CLHA|LHA|HEALTH|CITY|MUNI|PLACE|Z|ZCTA|FSA|POA|PC|TRIBAL|NWSZ|NWSFZ|HUC\d*|CD\d*|SD|UA\d*|FOREST|PARK|FEMA|POWER|FED|CPCAD|TREATY|NHGIS)[A-Z0-9-]*$",
+        "scope_type": "country_reference_scope",
+        "bridge_policy": "sibling_layer_placement",
+    }
+    if entry["namespace"] == "country_scoped_sidechain"
+    else {
+        **entry,
+        "pattern": r"^(?:EEZ|HYBAS|HYDROLAKES|IHO1953|MRGID|WDPA|WWF-ECO|MRGID-EEZ|FOREST|URBAN|CSHAPES|AHCB|CLAIM|NE-DISPUTED|UN-ABYEI)-[A-Z0-9-]+$",
+        "family_id": "source_or_temporal_sidechain",
+        "bridge_policy": "sibling_layer_placement_or_temporal_crosswalk",
+    }
+    if entry["namespace"] == "source_family_sidechain"
+    else {
+        **entry,
+        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK|EUROAREA|COW-STATE)-.+$",
+        "identity_role": "relationship_id",
+        "family_id": "relationship",
+        "bridge_policy": "versioned_relationship",
+    }
+    if entry["namespace"] == "crosswalk_artifact"
+    else {
+        **entry,
+        "pattern": r"^(?:(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|WHG)-.+|PLACEKEY-(?!@).+|GERS-.+)$",
+    }
+    if entry["namespace"] == "external_source_alias"
+    else entry
+    for entry in PROPOSED_NAMESPACE_REGISTRY
+    if entry["namespace"] != "historical_or_claim_area"
+]
+
 PRESENT_SYSTEM_REGISTRY: list[dict[str, Any]] = [
     {
         "namespace": "current_admin_iso3",
@@ -302,11 +425,26 @@ DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
         "description": "Broad current runtime-style parsing where ISO3-dash strings tend to become admin/local loc_ids.",
         "registry": PRESENT_SYSTEM_REGISTRY,
         "admin_fallback_precedence": "first",
+        "placement_policy": "parent_id",
     },
     "proposed_changes": {
         "description": "Registry-first present admin spine with explicit sidechain/source/entity/event/grid roles.",
         "registry": PROPOSED_NAMESPACE_REGISTRY,
         "admin_fallback_precedence": "last",
+        "placement_policy": "bridge_only",
+    },
+    "containing_loc_id": {
+        "description": "Registry-first doctrine where every location-like family may declare reference_level and containing_loc_id placement without becoming admin hierarchy.",
+        "registry": PROPOSED_NAMESPACE_REGISTRY,
+        "admin_fallback_precedence": "last",
+        "placement_policy": "containing_loc_id",
+    },
+    "solidified_sibling_layer": {
+        "description": "Next-pass doctrine that solidifies spatial sibling placement, temporal/claim sidechains, relationship artifacts, and country-scoped sidechains before admin fallback.",
+        "registry": SOLIDIFIED_SIBLING_LAYER_REGISTRY,
+        "admin_fallback_precedence": "last",
+        "placement_policy": "containing_loc_id",
+        "generic_expected_issues": "retired",
     },
 }
 
@@ -328,6 +466,11 @@ def _looks_like_country_scoped_sidechain(value: str) -> bool:
 
 def _profile(doctrine: str | None = None) -> dict[str, Any]:
     return DOCTRINE_PROFILES.get(str(doctrine or "proposed_changes"), DOCTRINE_PROFILES["proposed_changes"])
+
+
+def doctrine_decisions(doctrine: str | None = None) -> list[dict[str, str]]:
+    """Return the explicit policy decisions attached to a doctrine profile."""
+    return list(DOCTRINE_DECISIONS.get(str(doctrine or "proposed_changes"), []))
 
 
 def lookup_namespace(identifier: str | None, *, doctrine: str | None = None) -> dict[str, Any] | None:
@@ -431,11 +574,44 @@ def loc_id_may_encode_admin_hierarchy(identifier: str | None, *, family_id: str 
 
 def expected_parent_semantics(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str:
     registry = lookup_namespace(identifier, doctrine=doctrine)
+    if registry and registry.get("identity_role") in {"relationship_id", "crosswalk_id", "membership_set_id"}:
+        return "not_applicable"
     family = _clean(family_id).lower() or (str(registry.get("family_id")) if registry else None) or classify_loc_id_family(identifier)
     if family in ADMIN_FAMILIES:
         return "strict_admin_parent"
-    if family in SIDECHAIN_FAMILIES or family in {"sidechain", "source_sidechain", "temporal_or_claim_sidechain"}:
+    if family in SIDECHAIN_FAMILIES or family in {
+        "sidechain",
+        "source_sidechain",
+        "source_or_temporal_sidechain",
+        "temporal_or_claim_sidechain",
+        "historical_admin",
+        "historical_statistical_area",
+        "temporal_membership_area",
+        "contested_admin",
+        "claim_area",
+        "boundary_line",
+    }:
         return "context_or_bridge_only"
+    return "not_applicable"
+
+
+def infer_admin_reference_level(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str | None:
+    """Infer the admin-spine label depth when the identifier is truly admin."""
+    if not loc_id_may_encode_admin_hierarchy(identifier, family_id=family_id, doctrine=doctrine):
+        return None
+    depth = max(0, min(len(_parts(identifier)) - 1, 5))
+    return f"label_{depth}"
+
+
+def expected_placement_semantics(identifier: str | None, *, family_id: str | None = None, doctrine: str | None = None) -> str:
+    parent_semantics = expected_parent_semantics(identifier, family_id=family_id, doctrine=doctrine)
+    if parent_semantics == "strict_admin_parent":
+        return "identity_parent"
+    profile = _profile(doctrine)
+    if profile.get("placement_policy") == "containing_loc_id" and infer_identity_role(identifier, family_id=family_id, doctrine=doctrine) in SPATIALLY_PLACEABLE_ROLES:
+        return "containing_loc_id"
+    if parent_semantics == "context_or_bridge_only":
+        return "bridge_or_context"
     return "not_applicable"
 
 
@@ -445,8 +621,28 @@ def _raw_case(case: dict[str, Any]) -> dict[str, Any]:
     raw.pop("expected_role", None)
     raw.pop("expected_first_segment_scope", None)
     raw.pop("expected_parent_semantics", None)
+    raw.pop("expected_reference_level", None)
+    raw.pop("expected_placement_semantics", None)
     raw.pop("expected_issues", None)
     return raw
+
+
+def _expected_issues(case: dict[str, Any], *, doctrine: str | None = None) -> list[str]:
+    doctrine_name = str(doctrine or "proposed_changes")
+    by_doctrine = case.get("expected_issues_by_doctrine") or {}
+    if doctrine_name in by_doctrine:
+        return [str(issue) for issue in by_doctrine[doctrine_name]]
+    if _profile(doctrine).get("generic_expected_issues") == "retired":
+        return []
+    return [str(issue) for issue in case.get("expected_issues") or []]
+
+
+def _expected_value(case: dict[str, Any], key: str, *, doctrine: str | None = None) -> Any:
+    doctrine_name = str(doctrine or "proposed_changes")
+    by_doctrine = case.get(f"{key}_by_doctrine") or {}
+    if doctrine_name in by_doctrine:
+        return by_doctrine[doctrine_name]
+    return case.get(key)
 
 
 def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None) -> dict[str, Any]:
@@ -462,21 +658,33 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
     first_segment_scope = infer_first_segment_scope(identifier, family_id=family_id, doctrine=doctrine)
     may_encode_admin = loc_id_may_encode_admin_hierarchy(identifier, family_id=family_id, doctrine=doctrine)
     parent_semantics = expected_parent_semantics(identifier, family_id=family_id, doctrine=doctrine)
+    registry = lookup_namespace(identifier, doctrine=doctrine)
+    reference_level = case.get("reference_level") or infer_admin_reference_level(identifier, family_id=family_id, doctrine=doctrine)
+    reference_level_reason = case.get("reference_level_reason")
+    placement_semantics = expected_placement_semantics(identifier, family_id=family_id, doctrine=doctrine)
     issues: list[str] = []
 
-    expected_role = case.get("expected_role")
+    expected_role = _expected_value(case, "expected_role", doctrine=doctrine)
     if expected_role and expected_role not in IDENTITY_ROLES:
         issues.append(f"unknown expected_role {expected_role!r}")
     elif expected_role and role != expected_role:
         issues.append(f"role mismatch: expected {expected_role}, got {role}")
 
-    expected_scope = case.get("expected_first_segment_scope")
+    expected_scope = _expected_value(case, "expected_first_segment_scope", doctrine=doctrine)
     if expected_scope and first_segment_scope != expected_scope:
         issues.append(f"first segment scope mismatch: expected {expected_scope}, got {first_segment_scope}")
 
-    expected_parent = case.get("expected_parent_semantics")
+    expected_parent = _expected_value(case, "expected_parent_semantics", doctrine=doctrine)
     if expected_parent and parent_semantics != expected_parent:
         issues.append(f"parent semantics mismatch: expected {expected_parent}, got {parent_semantics}")
+
+    expected_reference_level = _expected_value(case, "expected_reference_level", doctrine=doctrine)
+    if expected_reference_level and reference_level != expected_reference_level:
+        issues.append(f"reference level mismatch: expected {expected_reference_level}, got {reference_level}")
+
+    expected_placement = _expected_value(case, "expected_placement_semantics", doctrine=doctrine)
+    if expected_placement and placement_semantics != expected_placement:
+        issues.append(f"placement semantics mismatch: expected {expected_placement}, got {placement_semantics}")
 
     public_promise = case.get("public_promise")
     if public_promise and public_promise not in PUBLIC_PROMISES:
@@ -485,14 +693,47 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
     if role != "loc_id" and case.get("should_persist_as_loc_id"):
         issues.append(f"{role} must not be persisted as loc_id")
 
-    if role == "loc_id" and not family_id and not loc_family:
+    if role == "loc_id" and not family_id and not loc_family and not registry:
         issues.append("loc_id case needs a family_id or recognized runtime family")
 
     if not may_encode_admin and case.get("admin_level") is not None:
         issues.append("non-admin families must not expose admin_level as spine depth")
 
+    if reference_level and reference_level not in REFERENCE_LEVELS:
+        issues.append(f"unknown reference_level {reference_level!r}")
+
+    if reference_level_reason and reference_level_reason not in REFERENCE_LEVEL_REASONS:
+        issues.append(f"unknown reference_level_reason {reference_level_reason!r}")
+
+    if may_encode_admin and reference_level_reason and reference_level_reason not in {"admin_spine", "official_admin_equivalent", "temporal_spine_version"}:
+        issues.append("admin families need an admin reference_level_reason")
+
+    if not may_encode_admin and reference_level and not reference_level_reason:
+        issues.append("non-admin reference_level requires reference_level_reason")
+
+    if not may_encode_admin and reference_level_reason == "admin_spine":
+        issues.append("non-admin reference_level must not claim admin_spine")
+
     if parent_semantics != "strict_admin_parent" and case.get("parent_id"):
         issues.append("non-admin parent_id must be represented as context or bridge metadata")
+
+    containing_loc_id = case.get("containing_loc_id")
+    containment_method = case.get("containment_method")
+    crosses_admin_boundaries = case.get("crosses_admin_boundaries")
+    if containing_loc_id and _profile(doctrine).get("placement_policy") != "containing_loc_id":
+        issues.append("containing_loc_id belongs to containing_loc_id doctrine or resolver placement output")
+
+    if containing_loc_id and not containment_method:
+        issues.append("containing_loc_id requires containment_method")
+
+    if containment_method and containment_method not in CONTAINMENT_METHODS:
+        issues.append(f"unknown containment_method {containment_method!r}")
+
+    if crosses_admin_boundaries is True and containment_method == "full_geometry":
+        issues.append("cross-boundary geography cannot use full_geometry containment_method")
+
+    if crosses_admin_boundaries is True and containing_loc_id and not case.get("overlapping_admin_loc_ids"):
+        issues.append("cross-boundary containing_loc_id requires overlapping_admin_loc_ids")
 
     parent_status = case.get("parent_status")
     if parent_status == "contested" and not case.get("parent_claims"):
@@ -511,7 +752,7 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
     if case.get("bridge_required") and not case.get("required_bridge_type"):
         issues.append("bridge_required cases must declare required_bridge_type")
 
-    expected_issues = [str(issue) for issue in case.get("expected_issues") or []]
+    expected_issues = _expected_issues(case, doctrine=doctrine)
     unexpected_issues = [issue for issue in issues if issue not in expected_issues]
     missing_expected_issues = [issue for issue in expected_issues if issue not in issues]
     signal = "pass"
@@ -534,6 +775,9 @@ def evaluate_identity_case(case: dict[str, Any], *, doctrine: str | None = None)
         "first_segment_scope": first_segment_scope,
         "may_encode_admin_hierarchy": may_encode_admin,
         "parent_semantics": parent_semantics,
+        "reference_level": reference_level,
+        "reference_level_reason": reference_level_reason,
+        "placement_semantics": placement_semantics,
         "issues": issues,
         "expected_issues": expected_issues,
         "unexpected_issues": unexpected_issues,
@@ -553,7 +797,14 @@ def evaluate_dual_mode_case(case: dict[str, Any], *, doctrine: str | None = None
     declared = evaluate_identity_case(case, doctrine=doctrine)
     raw = evaluate_identity_case(_raw_case(case), doctrine=doctrine)
     deltas: list[str] = []
-    for key in ("role", "first_segment_scope", "parent_semantics", "may_encode_admin_hierarchy"):
+    for key in (
+        "role",
+        "first_segment_scope",
+        "parent_semantics",
+        "may_encode_admin_hierarchy",
+        "reference_level",
+        "placement_semantics",
+    ):
         if declared.get(key) != raw.get(key):
             deltas.append(f"{key}: declared={declared.get(key)} raw={raw.get(key)}")
 
@@ -585,7 +836,15 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
     right_result = evaluate_dual_mode_case(case, doctrine=right)
     deltas: list[str] = []
     for mode in ("declared", "raw"):
-        for key in ("role", "first_segment_scope", "parent_semantics", "may_encode_admin_hierarchy", "namespace"):
+        for key in (
+            "role",
+            "first_segment_scope",
+            "parent_semantics",
+            "may_encode_admin_hierarchy",
+            "reference_level",
+            "placement_semantics",
+            "namespace",
+        ):
             if left_result[mode].get(key) != right_result[mode].get(key):
                 deltas.append(
                     f"{mode}.{key}: {left}={left_result[mode].get(key)} {right}={right_result[mode].get(key)}"

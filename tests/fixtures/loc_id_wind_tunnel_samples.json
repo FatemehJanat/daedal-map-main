@@ -226,6 +226,7 @@
     "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "blocked",
     "bridge_required": true,
+    "required_bridge_type": "resolver_only_postal_context",
     "expected_issues": [
       "bridge_required cases must declare required_bridge_type"
     ],
@@ -245,6 +246,7 @@
     "expected_parent_semantics": "context_or_bridge_only",
     "public_promise": "blocked",
     "bridge_required": true,
+    "required_bridge_type": "resolver_only_postal_context",
     "expected_issues": [
       "bridge_required cases must declare required_bridge_type"
     ]
@@ -805,6 +807,9 @@
     "id": "NHGIS-XWALK-TRACT-1990-2020",
     "family_id": "relationship",
     "expected_role": "source_alias",
+    "expected_role_by_doctrine": {
+      "solidified_sibling_layer": "relationship_id"
+    },
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "vintage_crosswalk",
@@ -843,6 +848,9 @@
     "id": "NUTS-XWALK-2021-2024-DE",
     "family_id": "relationship",
     "expected_role": "source_alias",
+    "expected_role_by_doctrine": {
+      "solidified_sibling_layer": "relationship_id"
+    },
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "vintage_crosswalk",
@@ -858,8 +866,17 @@
     "id": "EUROAREA-1999",
     "family_id": "temporal_membership_area",
     "expected_role": "loc_id",
+    "expected_role_by_doctrine": {
+      "solidified_sibling_layer": "relationship_id"
+    },
     "expected_first_segment_scope": "source_family_scope",
     "expected_parent_semantics": "context_or_bridge_only",
+    "expected_parent_semantics_by_doctrine": {
+      "solidified_sibling_layer": "not_applicable"
+    },
+    "expected_placement_semantics_by_doctrine": {
+      "solidified_sibling_layer": "not_applicable"
+    },
     "public_promise": "internal",
     "temporal_rule": "membership_window",
     "bridge_required": true,
@@ -881,8 +898,17 @@
     "id": "EUROAREA-2026",
     "family_id": "temporal_membership_area",
     "expected_role": "loc_id",
+    "expected_role_by_doctrine": {
+      "solidified_sibling_layer": "relationship_id"
+    },
     "expected_first_segment_scope": "source_family_scope",
     "expected_parent_semantics": "context_or_bridge_only",
+    "expected_parent_semantics_by_doctrine": {
+      "solidified_sibling_layer": "not_applicable"
+    },
+    "expected_placement_semantics_by_doctrine": {
+      "solidified_sibling_layer": "not_applicable"
+    },
     "public_promise": "internal",
     "temporal_rule": "membership_window",
     "bridge_required": true,
@@ -1165,6 +1191,173 @@
     "required_bridge_type": "marine_claim_overlap",
     "design_questions": [
       "Marine claim areas need claimants and legal basis, not one sovereign parent."
+    ]
+  },
+  {
+    "case": "Great Lakes label-1-scale water body",
+    "source_system": "HydroLAKES / IHO / local named water",
+    "sample_kind": "water_body",
+    "id": "IHO1953-GREAT-LAKES",
+    "family_id": "water_body",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "source_family_scope",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_reference_level": "label_1",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_1",
+    "reference_level_reason": "scale_hint",
+    "containing_loc_id": "NULL-MULTI-COUNTRY",
+    "containment_method": "largest_overlap",
+    "crosses_admin_boundaries": true,
+    "overlapping_admin_loc_ids": ["USA", "CAN"],
+    "public_promise": "stable_public",
+    "bridge_required": true,
+    "required_bridge_type": "admin_or_named_water_overlap",
+    "design_questions": [
+      "A huge lake is label-1 scale for lookup, but must not become an admin_1 child.",
+      "Should multi-country containing_loc_id use a NULL sentinel, a set id, or no single containing value?"
+    ]
+  },
+  {
+    "case": "Small county-contained lake",
+    "source_system": "HydroLAKES / local hydrology",
+    "sample_kind": "water_body",
+    "id": "HYDROLAKES-FAIRFAX-SMALL-LAKE",
+    "family_id": "water_body",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "source_family_scope",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_reference_level": "label_4",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_4",
+    "reference_level_reason": "scale_hint",
+    "containing_loc_id": "USA-VA-059",
+    "containment_method": "full_geometry",
+    "crosses_admin_boundaries": false,
+    "public_promise": "stable_public",
+    "bridge_required": true,
+    "required_bridge_type": "admin_or_named_water_overlap",
+    "design_questions": [
+      "A small lake may be neighborhood/tract-scale, but it remains a water-body sidechain."
+    ]
+  },
+  {
+    "case": "Los Angeles city readable alias",
+    "source_system": "US Census PLACE plus DaedalMap alias registry",
+    "sample_kind": "municipality_alias",
+    "id": "USA-CA-LosAngeles",
+    "family_id": "municipality",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "admin_hierarchy",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_placement_semantics": "containing_loc_id",
+    "containing_loc_id": "USA-CA",
+    "containment_method": "declared_by_source",
+    "crosses_admin_boundaries": false,
+    "public_promise": "public_alias",
+    "source_aliases": ["USA-PLACE-0644000", "USA-CA-CITY-LosAngeles"],
+    "design_questions": [
+      "Readable city aliases do not need to be abbreviated.",
+      "This is a friendly alias; the core DaedalMap city loc_id should include the CITY family token.",
+      "Should case be preserved for display while canonical matching remains case-insensitive?",
+      "If the alias does not declare reference_level, should agents derive it from containing_loc_id, source family, or not at all?"
+    ]
+  },
+  {
+    "case": "Los Angeles city core DaedalMap loc_id",
+    "source_system": "US Census PLACE plus DaedalMap alias registry",
+    "sample_kind": "municipality_alias",
+    "id": "USA-CA-CITY-LosAngeles",
+    "family_id": "municipality",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "country_reference_scope",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_reference_level": "label_3",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_3",
+    "reference_level_reason": "official_admin_equivalent",
+    "containing_loc_id": "USA-CA",
+    "containment_method": "declared_by_source",
+    "crosses_admin_boundaries": false,
+    "public_promise": "public_alias",
+    "source_aliases": ["USA-PLACE-0644000", "USA-CA-LosAngeles", "USA-CA-LA"],
+    "design_questions": [
+      "The explicit CITY token fixes human meaning and separates core DaedalMap city identity from source aliases."
+    ]
+  },
+  {
+    "case": "Cross-border city functional area",
+    "source_system": "Future urban functional areas",
+    "sample_kind": "cross_border_city_region",
+    "id": "URBAN-BASEL-TRINATIONAL",
+    "family_id": "urban_area",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "source_family_scope",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_reference_level": "label_3",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_3",
+    "reference_level_reason": "scale_hint",
+    "containing_loc_id": "NULL-MULTI-COUNTRY",
+    "containment_method": "largest_overlap",
+    "crosses_admin_boundaries": true,
+    "overlapping_admin_loc_ids": ["CHE", "FRA", "DEU"],
+    "public_promise": "internal",
+    "bridge_required": true,
+    "required_bridge_type": "admin_overlap",
+    "design_questions": [
+      "Cross-border urban geography stays city-scale even when no single country contains it.",
+      "Does the containing doctrine need a formal multi-container sentinel or a set-valued container field?"
+    ]
+  },
+  {
+    "case": "Interstate route containing sibling layer",
+    "source_system": "FHWA / state DOT / OSM route relation",
+    "sample_kind": "route_network",
+    "id": "ROUTE-USA-I95",
+    "family_id": "route",
+    "expected_role": "route_id",
+    "expected_first_segment_scope": "source_family_scope",
+    "expected_parent_semantics": "not_applicable",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_1",
+    "reference_level_reason": "scale_hint",
+    "containing_loc_id": "USA",
+    "containment_method": "largest_overlap",
+    "crosses_admin_boundaries": true,
+    "overlapping_admin_loc_ids": ["USA-ME", "USA-NH", "USA-MA", "USA-RI", "USA-CT", "USA-NY", "USA-NJ", "USA-PA", "USA-DE", "USA-MD", "USA-DC", "USA-VA", "USA-NC", "USA-SC", "USA-GA", "USA-FL"],
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "route_network_intersection",
+    "design_questions": [
+      "Routes are not loc_ids, but they still need reference_level and containing_loc_id for agent routing.",
+      "Should route scale be derived from length/admin crossings rather than hand declared?"
+    ]
+  },
+  {
+    "case": "Amazon rainforest named forest region",
+    "source_system": "WWF / ecological named-region candidate",
+    "sample_kind": "forest_region",
+    "id": "FOREST-AMAZON",
+    "family_id": "forest",
+    "expected_role": "loc_id",
+    "expected_first_segment_scope": "source_family_scope",
+    "expected_parent_semantics": "context_or_bridge_only",
+    "expected_reference_level": "label_1",
+    "expected_placement_semantics": "containing_loc_id",
+    "reference_level": "label_1",
+    "reference_level_reason": "scale_hint",
+    "containing_loc_id": "NULL-MULTI-COUNTRY",
+    "containment_method": "largest_overlap",
+    "crosses_admin_boundaries": true,
+    "overlapping_admin_loc_ids": ["BRA", "PER", "COL", "BOL", "VEN", "ECU", "GUY", "SUR", "GUF"],
+    "public_promise": "internal",
+    "bridge_required": true,
+    "required_bridge_type": "admin_or_ecoregion_overlap",
+    "design_questions": [
+      "Forests behave like lakes when a maintained source boundary exists.",
+      "A famous name alone is not enough; the source family must define the polygon."
     ]
   }
 ]
