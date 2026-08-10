@@ -13,7 +13,7 @@ Caller classification:
 - authenticated profile present (including master plan)
 - anonymous     no auth
 
-See docs/future/llm_usage_tracking_implementation.md for the full design.
+See county-map-private/docs/CHAT.md for the current usage contract.
 """
 
 from __future__ import annotations
