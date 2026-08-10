@@ -108,6 +108,56 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertFalse(bulk_mock.call_args.kwargs["include_geometry"])
         self.assertIsNone(bulk_mock.call_args.kwargs["target_admin_level"])
 
+    def test_point_lookup_batch_endpoint_records_onboarding_context(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": f"TEST-{point['row_index']}"}} for point in points]
+
+        with mock.patch(
+            "mapmover.routes.geometry.resolve_points_to_locations",
+            side_effect=fake_resolve,
+        ), mock.patch(
+            "mapmover.routes.geometry.log_api_query_event",
+        ) as analytics_mock:
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={
+                    "source": "try_dataset",
+                    "batch_id": "test-onboarding-1",
+                    "identity_role": "location",
+                    "session_id": "tds-abc",
+                    "dataset_id": "tdd-def",
+                    "input_method": "upload",
+                    "points": [{"row_index": 0, "lon": -123.1, "lat": 49.2}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        metadata = analytics_mock.call_args.kwargs["metadata"]
+        self.assertEqual(metadata["identity_role"], "location")
+        self.assertEqual(metadata["session_id"], "tds-abc")
+        self.assertEqual(metadata["dataset_id"], "tdd-def")
+        self.assertEqual(metadata["input_method"], "upload")
+
+    def test_point_lookup_batch_endpoint_omits_absent_onboarding_context(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": "TEST-0"}} for _ in points]
+
+        with mock.patch(
+            "mapmover.routes.geometry.resolve_points_to_locations",
+            side_effect=fake_resolve,
+        ), mock.patch(
+            "mapmover.routes.geometry.log_api_query_event",
+        ) as analytics_mock:
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={"source": "agent", "points": [{"row_index": 0, "lon": 0, "lat": 0}]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        metadata = analytics_mock.call_args.kwargs["metadata"]
+        self.assertIsNone(metadata["identity_role"])
+        self.assertIsNone(metadata["session_id"])
+
     def test_point_lookup_batch_endpoint_challenges_over_free_limit(self) -> None:
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
             response = self.client.post(

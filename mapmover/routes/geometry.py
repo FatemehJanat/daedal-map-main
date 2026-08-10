@@ -52,6 +52,24 @@ def _point_lookup_paid_batch_limit() -> int:
         return 10000
 
 
+def _onboarding_context(body: dict) -> dict:
+    """Optional funnel fields sent by the try-dataset onboarding page.
+
+    These describe how the caller arrived at the request rather than what it
+    asks for, so they stay analytics-only and never affect resolution.
+    """
+
+    def _clean(key: str, limit: int) -> str | None:
+        return str(body.get(key) or "").strip()[:limit] or None
+
+    return {
+        "identity_role": _clean("identity_role", 40),
+        "session_id": _clean("session_id", 120),
+        "dataset_id": _clean("dataset_id", 120),
+        "input_method": _clean("input_method", 40),
+    }
+
+
 def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None, point_count: int, free_limit: int, paid_limit: int) -> dict:
     base_usd = float(os.getenv("POINT_LOOKUP_PAID_BASE_USD", "0.01") or "0.01")
     per_point_usd = float(os.getenv("POINT_LOOKUP_PAID_PER_POINT_USD", "0.0002") or "0.0002")
@@ -342,6 +360,7 @@ async def resolve_points_json_endpoint(req: Request):
             "paid_batch_limit": paid_limit,
             "quote": quote_payload.get("quote"),
             "challenge_reason": "over_free_limit",
+            **_onboarding_context(body),
         }
         try:
             log_api_query_event(
@@ -447,6 +466,7 @@ async def resolve_points_json_endpoint(req: Request):
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "country_scope": country_scope,
         "resolver_stage_ms": resolver_stage_ms,
+        **_onboarding_context(body),
     }
 
     try:
