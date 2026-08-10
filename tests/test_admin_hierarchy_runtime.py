@@ -25,6 +25,7 @@ class AdminHierarchyRuntimeTests(unittest.TestCase):
     def test_parent_loc_id_uses_string_parent_chain_for_admin_spine(self):
         self.assertEqual(get_parent_loc_id("USA-VA-059"), "USA-VA")
         self.assertEqual(get_parent_loc_id("USA-VA-059-452400-1"), "USA-VA-059-452400")
+        self.assertEqual(get_parent_loc_id("CAN-BC-5931-021-0221-067"), "CAN-BC-5931-021-0221")
         self.assertEqual(get_parent_loc_id("USA"), None)
 
     def test_parent_loc_id_handles_nuts_parent_chain(self):
@@ -36,6 +37,20 @@ class AdminHierarchyRuntimeTests(unittest.TestCase):
         self.assertEqual(
             get_ancestors("USA-VA-059-452400-1"),
             ["USA-VA-059-452400", "USA-VA-059", "USA-VA", "USA"],
+        )
+
+    def test_canada_compact_source_components_preserve_depth_and_ancestors(self):
+        loc_id = "CAN-BC-5931-021-0221-067"
+        self.assertEqual(infer_admin_level_from_loc_id(loc_id), 5)
+        self.assertEqual(
+            get_ancestors(loc_id),
+            [
+                "CAN-BC-5931-021-0221",
+                "CAN-BC-5931-021",
+                "CAN-BC-5931",
+                "CAN-BC",
+                "CAN",
+            ],
         )
 
     def test_get_children_loads_admin_base_and_translates_back_to_local(self):
