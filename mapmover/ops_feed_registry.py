@@ -51,6 +51,7 @@ VALID_POPUP_FAMILIES = {
 OPS_DISPLAY_CONTRACT_SCHEMA_VERSION = 3
 OPS_CHAT_DEFAULT_SCHEMA_VERSION = 5
 OPS_SITE_PROFILE_SCHEMA_VERSION = 4
+OPS_LICENSE_POLICY_SCHEMA_VERSION = 6
 
 
 def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str]:
@@ -91,7 +92,13 @@ def _validate_chat_default(feed_id: str, record: dict[str, Any], chat_defaults: 
     return errors
 
 
-def _validate_site_profile(feed_id: str, record: dict[str, Any], profiles: dict[str, Any]) -> list[str]:
+def _validate_site_profile(
+    feed_id: str,
+    record: dict[str, Any],
+    profiles: dict[str, Any],
+    *,
+    require_license_policy: bool = False,
+) -> list[str]:
     """Validate registry-owned content for public `/feeds/<feed_id>` pages."""
     if str(record.get("release_state") or "").strip().lower() != "public":
         return []
@@ -102,6 +109,8 @@ def _validate_site_profile(feed_id: str, record: dict[str, Any], profiles: dict[
     for field in ("title", "description", "scope", "coverage", "license", "service_label"):
         if not str(profile.get(field) or "").strip():
             errors.append(f"site_profiles.{feed_id}.{field} is required")
+    if require_license_policy and str(profile.get("permission") or "").strip().lower() not in {"free", "paid"}:
+        errors.append(f"site_profiles.{feed_id}.permission must be 'free' or 'paid'")
     agencies = profile.get("source_agencies")
     if not isinstance(agencies, list) or not agencies:
         errors.append(f"site_profiles.{feed_id}.source_agencies must be a non-empty list")
@@ -189,7 +198,12 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
             if schema_version >= OPS_CHAT_DEFAULT_SCHEMA_VERSION:
                 errors.extend(_validate_chat_default(feed_id, record, chat_defaults))
             if schema_version >= OPS_SITE_PROFILE_SCHEMA_VERSION:
-                errors.extend(_validate_site_profile(feed_id, record, profiles))
+                errors.extend(_validate_site_profile(
+                    feed_id,
+                    record,
+                    profiles,
+                    require_license_policy=schema_version >= OPS_LICENSE_POLICY_SCHEMA_VERSION,
+                ))
         provider = str(timeline.get("provider") or "").strip()
         if not provider:
             errors.append(f"{feed_id}.timeline.provider is required")
