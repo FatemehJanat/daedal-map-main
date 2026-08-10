@@ -91,6 +91,10 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
             _direct_family_bank_path("can_federal_electoral_district_2013", "CAN").name,
             "CAN.parquet",
         )
+        self.assertEqual(
+            _direct_family_bank_path("can_designated_place", "CAN").name,
+            "CAN.parquet",
+        )
         self.assertIsNone(_direct_family_bank_path("admin_local", "USA"))
 
     def test_load_geometry_rows_by_loc_ids_partitions_mixed_families(self):
