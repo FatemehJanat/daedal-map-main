@@ -1060,6 +1060,13 @@
     "public_promise": "source_id",
     "bridge_required": true,
     "required_bridge_type": "vintage_crosswalk",
+    "stewardship": {
+      "edge_type": "crosswalks_to",
+      "relationship_method": "asserted_by_source",
+      "relationship_source": "IPUMS NHGIS geographic crosswalk",
+      "reproducibility": "published_correspondence_artifact",
+      "crosswalk_selection_policy": "direct_authoritative_then_admin_pivot"
+    },
     "design_questions": [
       "Some historical artifacts are relationship identities, not loc_ids. The test harness needs relationship_id as a first-class role."
     ],
@@ -1077,6 +1084,12 @@
             }
           }
         }
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true,
+        "prefers_direct_crosswalk": true
       }
     }
   },
@@ -1091,6 +1104,9 @@
     "temporal_rule": "historical_validity_window",
     "bridge_required": true,
     "required_bridge_type": "historical_to_present_admin_crosswalk",
+    "stewardship": {
+      "pack_projection": "source_era_primary"
+    },
     "design_questions": [
       "Historical county identity may share a name with the present county while having different geometry and sometimes different legal meaning."
     ],
@@ -1105,6 +1121,10 @@
           "first segment scope mismatch: expected source_family_scope, got unknown",
           "parent semantics mismatch: expected context_or_bridge_only, got not_applicable"
         ]
+      },
+      "stewardship": {
+        "status": "verified",
+        "declares_pack_projection": true
       }
     }
   },
@@ -1913,6 +1933,11 @@
       ],
       "geometry_truth": "members_primary_union_derived"
     },
+    "stewardship": {
+      "effective_at": "2018-06-14",
+      "published_at": "2018-07-09",
+      "adopted_at": "DaedalMap fixture adoption 2026-08-09"
+    },
     "design_questions": [
       "The designation remains tied to 2010 tract boundaries even after Census publishes 2020 tracts.",
       "A future Opportunity Zone generation must not silently rewrite the 2018 generation."
@@ -1930,6 +1955,10 @@
         "preserves_independent_clocks": true,
         "treats_union_as_derived": true,
         "preserves_authority_snapshot": true
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_multiaxial_time": true
       }
     }
   },
@@ -2112,6 +2141,9 @@
       "mirror_of": "withdrawn_federal_artifact",
       "geometry_truth": "members_primary_union_derived"
     },
+    "stewardship": {
+      "resolution_policy": "tombstone_or_successor"
+    },
     "design_questions": [
       "The set retires without retiring its member geographies and without requiring a successor.",
       "A third-party mirror must not impersonate the withdrawn federal authority."
@@ -2130,6 +2162,10 @@
         "preserves_set_lifecycle": true,
         "treats_union_as_derived": true,
         "preserves_authority_snapshot": true
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_public_resolution": true
       }
     }
   },
@@ -2254,6 +2290,17 @@
       ],
       "geometry_truth": "members_primary_union_derived"
     },
+    "stewardship": {
+      "authority": "Regional Plan Association",
+      "geographic_scope": "United States",
+      "admission_status": "static",
+      "identity_promise": "source_scoped_static",
+      "publication_posture": "public_display_only",
+      "lifecycle_policy": "fixed_snapshot_no_refresh",
+      "relationship_method": "expert_judgment",
+      "relationship_source": "America 2050 methodology paper and workshop",
+      "reproducibility": "unreproducible_adjustments"
+    },
     "design_questions": [
       "National extent does not imply federal authority; the namespace remains source-first.",
       "A static display set is not promoted to a maintained analytical geography."
@@ -2272,6 +2319,13 @@
         "preserves_member_attributes": true,
         "treats_union_as_derived": true,
         "preserves_authority_snapshot": true
+      },
+      "stewardship": {
+        "status": "verified",
+        "separates_authority_scope": true,
+        "enforces_family_admission": true,
+        "separates_identity_publication": true,
+        "preserves_relationship_provenance": true
       }
     }
   },
@@ -2573,6 +2627,20 @@
     "public_promise": "internal",
     "reference_level": "label_2",
     "reference_level_reason": "admin_spine",
+    "stewardship": {
+      "referent_id": "USA-CA",
+      "artifact_id": "geometry-bank:USA-GADM1-GCA:2026-08-09",
+      "artifact_content_hash": "sha256:geometry-snapshot-example",
+      "geography_release": {
+        "geography_release_id": "DAEDALMAP-GEORELEASE-2026-08-09",
+        "components": [
+          "namespace-generation:usa-admin",
+          "geometry-bank:USA-GADM1-GCA:2026-08-09",
+          "crosswalk-catalog:2026-08-09"
+        ],
+        "content_hash": "sha256:geography-release-example"
+      }
+    },
     "oracle": {
       "declared": {
         "status": "provisional",
@@ -2581,6 +2649,1251 @@
         "parent_semantics": "strict_admin_parent",
         "reference_level": "label_2",
         "placement_semantics": "identity_parent"
+      },
+      "stewardship": {
+        "status": "verified",
+        "supports_pinnable_release": true,
+        "hashes_artifacts_not_referents": true
+      }
+    }
+  },
+  {
+    "case": "OCHA Indonesia P-code usable without boundary geometry",
+    "source_system": "OCHA Common Operational Datasets",
+    "source_url": "https://knowledge.base.unocha.org/wiki/spaces/imtoolbox/pages/222265609/P-codes",
+    "sample_kind": "humanitarian_place_code_contract",
+    "id": "OCHA-PCODE-ID94",
+    "family_id": "source_alias",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "authority": "OCHA country COD stewardship process",
+      "geographic_scope": "Indonesia administrative level 1",
+      "admission_status": "source_alias_only",
+      "identity_promise": "source_managed_place_code",
+      "lifecycle_policy": "country_COD_review_cycle",
+      "publication_posture": "gazetteer_may_precede_geometry"
+    },
+    "design_questions": [
+      "Can a place identifier be admitted for joining before any geometry artifact is available?",
+      "The code authority and the area covered by the code must remain separate facts."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "separates_authority_scope": true,
+        "enforces_family_admission": true,
+        "separates_identity_publication": true
+      }
+    }
+  },
+  {
+    "case": "Ordnance Survey UPRN survives property lifecycle changes",
+    "source_system": "Ordnance Survey AddressBase / OS Open UPRN",
+    "source_url": "https://docs.os.uk/os-downloads/products/addresses-and-names-portfolio/addressbase-fundamentals/unique-property-reference-number-uprn",
+    "sample_kind": "persistent_real_world_object_identifier",
+    "id": "OS-UPRN-906483712",
+    "family_id": "source_alias",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "identity_promise": "persistent_property_identifier",
+      "publication_posture": "identifier_and_position_open_product",
+      "resolution_policy": "tombstone_or_successor"
+    },
+    "design_questions": [
+      "A durable source identifier should survive changes of name, use, or demolition without becoming a DaedalMap loc_id.",
+      "Publishing an identifier in another product does not create a second identity."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "separates_identity_publication": true,
+        "preserves_public_resolution": true
+      }
+    }
+  },
+  {
+    "case": "ONS Code History Database pinnable release slice",
+    "source_system": "UK Office for National Statistics Code History Database",
+    "source_url": "https://www.ons.gov.uk/methodology/geography/geographicalproducts/namescodesandlookups",
+    "sample_kind": "historical_code_release_fixture",
+    "id": "ONS-XWALK-CODE-HISTORY-2026-08-FIXTURE",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "effective_at": "source-record-effective-date",
+      "published_at": "source-release-publication-date",
+      "adopted_at": "fixture-curation-2026-08-09",
+      "referent_id": "ONS-GSS-CODE:E06000001",
+      "artifact_id": "fixture:ons-code-history:2026-08",
+      "artifact_content_hash": "sha256:test-fixture-ons-code-history-slice",
+      "identifier_assertions": [
+        {
+          "identifier": "ONS-GSS-CODE:E06000001",
+          "referent_id": "fixture:referent:ons:E06000001",
+          "valid_from": "2009-04-01",
+          "valid_to": null,
+          "assertion_source": "fixture:ons-code-history:2026-08"
+        },
+        {
+          "identifier": "TEST-REF-ONS-E06000001",
+          "referent_id": "fixture:referent:ons:E06000001",
+          "valid_from": "2009-04-01",
+          "valid_to": null,
+          "assertion_source": "fixture:daedalmap-alias-release:2026-08"
+        }
+      ],
+      "geography_release": {
+        "geography_release_id": "TEST-GEORELEASE-ONS-CHD-2026-08",
+        "components": [
+          "fixture:ons-code-history:2026-08",
+          "fixture:ons-relationship-record:E06000001"
+        ],
+        "content_hash": "sha256:test-fixture-ons-release-lock"
+      }
+    },
+    "design_questions": [
+      "Can one tiny archived code-history record preserve effective, publication, and local adoption clocks separately?",
+      "The fixture hashes the evidence artifact and release manifest, never the geographic referent."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "supports_temporal_identifier_network": true,
+        "preserves_multiaxial_time": true,
+        "supports_pinnable_release": true,
+        "hashes_artifacts_not_referents": true
+      }
+    }
+  },
+  {
+    "case": "Statistics Canada 2016-to-2021 dissemination-area correspondence",
+    "source_system": "Statistics Canada census geography correspondence files",
+    "source_url": "https://www150.statcan.gc.ca/n1/pub/92-156-g/92-156-g2021001-eng.htm",
+    "sample_kind": "official_vintage_crosswalk_fixture",
+    "id": "STATCAN-XWALK-DA-2016-2021-FIXTURE",
+    "family_id": "relationship",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "crosswalks_to",
+      "relationship_method": "official_relationship_flag_and_land_area_percentage",
+      "relationship_source": "Statistics Canada 2021 Census correspondence file",
+      "reproducibility": "one_hand_authored_row_from_published_schema",
+      "crosswalk_selection_policy": "direct_authoritative_then_admin_pivot",
+      "pack_projection": "source_era_primary"
+    },
+    "design_questions": [
+      "A many-to-many vintage correspondence must not be promoted to same_as.",
+      "Historical observations should remain on their source geography unless a projection is explicitly requested."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true,
+        "prefers_direct_crosswalk": true,
+        "declares_pack_projection": true
+      }
+    }
+  },
+  {
+    "case": "ABS 2016-to-2021 local-government-area correspondence",
+    "source_system": "Australian Bureau of Statistics ASGS correspondences",
+    "source_url": "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/correspondences",
+    "sample_kind": "official_vintage_crosswalk_fixture",
+    "id": "ABS-XWALK-LGA-2016-2021-FIXTURE",
+    "family_id": "relationship",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "crosswalks_to",
+      "relationship_method": "official_ASGS_correspondence",
+      "relationship_source": "ABS 2016 LGA to 2021 LGA correspondence",
+      "reproducibility": "one_hand_authored_row_from_published_correspondence",
+      "crosswalk_selection_policy": "direct_authoritative_then_admin_pivot",
+      "pack_projection": "present_allocation_explicit"
+    },
+    "design_questions": [
+      "The same crosswalk policy must work outside North America and across a different statistical geography system.",
+      "A present allocation is a declared analytical projection, not a rewrite of the 2016 identifier."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true,
+        "prefers_direct_crosswalk": true,
+        "declares_pack_projection": true
+      }
+    }
+  },
+  {
+    "case": "Western Sahara UN non-self-governing-territory status",
+    "source_system": "United Nations Decolonization",
+    "source_url": "https://www.un.org/dppa/decolonization/en/nsgt/western-sahara",
+    "sample_kind": "contested_status_area",
+    "id": "CLAIM-WESTERN-SAHARA-UN-NSGT",
+    "family_id": "claim_area",
+    "public_promise": "internal",
+    "parent_status": "contested",
+    "parent_claims": [
+      {
+        "claimant_loc_id": "ESH",
+        "authority": "UN_non_self_governing_territory_status"
+      },
+      {
+        "claimant_loc_id": "MAR",
+        "authority": "de_facto_administration_and_sovereign_claim"
+      }
+    ],
+    "bridge_required": true,
+    "required_bridge_type": "status_and_claim_snapshot",
+    "design_questions": [
+      "A UN status record, an administering-control record, and a sovereignty claim are different assertions over related geography."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
+  },
+  {
+    "case": "Essequibo boundary dispute as adjudication snapshot",
+    "source_system": "International Court of Justice case 171",
+    "source_url": "https://www.icj-cij.org/case/171",
+    "sample_kind": "contested_boundary_adjudication",
+    "id": "CLAIM-ESSEQUIBO-ICJ-171",
+    "family_id": "claim_area",
+    "public_promise": "internal",
+    "parent_status": "contested",
+    "parent_claims": [
+      {
+        "claimant_loc_id": "GUY",
+        "authority": "1899_award_position_and_current_administration"
+      },
+      {
+        "claimant_loc_id": "VEN",
+        "authority": "sovereign_claim_contesting_1899_award"
+      }
+    ],
+    "bridge_required": true,
+    "required_bridge_type": "claim_and_proceeding_snapshot",
+    "design_questions": [
+      "Court jurisdiction, the parties' claims, present administration, and a final boundary are separate time-varying facts."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only"
+      }
+    }
+  },
+  {
+    "case": "H3 resolution-7 cell identity",
+    "source_system": "H3",
+    "source_url": "https://h3geo.org/docs/library/index/cell/",
+    "sample_kind": "hierarchical_hex_cell",
+    "id": "H3-872830828FFFFFF",
+    "family_id": "grid",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "grid_overlap",
+    "design_questions": [
+      "The H3 index names a cell at a resolution; it does not become a named place or an administrative child."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "OpenMapTiles vector tile with explicit OGC tile-matrix context",
+    "source_system": "OpenMapTiles on WebMercatorQuad",
+    "source_url": "https://openmaptiles.org/schema/",
+    "sample_kind": "contextualized_vector_tile",
+    "id": "OGC-TILE-WEBMERCATORQUAD-Z10-R395-C163",
+    "family_id": "grid",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "tile_overlap",
+    "grid_context": {
+      "tile_matrix_set_id": "WebMercatorQuad",
+      "tile_matrix": "10",
+      "tile_row": 395,
+      "tile_col": 163,
+      "content_schema": "OpenMapTiles",
+      "content_identity": "separate_artifact"
+    },
+    "design_questions": [
+      "OpenMapTiles defines vector layers and attributes, while the OGC tile-matrix tuple defines the spatial tile address.",
+      "Neither address identifies the bytes served for a particular release."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "Bare ZXY tuple rejected as globally complete tile identity",
+    "source_system": "Adversarial OGC tile-matrix fixture",
+    "source_url": "https://docs.ogc.org/is/17-083r4/17-083r4.html",
+    "sample_kind": "ambiguous_tile_address",
+    "id": "TILE-ZXY-10-163-395",
+    "family_id": "source_alias",
+    "public_promise": "blocked",
+    "should_persist_as_loc_id": false,
+    "negative_test": {
+      "rejects": [
+        "bare_zxy_as_global_identity",
+        "tile_address_as_content_identity"
+      ],
+      "missing_context": [
+        "tile_matrix_set_id",
+        "crs",
+        "point_of_origin",
+        "axis_order_or_row_convention",
+        "tileset_release"
+      ]
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "Corrected PMTiles archive retains spatial referent",
+    "source_system": "PMTiles v3 adversarial correction fixture",
+    "source_url": "https://github.com/protomaps/PMTiles/blob/master/spec/v3/spec.md",
+    "sample_kind": "corrected_tile_archive_artifact",
+    "id": "PMTILES-OPENMAPTILES-BASEMAP-2026-08-CORRECTED",
+    "family_id": "source_alias",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "referent_id": "OGC-TILE-WEBMERCATORQUAD-Z10-R395-C163",
+      "artifact_id": "fixture:pmtiles:openmaptiles-basemap:2026-08-corrected",
+      "artifact_content_hash": "sha256:test-fixture-pmtiles-corrected-bytes",
+      "geography_release": {
+        "geography_release_id": "TEST-GEORELEASE-PMTILES-2026-08-CORRECTED",
+        "components": [
+          "fixture:pmtiles:openmaptiles-basemap:2026-08-corrected",
+          "schema:openmaptiles"
+        ],
+        "content_hash": "sha256:test-fixture-pmtiles-corrected-release"
+      }
+    },
+    "negative_test": {
+      "rejects": [
+        "artifact_hash_as_geographic_identity",
+        "same_hash_after_content_correction"
+      ],
+      "previous_artifact_content_hash": "sha256:test-fixture-pmtiles-original-bytes",
+      "same_referent": true
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "supports_pinnable_release": true,
+        "hashes_artifacts_not_referents": true
+      }
+    }
+  },
+  {
+    "case": "Rejected same_as between H3 cell and administrative area",
+    "source_system": "Adversarial relationship review fixture",
+    "source_url": "https://h3geo.org/docs/",
+    "sample_kind": "rejected_identity_equivalence",
+    "id": "REL-REVIEW-H3-ADMIN-NOT-SAME-AS",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "overlaps",
+      "relationship_method": "negative_identity_review",
+      "relationship_source": "adversarial_fixture_with_distinct_identity_roles",
+      "reproducibility": "hand_authored_counterexample"
+    },
+    "negative_test": {
+      "rejects": [
+        "same_as"
+      ],
+      "left_id": "H3-872830828FFFFFF",
+      "right_id": "USA-CA",
+      "reason": "spatial_overlap_does_not_establish_identity_equivalence"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true
+      }
+    }
+  },
+  {
+    "case": "Reused upstream place code requires version-scoped aliases",
+    "source_system": "Adversarial P-code lifecycle mutation",
+    "source_url": "https://knowledge.base.unocha.org/wiki/spaces/imtoolbox/pages/222265609/P-codes",
+    "sample_kind": "identifier_reuse_counterexample",
+    "id": "OCHA-PCODE-REUSE-MUTANT-101",
+    "family_id": "source_alias",
+    "public_promise": "blocked",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "admission_status": "quarantined_source_alias",
+      "identity_promise": "version_scoped_not_durable",
+      "lifecycle_policy": "source_release_qualification_required",
+      "publication_posture": "never_publish_unversioned_alias",
+      "identifier_assertions": [
+        {
+          "identifier": "OCHA-PCODE-REUSE-MUTANT-101",
+          "referent_id": "fixture:referent:pcode-reuse:first",
+          "valid_from": "2018-01-01",
+          "valid_to": "2020-12-31",
+          "assertion_source": "fixture:ocha-pcode-release:2018"
+        },
+        {
+          "identifier": "OCHA-PCODE-REUSE-MUTANT-101",
+          "referent_id": "fixture:referent:pcode-reuse:second",
+          "valid_from": "2021-01-01",
+          "valid_to": null,
+          "assertion_source": "fixture:ocha-pcode-release:2021"
+        }
+      ]
+    },
+    "negative_test": {
+      "rejects": [
+        "unversioned_public_persistence",
+        "silent_retargeting"
+      ],
+      "reuse_detected": true,
+      "required_disambiguator": "source_release_or_validity_window"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "enforces_family_admission": true,
+        "separates_identity_publication": true,
+        "supports_temporal_identifier_network": true
+      }
+    }
+  },
+  {
+    "case": "Ambiguous succession remains a candidate relationship set",
+    "source_system": "Adversarial lifecycle relationship fixture",
+    "source_url": "https://www.ons.gov.uk/methodology/geography/geographicalproducts/namescodesandlookups",
+    "sample_kind": "ambiguous_successor_counterexample",
+    "id": "REL-REVIEW-AMBIGUOUS-SUCCESSOR",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "successor_candidates",
+      "relationship_method": "unresolved_split_review",
+      "relationship_source": "adversarial_code_history_fixture",
+      "reproducibility": "candidate_edges_preserved_without_collapse"
+    },
+    "negative_test": {
+      "rejects": [
+        "single_successor",
+        "same_as"
+      ],
+      "candidate_successors": [
+        "TEST-SUCCESSOR-A",
+        "TEST-SUCCESSOR-B"
+      ],
+      "resolution_status": "ambiguous"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true
+      }
+    }
+  },
+  {
+    "case": "H3 logical parent rejected as geometric containment proof",
+    "source_system": "H3 hierarchy adversarial fixture",
+    "source_url": "https://h3geo.org/docs/",
+    "sample_kind": "hierarchy_semantics_counterexample",
+    "id": "REL-REVIEW-H3-LOGICAL-NOT-GEOMETRIC-PARENT",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "logical_grid_parent",
+      "relationship_method": "H3_cell_hierarchy",
+      "relationship_source": "H3_documented_containment_semantics",
+      "reproducibility": "source_index_parent_operation"
+    },
+    "negative_test": {
+      "rejects": [
+        "logical_parent_as_geometric_contains",
+        "grid_parent_as_admin_parent_id"
+      ],
+      "logical_parent": true,
+      "geometric_containment_guaranteed": false
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true
+      }
+    }
+  },
+  {
+    "case": "ERA5 atmospheric quarter-degree raster cell",
+    "source_system": "Copernicus ERA5 single levels",
+    "source_url": "https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview",
+    "sample_kind": "regular_latlon_raster_cell",
+    "id": "RASTER-ERA5-ATM-025D-LAT37750-LONM122250",
+    "family_id": "grid",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "cell_footprint_overlap",
+    "grid_context": {
+      "crs": "EPSG:4326",
+      "cell_registration": "center",
+      "cell_width_degrees": 0.25,
+      "cell_height_degrees": 0.25,
+      "center_lon": -122.25,
+      "center_lat": 37.75,
+      "longitude_convention": "-180_to_180",
+      "lookup_policy": "point_for_sample_context_overlap_for_aggregation"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "ERA5 ocean-wave one-degree raster cell at same center",
+    "source_system": "Copernicus ERA5 single levels ocean-wave grid",
+    "source_url": "https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview",
+    "sample_kind": "regular_latlon_raster_cell",
+    "id": "RASTER-ERA5-WAVE-100D-LAT37750-LONM122250",
+    "family_id": "grid",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "cell_footprint_overlap",
+    "grid_context": {
+      "crs": "EPSG:4326",
+      "cell_registration": "center",
+      "cell_width_degrees": 1.0,
+      "cell_height_degrees": 1.0,
+      "center_lon": -122.25,
+      "center_lat": 37.75,
+      "longitude_convention": "-180_to_180",
+      "lookup_policy": "point_for_sample_context_overlap_for_aggregation"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "NOAA OISST quarter-degree ocean cell point lookup",
+    "source_system": "NOAA OISST v2.1",
+    "source_url": "https://www.ncei.noaa.gov/products/optimum-interpolation-sst",
+    "sample_kind": "raster_point_context_and_cell_footprint",
+    "id": "RASTER-OISST-V21-025D-LAT33750-LONM120250",
+    "family_id": "grid",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "bridge_required": true,
+    "required_bridge_type": "marine_cell_overlap",
+    "grid_context": {
+      "crs": "EPSG:4326",
+      "cell_registration": "center",
+      "cell_width_degrees": 0.25,
+      "cell_height_degrees": 0.25,
+      "center_lon": -120.25,
+      "center_lat": 33.75,
+      "point_lookup_output": "containing_loc_id_context",
+      "aggregation_output": "weighted_loc_id_memberships",
+      "nodata_policy": "exclude_without_renormalizing_source_truth"
+    },
+    "design_questions": [
+      "A point lookup can return the containing water or EEZ loc_id for interaction, while summaries still require the cell footprint and overlap weights."
+    ],
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "grid_id",
+        "first_segment_scope": "grid_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "Raster cells sharing a center rejected as same_as",
+    "source_system": "Adversarial raster resolution fixture",
+    "source_url": "https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview",
+    "sample_kind": "raster_resolution_identity_counterexample",
+    "id": "REL-REVIEW-RASTER-SAME-CENTER-NOT-SAME-AS",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "shares_center_with",
+      "relationship_method": "coordinate_and_footprint_comparison",
+      "relationship_source": "adversarial_multi_resolution_fixture",
+      "reproducibility": "explicit_grid_definitions"
+    },
+    "negative_test": {
+      "rejects": [
+        "same_center_as_same_cell",
+        "same_as"
+      ],
+      "left_id": "RASTER-ERA5-ATM-025D-LAT37750-LONM122250",
+      "right_id": "RASTER-ERA5-WAVE-100D-LAT37750-LONM122250",
+      "reason": "different_cell_footprints_and_source_grids"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true
+      }
+    }
+  },
+  {
+    "case": "Zero-to-360 raster longitude rejected before normalization",
+    "source_system": "ERA5 coordinate-convention adversarial fixture",
+    "source_url": "https://confluence.ecmwf.int/pages/viewpage.action?navigatingVersions=true&pageId=78296357",
+    "sample_kind": "unnormalized_raster_coordinate",
+    "id": "RASTER-COORD-0-360-LON359875",
+    "family_id": "source_alias",
+    "public_promise": "blocked",
+    "should_persist_as_loc_id": false,
+    "negative_test": {
+      "rejects": [
+        "zero_to_360_as_normalized_EPSG4326_bbox",
+        "unsplit_antimeridian_cell"
+      ],
+      "required_normalization": "convert_longitude_and_split_wrapping_footprint",
+      "source_longitude": 359.875
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "source_alias",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      }
+    }
+  },
+  {
+    "case": "Corrected raster values retain cell identity but create a new observation release",
+    "source_system": "Adversarial raster correction fixture",
+    "source_url": "https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview",
+    "sample_kind": "raster_observation_release_correction",
+    "id": "REL-REVIEW-RASTER-CORRECTION-SAME-GRID",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "edge_type": "corrects_release",
+      "relationship_method": "same_grid_contract_and_cell_id_different_content_hash",
+      "relationship_source": "adversarial_raster_release_fixture",
+      "reproducibility": "pinned_grid_definition_release_ids_and_hashes"
+    },
+    "negative_test": {
+      "rejects": [
+        "new_grid_id_for_value_only_correction",
+        "overwrite_prior_observation_release"
+      ],
+      "grid_id": "era5_lsm_v1_display_2deg",
+      "cell_id": "era5_2deg_26_028",
+      "prior_release_id": "era5-monthly-2026-06-r1",
+      "corrected_release_id": "era5-monthly-2026-06-r2",
+      "reason": "lattice_and_cell_are_unchanged_while_observation_content_changed"
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "preserves_relationship_provenance": true,
+        "guards_same_as": true
+      }
+    }
+  },
+  {
+    "case": "Official land point follows strict admin spine with explicit null tiers",
+    "source_system": "DaedalMap official-world partition invariant",
+    "sample_kind": "admin_land_partition_fixture",
+    "id": "REL-REVIEW-WORLD-LAND-PARTITION",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "world_partition": {
+        "world_id": "daedalmap-official",
+        "surface_class": "land",
+        "coverage_complete": true,
+        "gap_count": 0,
+        "overlap_count": 0,
+        "partition_rule": "admin_0_then_strict_published_admin_children",
+        "release_id": "fixture:official-world:land-r1",
+        "admin_path": ["USA", "USA-CA", "USA-CA-037"],
+        "null_tiers": [3, 4, 5],
+        "strict_parentage": true
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "covers_admin_water_world": true
+      }
+    }
+  },
+  {
+    "case": "Official ocean point uses water coverage without fabricated admin descendants",
+    "source_system": "DaedalMap official-world partition invariant",
+    "sample_kind": "water_partition_fixture",
+    "id": "REL-REVIEW-WORLD-WATER-PARTITION",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "world_partition": {
+        "world_id": "daedalmap-official",
+        "surface_class": "water",
+        "coverage_complete": true,
+        "gap_count": 0,
+        "overlap_count": 0,
+        "partition_rule": "adopted_ocean_and_major_lake_water_fabric",
+        "release_id": "fixture:official-world:water-r1",
+        "water_loc_id": "IHO1953-260000001",
+        "admin_path": [],
+        "fabricated_admin_descendants": false,
+        "coast_tiebreak": "land_boundary_then_water_fallback"
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "covers_admin_water_world": true
+      }
+    }
+  },
+  {
+    "case": "Water-body scale hint changes without changing identity",
+    "source_system": "DaedalMap derived-scale invariant",
+    "sample_kind": "release_versioned_scale_hint",
+    "id": "REL-REVIEW-SCALE-WATER-RELEASE",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "scale_hint": {
+        "subject_id": "IHO1953-240001002",
+        "purpose": "zoom",
+        "method": "bbox_area_and_source_family_v2",
+        "input_release_id": "fixture:iho-water:r1",
+        "output_release_id": "fixture:scale-hints:r2",
+        "source_native_level": "named_water_body",
+        "prior_hint": "label_1",
+        "derived_hint": "label_2",
+        "field_status": "derived",
+        "affects_identity": false
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "derives_release_scale_hints": true
+      }
+    }
+  },
+  {
+    "case": "Raster resolution remains source fact while display scale is derived",
+    "source_system": "DaedalMap derived-scale invariant",
+    "sample_kind": "grid_scale_hint",
+    "id": "REL-REVIEW-SCALE-RASTER-RESOLUTION",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "scale_hint": {
+        "subject_id": "RASTER-ERA5-ATM-025D-LAT37750-LONM122250",
+        "purpose": "aggregation",
+        "method": "declared_grid_resolution_v1",
+        "input_release_id": "fixture:era5-grid:025d-r1",
+        "output_release_id": "fixture:scale-hints:r2",
+        "source_native_level": "0.25_degree_cell",
+        "derived_hint": "fine_global_grid",
+        "field_status": "derived",
+        "affects_identity": false
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "derives_release_scale_hints": true
+      }
+    }
+  },
+  {
+    "case": "Same local identifier remains isolated in two customer worlds",
+    "source_system": "DaedalMap customer-world branch invariant",
+    "sample_kind": "customer_branch_identity_collision",
+    "id": "REL-REVIEW-WORLD-BRANCH-ISOLATION",
+    "family_id": "relationship",
+    "public_promise": "private",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "world_branch": {
+        "world_id": "customer-world-alpha",
+        "branch_id": "main",
+        "base_release_id": "fixture:official-world:r1",
+        "namespace_scope": "customer-world-alpha:main:CUSTOM-REGION-001",
+        "resolution_scope": "world_and_branch",
+        "branch_isolated": true,
+        "official_unchanged": true,
+        "merge_policy": "explicit_reviewed_promotion",
+        "collision_probe": {
+          "other_world_id": "customer-world-beta",
+          "same_local_identifier": "CUSTOM-REGION-001",
+          "same_referent": false,
+          "cross_world_resolution": false
+        }
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "isolates_customer_world_branches": true
+      }
+    }
+  },
+  {
+    "case": "Customer-world promotion conflict requires reviewed merge",
+    "source_system": "DaedalMap customer-world promotion invariant",
+    "sample_kind": "official_world_merge_gate",
+    "id": "REL-REVIEW-WORLD-BRANCH-PROMOTION",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "world_branch": {
+        "world_id": "customer-world-alpha",
+        "branch_id": "proposal-7",
+        "base_release_id": "fixture:official-world:r1",
+        "namespace_scope": "customer-world-alpha:proposal-7",
+        "resolution_scope": "world_and_branch",
+        "branch_isolated": true,
+        "official_unchanged": true,
+        "merge_policy": "explicit_reviewed_promotion",
+        "target_world_id": "daedalmap-official",
+        "promotion_status": "blocked_pending_review",
+        "required_reviews": ["identity", "authority", "license", "provenance", "geometry", "lifecycle"]
+      }
+    },
+    "negative_test": {
+      "rejects": ["silent_cross_world_merge", "private_identifier_publication_before_promotion"]
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "isolates_customer_world_branches": true
+      }
+    }
+  },
+  {
+    "case": "Official country family pins a declared UN snapshot",
+    "source_system": "DaedalMap family-authority invariant",
+    "sample_kind": "country_family_authority_selection",
+    "id": "REL-REVIEW-AUTHORITY-COUNTRY-FAMILY",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "authority_selection": {
+        "family_id": "admin_0_country_coverage",
+        "authority_id": "UN-country-list-policy",
+        "authority_release_id": "fixture:un-country-list:2026-r1",
+        "source_artifact_id": "fixture:un-country-list:snapshot",
+        "effective_at": "2026-01-01",
+        "adopted_at": "2026-08-09",
+        "selection_policy": "declared_family_authority",
+        "official_view_deterministic": true,
+        "latest_wins": false,
+        "alternates_preserved": true
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "pins_family_authority": true
+      }
+    }
+  },
+  {
+    "case": "Official named-water family pins its domain authority",
+    "source_system": "DaedalMap family-authority invariant",
+    "sample_kind": "water_family_authority_selection",
+    "id": "REL-REVIEW-AUTHORITY-WATER-FAMILY",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "authority_selection": {
+        "family_id": "named_water_body",
+        "authority_id": "IHO-named-water-policy",
+        "authority_release_id": "fixture:iho-named-water:r1",
+        "source_artifact_id": "fixture:iho-named-water:snapshot",
+        "effective_at": "1953-01-01",
+        "adopted_at": "2026-08-09",
+        "selection_policy": "declared_family_authority",
+        "official_view_deterministic": true,
+        "latest_wins": false,
+        "alternates_preserved": true
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "pins_family_authority": true
+      }
+    }
+  },
+  {
+    "case": "Public geometry bundle declares generalized distribution",
+    "source_system": "DaedalMap geometry-package invariant",
+    "sample_kind": "public_geometry_distribution_profile",
+    "id": "REL-REVIEW-GEOMETRY-PACKAGE-PUBLIC",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "geometry_distribution": {
+        "profile": "geometry",
+        "schema_version": "1.0",
+        "access_posture": "public",
+        "display_precision": "1e-5_degrees",
+        "export_precision": "1e-5_degrees",
+        "generalization_method": "topology_preserving_simplification",
+        "generalization_parameters": {"tolerance_m": 25},
+        "license": "fixture:public-geometry-license",
+        "attribution": "Fixture geometry authority",
+        "privacy_review": "not_sensitive_reviewed",
+        "world_id": "daedalmap-official",
+        "branch_id": "main",
+        "data_profile_inherited": false
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "declares_geometry_distribution": true
+      }
+    }
+  },
+  {
+    "case": "Customer geometry bundle keeps exact geometry branch-scoped",
+    "source_system": "DaedalMap geometry-package invariant",
+    "sample_kind": "customer_geometry_distribution_profile",
+    "id": "REL-REVIEW-GEOMETRY-PACKAGE-CUSTOMER",
+    "family_id": "relationship",
+    "public_promise": "private",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "geometry_distribution": {
+        "profile": "geometry",
+        "schema_version": "1.0",
+        "access_posture": "customer_world",
+        "display_precision": "exact_authorized",
+        "export_precision": "exact_authorized",
+        "generalization_method": "none_exact_authorized",
+        "generalization_parameters": {},
+        "license": "fixture:customer-upload-terms",
+        "attribution": "Customer-provided geometry",
+        "privacy_review": "authorized_customer_world_only",
+        "world_id": "customer-world-alpha",
+        "branch_id": "main",
+        "data_profile_inherited": false
+      }
+    },
+    "negative_test": {
+      "rejects": ["public_export_of_customer_geometry", "inherit_data_pack_access_as_geometry_access"]
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "declares_geometry_distribution": true
+      }
+    }
+  },
+  {
+    "case": "Probabilistic successor remains a scored candidate",
+    "source_system": "DaedalMap confidence/supersession invariant",
+    "sample_kind": "candidate_successor_evidence",
+    "id": "REL-REVIEW-CONFIDENCE-CANDIDATE-SUCCESSOR",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "confidence_supersession": {
+        "relationship_method": "name_and_overlap_model",
+        "relationship_source": "fixture:reviewed-code-history-input",
+        "algorithm_version": "candidate-linker-v3",
+        "threshold_version": "candidate-thresholds-2026-r1",
+        "score": 0.72,
+        "score_semantics": "model_specific_candidate_probability",
+        "supersession_status": "candidate",
+        "successor_ids": ["TEST-SUCCESSOR-A", "TEST-SUCCESSOR-B"],
+        "evidence_artifact_id": "fixture:candidate-successor-evidence:r1",
+        "release_id": "fixture:relationship-release:r1",
+        "default_score_used": false
+      }
+    },
+    "negative_test": {
+      "rejects": ["candidate_as_confirmed_successor", "cross_method_score_comparison"]
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "reproduces_confidence_supersession": true
+      }
+    }
+  },
+  {
+    "case": "Authoritative successor is confirmed without invented numeric confidence",
+    "source_system": "DaedalMap confidence/supersession invariant",
+    "sample_kind": "confirmed_successor_evidence",
+    "id": "REL-REVIEW-CONFIDENCE-CONFIRMED-SUCCESSOR",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "confidence_supersession": {
+        "relationship_method": "asserted_by_authority",
+        "relationship_source": "fixture:official-code-history",
+        "algorithm_version": "authority-assertion-parser-v1",
+        "threshold_version": "not_applicable-authoritative",
+        "score": null,
+        "score_semantics": "not_scored_authoritative_assertion",
+        "supersession_status": "confirmed",
+        "successor_ids": ["TEST-SUCCESSOR-CONFIRMED"],
+        "evidence_artifact_id": "fixture:official-successor-evidence:r1",
+        "release_id": "fixture:relationship-release:r1",
+        "default_score_used": false
+      }
+    },
+    "negative_test": {
+      "rejects": ["invented_confidence_one", "missing_evidence_for_confirmed_successor"]
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "reproduces_confidence_supersession": true
       }
     }
   }

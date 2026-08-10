@@ -129,6 +129,27 @@ DESIGNATION_ORACLE_FIELDS = {
     "preserves_authority_snapshot": "authority_snapshot_provenance",
 }
 
+STEWARDSHIP_ORACLE_FIELDS = {
+    "separates_authority_scope": "authority_scope_separation",
+    "enforces_family_admission": "family_admission_posture",
+    "separates_identity_publication": "identity_publication_separation",
+    "preserves_public_resolution": "persistent_public_resolution",
+    "supports_temporal_identifier_network": "temporal_identifier_network",
+    "covers_admin_water_world": "admin_water_world_partition",
+    "derives_release_scale_hints": "release_scale_hint",
+    "isolates_customer_world_branches": "customer_world_branching",
+    "pins_family_authority": "family_authority_selection",
+    "declares_geometry_distribution": "geometry_distribution_profile",
+    "reproduces_confidence_supersession": "confidence_supersession_evidence",
+    "preserves_multiaxial_time": "multiaxial_time_provenance",
+    "supports_pinnable_release": "pinnable_geography_release",
+    "hashes_artifacts_not_referents": "artifact_referent_separation",
+    "preserves_relationship_provenance": "relationship_method_provenance",
+    "guards_same_as": "same_as_evidence_gate",
+    "prefers_direct_crosswalk": "direct_crosswalk_precedence",
+    "declares_pack_projection": "explicit_pack_projection",
+}
+
 DOCTRINE_RULE_KEYS = (
     "normalization",
     "declared_family_precedence",
@@ -143,6 +164,7 @@ DOCTRINE_RULE_KEYS = (
     "reference_level",
     "placement_policy",
     *DESIGNATION_ORACLE_FIELDS.values(),
+    *STEWARDSHIP_ORACLE_FIELDS.values(),
 )
 
 BASE_DOCTRINE_RULES: dict[str, Any] = {
@@ -167,6 +189,24 @@ BASE_DOCTRINE_RULES: dict[str, Any] = {
     "designation_member_attributes": False,
     "derived_union_geometry": False,
     "authority_snapshot_provenance": False,
+    "authority_scope_separation": False,
+    "family_admission_posture": False,
+    "identity_publication_separation": False,
+    "persistent_public_resolution": False,
+    "temporal_identifier_network": False,
+    "admin_water_world_partition": False,
+    "release_scale_hint": False,
+    "customer_world_branching": False,
+    "family_authority_selection": False,
+    "geometry_distribution_profile": False,
+    "confidence_supersession_evidence": False,
+    "multiaxial_time_provenance": False,
+    "pinnable_geography_release": False,
+    "artifact_referent_separation": False,
+    "relationship_method_provenance": False,
+    "same_as_evidence_gate": False,
+    "direct_crosswalk_precedence": False,
+    "explicit_pack_projection": False,
 }
 
 WIND_TUNNEL_CONTRACT: dict[str, str] = {
@@ -175,6 +215,7 @@ WIND_TUNNEL_CONTRACT: dict[str, str] = {
     "known_issue_semantics": "visible_debt_not_required_output",
     "raw_mode": "unscored_without_explicit_oracle.raw",
     "designation_mode": "scored_only_with_explicit_oracle.designation",
+    "stewardship_mode": "scored_only_with_explicit_oracle.stewardship",
     "comparison_basis": "same_corpus_same_oracle",
     "correctness_objective": "oracle_assertions_plus_clean_case_counts",
     "simplicity_objective": "separate_complexity_vector",
@@ -279,6 +320,177 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
             "effect": "Scores, tiers, subprograms, and mixed members remain primary facts instead of being baked into polygons.",
         },
     ],
+    "durable_public_identity": [
+        {
+            "id": "durable-001",
+            "decision": "Authority, geographic scope, identity promise, and publication posture are independent.",
+            "effect": "A public identifier can state who controls it and what it covers without encoding either claim ambiguously in its prefix.",
+        },
+        {
+            "id": "durable-002",
+            "decision": "Family admission is explicit and retired public identifiers continue resolving.",
+            "effect": "Candidate and static families avoid false durability while issued identities remain safe to persist.",
+        },
+        {
+            "id": "durable-003",
+            "decision": "Identifiers are time-bounded graph assertions rather than one permanently winning string.",
+            "effect": "Several identifiers can reach one referent, and a reused identifier can reach different referents only in explicit non-overlapping validity windows.",
+        },
+        {
+            "id": "durable-004",
+            "decision": "Effective, publication, and adoption time remain separate.",
+            "effect": "Users can distinguish real-world validity from source and DaedalMap knowledge time.",
+        },
+        {
+            "id": "durable-005",
+            "decision": "Artifact revisions do not replace the identity of the represented referent.",
+            "effect": "Geometry and crosswalk hashes may change without turning a place into a new place.",
+        },
+        {
+            "id": "durable-006",
+            "decision": "Release pinning and advanced relationship/pack policy remain out of scope for this profile.",
+            "effect": "The experiment measures whether a narrow persistence contract is sufficient by itself.",
+        },
+        {
+            "id": "durable-007",
+            "decision": "The official world fabric is partitioned by administrative land coverage plus adopted ocean and major-lake water coverage.",
+            "effect": "Every point has explicit land or water context without fabricating administrative descendants where a tier is absent.",
+        },
+        {
+            "id": "durable-008",
+            "decision": "Customer worlds are isolated branches and affect the official world only through explicit reviewed promotion.",
+            "effect": "Customers can define independent identities and geometry without collisions or cross-world leakage; consolidation occurs at merge time.",
+        },
+        {
+            "id": "durable-009",
+            "decision": "Each official reference family selects and pins a named authority and source release.",
+            "effect": "DaedalMap can explain its official view without pretending to be neutral or falling back to a universal latest-source-wins rule.",
+        },
+    ],
+    "reproducible_relationship_graph": [
+        {
+            "id": "repro-001",
+            "decision": "Geography releases are pinnable dependency manifests.",
+            "effect": "An analysis can replay the namespace, geometry, crosswalk, membership, and source artifacts it used.",
+        },
+        {
+            "id": "repro-002",
+            "decision": "Relationship edges carry method, source, and reproducibility metadata.",
+            "effect": "Asserted, derived, expert-judgment, and unreproducible relationships remain distinguishable.",
+        },
+        {
+            "id": "repro-003",
+            "decision": "same_as is allowed only with sourced identity evidence.",
+            "effect": "Geometric similarity and convenient crosswalks cannot silently become identity equivalence.",
+        },
+        {
+            "id": "repro-004",
+            "decision": "Direct authoritative crosswalks beat lossy admin-pivot inference.",
+            "effect": "Published many-to-many relationships retain their weights and semantics.",
+        },
+        {
+            "id": "repro-005",
+            "decision": "Historical packs declare source-era geography or an explicit present allocation.",
+            "effect": "Reproduction does not depend on an undocumented projection into current loc_ids.",
+        },
+        {
+            "id": "repro-006",
+            "decision": "Public persistence guarantees remain out of scope for this profile.",
+            "effect": "The experiment isolates translation and replay behavior from durable-identity policy.",
+        },
+        {
+            "id": "repro-007",
+            "decision": "Normalized scale is a release-versioned presentation and query hint, never geographic identity.",
+            "effect": "Zoom, labeling, aggregation, and comparison can improve without changing source-native hierarchy or identifiers.",
+        },
+        {
+            "id": "repro-008",
+            "decision": "Geometry packages declare their own access, precision, generalization, attribution, privacy, and world scope.",
+            "effect": "Data and geometry can share a download envelope without inheriting one another's distribution policy.",
+        },
+        {
+            "id": "repro-009",
+            "decision": "Confidence and supersession are typed, nullable, source-backed, and reproducible by method and release.",
+            "effect": "A candidate never becomes a confirmed successor through a default score or undocumented threshold change.",
+        },
+    ],
+    "stewarded_release_graph": [
+        {
+            "id": "steward-001",
+            "decision": "Authority, geographic scope, identity promise, and publication posture are independent fields.",
+            "effect": "A nationally scoped private or civic product does not impersonate a national government namespace.",
+        },
+        {
+            "id": "steward-002",
+            "decision": "Families graduate through an explicit admission posture backed by stewardship and release evidence.",
+            "effect": "Static and candidate products remain usable without receiving an unsupported durability promise.",
+        },
+        {
+            "id": "steward-003",
+            "decision": "An issued public identity resolves after retirement through a tombstone or successor record.",
+            "effect": "Persisted loc_ids and aliases never become unexplained 404s.",
+        },
+        {
+            "id": "steward-004",
+            "decision": "Identifier-to-referent assertions carry validity windows; the graph is durable even when preferred identifiers change.",
+            "effect": "Aliases, source codes, and DaedalMap identifiers can all be entry points without silent code reuse or a permanent single-string winner.",
+        },
+        {
+            "id": "steward-005",
+            "decision": "Effective, publication, and DaedalMap adoption time are recorded separately.",
+            "effect": "Legal truth, source knowledge, and platform knowledge are reproducible without overloading valid_from.",
+        },
+        {
+            "id": "steward-006",
+            "decision": "A pinnable geography release names versioned namespace, geometry, crosswalk, and membership artifacts.",
+            "effect": "An analysis can replay the exact geographic interpretation layer it used.",
+        },
+        {
+            "id": "steward-007",
+            "decision": "Hashes identify artifacts, never real-world referents.",
+            "effect": "Geometry or crosswalk revisions move artifact hashes without silently replacing geographic identity.",
+        },
+        {
+            "id": "steward-008",
+            "decision": "Relationship edges carry method, source, reproducibility, and guarded identity equivalence.",
+            "effect": "Expert judgment, direct crosswalks, and same_as claims remain distinguishable and auditable.",
+        },
+        {
+            "id": "steward-009",
+            "decision": "Historical packs declare source-era geography or an explicit present-day allocation.",
+            "effect": "A present loc_id projection cannot silently replace the geography in which a source observation was published.",
+        },
+        {
+            "id": "steward-010",
+            "decision": "Administrative land and adopted ocean or major-lake water coverage form a gap-free official world partition.",
+            "effect": "Global point resolution exposes gaps, overlaps, coast policy, and explicit null administrative tiers rather than hiding them.",
+        },
+        {
+            "id": "steward-011",
+            "decision": "Derived scale hints name their purpose, method, input release, and output release and never affect identity.",
+            "effect": "A builder revision can change map behavior without silently changing a place, grid, or source-native level.",
+        },
+        {
+            "id": "steward-012",
+            "decision": "Every private identity is scoped by world and branch, and official promotion is a reviewed merge operation.",
+            "effect": "Identical local strings can coexist safely while authority, license, provenance, lifecycle, and geometry conflicts remain visible at merge.",
+        },
+        {
+            "id": "steward-013",
+            "decision": "Official family authority is deterministic, release-pinned, cited, and separate from preserved alternate claims.",
+            "effect": "Country, water, administrative, and other families can follow different responsible authorities while remaining reproducible.",
+        },
+        {
+            "id": "steward-014",
+            "decision": "Every downloadable geometry bundle carries one explicit geometry distribution profile.",
+            "effect": "Public generalized and customer exact geometry can use the same machinery while validating different access and export promises.",
+        },
+        {
+            "id": "steward-015",
+            "decision": "Confidence and supersession claims pin method, source, algorithm, threshold, evidence artifact, and release.",
+            "effect": "Authoritative claims may honestly omit a numeric score while probabilistic candidates remain distinguishable from confirmed successors.",
+        },
+    ],
 }
 
 PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
@@ -375,7 +587,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "external_source_alias",
-        "pattern": r"^(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|PLACEKEY|WHG|GERS)-.+$",
+        "pattern": r"^(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|PLACEKEY|WHG|GERS|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+$",
         "identity_role": "source_alias",
         "family_id": "source_alias",
         "scope_type": "source_family_scope",
@@ -388,7 +600,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "grid_or_tile",
-        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL|PLACEKEY-@)-.+$",
+        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL|OGC-TILE|RASTER|PLACEKEY-@)-.+$",
         "identity_role": "grid_id",
         "family_id": "grid",
         "scope_type": "grid_scope",
@@ -440,7 +652,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "crosswalk_artifact",
-        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK)-.+$",
+        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK|STATCAN-XWALK|ABS-XWALK|ONS-XWALK|REL-REVIEW)-.+$",
         "identity_role": "crosswalk_id",
         "family_id": "relationship",
         "scope_type": "source_family_scope",
@@ -470,7 +682,7 @@ SOLIDIFIED_SIBLING_LAYER_REGISTRY: list[dict[str, Any]] = [
     if entry["namespace"] == "source_family_sidechain"
     else {
         **entry,
-        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK|EUROAREA|COW-STATE)-.+$",
+        "pattern": r"^(?:NHGIS-XWALK|NUTS-XWALK|STATCAN-XWALK|ABS-XWALK|ONS-XWALK|REL-REVIEW|EUROAREA|COW-STATE)-.+$",
         "identity_role": "relationship_id",
         "family_id": "relationship",
         "bridge_policy": "versioned_relationship",
@@ -478,7 +690,7 @@ SOLIDIFIED_SIBLING_LAYER_REGISTRY: list[dict[str, Any]] = [
     if entry["namespace"] == "crosswalk_artifact"
     else {
         **entry,
-        "pattern": r"^(?:(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|WHG)-.+|PLACEKEY-(?!@).+|GERS-.+)$",
+        "pattern": r"^(?:(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|WHG|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+|PLACEKEY-(?!@).+|GERS-.+)$",
     }
     if entry["namespace"] == "external_source_alias"
     else entry
@@ -501,6 +713,18 @@ DESIGNATION_REFERENCE_GRAPH_REGISTRY: list[dict[str, Any]] = [
         "lifecycle_policy": "designation_generation",
         "license_policy": "source_specific",
     },
+]
+
+STEWARDED_RELEASE_GRAPH_REGISTRY: list[dict[str, Any]] = [
+    *DESIGNATION_REFERENCE_GRAPH_REGISTRY,
+]
+
+DURABLE_PUBLIC_IDENTITY_REGISTRY: list[dict[str, Any]] = [
+    *DESIGNATION_REFERENCE_GRAPH_REGISTRY,
+]
+
+REPRODUCIBLE_RELATIONSHIP_GRAPH_REGISTRY: list[dict[str, Any]] = [
+    *DESIGNATION_REFERENCE_GRAPH_REGISTRY,
 ]
 
 PRESENT_SYSTEM_REGISTRY: list[dict[str, Any]] = [
@@ -530,7 +754,7 @@ PRESENT_SYSTEM_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "known_grid",
-        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL)-.+$",
+        "pattern": r"^(?:H3|S2|OLC|PLUSCODE|MGRS|QUADKEY|LANDSAT|SENTINEL2|GHSL|OGC-TILE|RASTER)-.+$",
         "identity_role": "grid_id",
         "family_id": "grid",
         "scope_type": "grid_scope",
@@ -600,6 +824,79 @@ DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
             "designation_member_attributes": True,
             "derived_union_geometry": True,
             "authority_snapshot_provenance": True,
+        },
+    },
+    "durable_public_identity": {
+        "description": "Designation reference graph plus the minimum public persistence contract, without release-lockfile or advanced relationship policy.",
+        "registry": DURABLE_PUBLIC_IDENTITY_REGISTRY,
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+            "membership_set_representation": True,
+            "heterogeneous_member_targets": True,
+            "compound_subject_targets": True,
+            "independent_designation_clocks": True,
+            "dependency_binding_edges": True,
+            "independent_set_lifecycle": True,
+            "designation_member_attributes": True,
+            "derived_union_geometry": True,
+            "authority_snapshot_provenance": True,
+            "authority_scope_separation": True,
+            "family_admission_posture": True,
+            "identity_publication_separation": True,
+            "persistent_public_resolution": True,
+            "temporal_identifier_network": True,
+            "admin_water_world_partition": True,
+            "customer_world_branching": True,
+            "family_authority_selection": True,
+            "multiaxial_time_provenance": True,
+            "artifact_referent_separation": True,
+        },
+    },
+    "reproducible_relationship_graph": {
+        "description": "Designation reference graph plus release replay, relationship evidence, crosswalk precedence, and explicit historical-pack projection, without public persistence policy.",
+        "registry": REPRODUCIBLE_RELATIONSHIP_GRAPH_REGISTRY,
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+            "membership_set_representation": True,
+            "heterogeneous_member_targets": True,
+            "compound_subject_targets": True,
+            "independent_designation_clocks": True,
+            "dependency_binding_edges": True,
+            "independent_set_lifecycle": True,
+            "designation_member_attributes": True,
+            "derived_union_geometry": True,
+            "authority_snapshot_provenance": True,
+            "pinnable_geography_release": True,
+            "release_scale_hint": True,
+            "geometry_distribution_profile": True,
+            "confidence_supersession_evidence": True,
+            "relationship_method_provenance": True,
+            "same_as_evidence_gate": True,
+            "direct_crosswalk_precedence": True,
+            "explicit_pack_projection": True,
+        },
+    },
+    "stewarded_release_graph": {
+        "description": "Designation reference graph plus explicit stewardship, persistence, provenance, and reproducible geography-release contracts.",
+        "registry": STEWARDED_RELEASE_GRAPH_REGISTRY,
+        "rules": {
+            **BASE_DOCTRINE_RULES,
+            "admin_fallback_precedence": "last",
+            "placement_policy": "containing_loc_id",
+            "membership_set_representation": True,
+            "heterogeneous_member_targets": True,
+            "compound_subject_targets": True,
+            "independent_designation_clocks": True,
+            "dependency_binding_edges": True,
+            "independent_set_lifecycle": True,
+            "designation_member_attributes": True,
+            "derived_union_geometry": True,
+            "authority_snapshot_provenance": True,
+            **{rule_key: True for rule_key in STEWARDSHIP_ORACLE_FIELDS.values()},
         },
     },
 }
@@ -1000,6 +1297,179 @@ def evaluate_designation_cases(
     ]
 
 
+def _stewardship_oracle_for_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Return the explicit, doctrine-independent public-contract oracle."""
+    explicit_root = case.get("oracle") or {}
+    explicit = explicit_root.get("stewardship") if isinstance(explicit_root, dict) else None
+    if not isinstance(explicit, dict):
+        return {
+            "source": "none",
+            "status": "unscored",
+            "expectations": {},
+            "open_policy_fields": [],
+            "policy_options": {},
+            "scored": False,
+        }
+    status = str(explicit.get("status") or "verified")
+    open_policy_fields = sorted(
+        set(str(value) for value in explicit.get("open_policy_fields") or [])
+    )
+    expectations = {
+        field: explicit[field]
+        for field in STEWARDSHIP_ORACLE_FIELDS
+        if field in explicit and field not in open_policy_fields
+    }
+    if status in {"open", "unscored"}:
+        expectations = {}
+    return {
+        "source": "explicit",
+        "status": status,
+        "expectations": expectations,
+        "open_policy_fields": open_policy_fields,
+        "policy_options": dict(explicit.get("policy_options") or {}),
+        "scored": bool(expectations),
+    }
+
+
+def evaluate_stewardship_case(
+    case: dict[str, Any],
+    *,
+    doctrine: str | None = None,
+    rule_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Test stewardship and reproducibility capabilities against one evidence case."""
+    doctrine_name = str(doctrine or "proposed_changes")
+    oracle = _stewardship_oracle_for_case(case)
+    overrides = rule_overrides or {}
+    capabilities = {
+        result_field: bool(
+            overrides[rule_key]
+            if rule_key in overrides
+            else _rule(doctrine_name, rule_key)
+        )
+        for result_field, rule_key in STEWARDSHIP_ORACLE_FIELDS.items()
+    }
+    checks = [
+        {
+            "field": field,
+            "expected": expected,
+            "actual": capabilities[field],
+            "passed": capabilities[field] == expected,
+        }
+        for field, expected in (oracle.get("expectations") or {}).items()
+    ]
+    failed = [check for check in checks if not check["passed"]]
+    signal = "oracle_failure" if failed else "pass"
+    if not oracle["scored"]:
+        signal = "unscored"
+    return {
+        "case": case.get("case"),
+        "id": case.get("id") or case.get("loc_id") or case.get("candidate_id"),
+        "source_system": case.get("source_system"),
+        "doctrine": doctrine_name,
+        "stewardship": case.get("stewardship"),
+        "capabilities": capabilities,
+        "oracle": oracle,
+        "oracle_checks": checks,
+        "oracle_assertions": len(checks),
+        "oracle_assertions_passed": sum(check["passed"] for check in checks),
+        "failed_capabilities": [check["field"] for check in failed],
+        "ok": not failed,
+        "gate_ok": not failed,
+        "signal": signal,
+    }
+
+
+def evaluate_stewardship_cases(
+    cases: list[dict[str, Any]],
+    *,
+    doctrine: str | None = None,
+    rule_overrides: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        evaluate_stewardship_case(
+            case,
+            doctrine=doctrine,
+            rule_overrides=rule_overrides,
+        )
+        for case in cases
+        if _stewardship_oracle_for_case(case)["source"] == "explicit"
+    ]
+
+
+def stewardship_ablation_report(
+    cases: list[dict[str, Any]], *, doctrine: str = "stewarded_release_graph"
+) -> dict[str, Any]:
+    """Disable each stewardship rule independently and measure lost assertions."""
+    manifest = doctrine_manifest(doctrine)
+    baseline_results = evaluate_stewardship_cases(cases, doctrine=doctrine)
+    baseline_assertions = sum(result["oracle_assertions"] for result in baseline_results)
+    baseline_passed = sum(
+        result["oracle_assertions_passed"] for result in baseline_results
+    )
+    mutations: list[dict[str, Any]] = []
+    for capability, rule_key in STEWARDSHIP_ORACLE_FIELDS.items():
+        baseline_value = bool(manifest["rules"][rule_key])
+        mutated_results = evaluate_stewardship_cases(
+            cases,
+            doctrine=doctrine,
+            rule_overrides={rule_key: not baseline_value},
+        )
+        mutated_passed = sum(
+            result["oracle_assertions_passed"] for result in mutated_results
+        )
+        failed_cases = [
+            {
+                "case": result["case"],
+                "id": result["id"],
+                "failed_capabilities": result["failed_capabilities"],
+            }
+            for result in mutated_results
+            if not result["gate_ok"]
+        ]
+        mutations.append(
+            {
+                "capability": capability,
+                "rule": rule_key,
+                "baseline_value": baseline_value,
+                "mutated_value": not baseline_value,
+                "oracle_assertions": baseline_assertions,
+                "oracle_assertions_passed": mutated_passed,
+                "assertion_loss": baseline_passed - mutated_passed,
+                "failure_case_count": len(failed_cases),
+                "failure_cases": failed_cases,
+            }
+        )
+    case_concentration = Counter(
+        failure["case"]
+        for mutation in mutations
+        for failure in mutation["failure_cases"]
+    )
+    return {
+        "doctrine": doctrine,
+        "doctrine_fingerprint": manifest["fingerprint"],
+        "oracle_fingerprint": oracle_fingerprint(cases),
+        "baseline": {
+            "case_count": len(baseline_results),
+            "oracle_assertions": baseline_assertions,
+            "oracle_assertions_passed": baseline_passed,
+            "gate_ok": all(result["gate_ok"] for result in baseline_results),
+        },
+        "mutations": mutations,
+        "all_rules_have_observed_contribution": all(
+            mutation["assertion_loss"] > 0 for mutation in mutations
+        ),
+        "capabilities_below_two_supporting_cases": [
+            mutation["capability"]
+            for mutation in mutations
+            if mutation["failure_case_count"] < 2
+        ],
+        "case_concentration": dict(
+            sorted(case_concentration.items(), key=lambda item: (-item[1], item[0]))
+        ),
+    }
+
+
 def evaluate_identity_case(
     case: dict[str, Any],
     *,
@@ -1249,6 +1719,8 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
     right_result = evaluate_dual_mode_case(case, doctrine=right)
     left_designation = evaluate_designation_case(case, doctrine=left)
     right_designation = evaluate_designation_case(case, doctrine=right)
+    left_stewardship = evaluate_stewardship_case(case, doctrine=left)
+    right_stewardship = evaluate_stewardship_case(case, doctrine=right)
     deltas: list[str] = []
     for mode in ("declared", "raw"):
         for key in (
@@ -1271,13 +1743,23 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
                     f"designation.{key}: {left}={left_designation['capabilities'][key]} "
                     f"{right}={right_designation['capabilities'][key]}"
                 )
+    if left_stewardship["oracle"]["source"] == "explicit":
+        for key in STEWARDSHIP_ORACLE_FIELDS:
+            if left_stewardship["capabilities"][key] != right_stewardship["capabilities"][key]:
+                deltas.append(
+                    f"stewardship.{key}: {left}={left_stewardship['capabilities'][key]} "
+                    f"{right}={right_stewardship['capabilities'][key]}"
+                )
     signal = "pass" if not deltas else "doctrine_delta"
     designation_scored = left_designation["oracle"]["source"] == "explicit"
+    stewardship_scored = left_stewardship["oracle"]["source"] == "explicit"
     if (
         not right_result.get("gate_ok")
         or not left_result.get("gate_ok")
         or (designation_scored and not left_designation.get("gate_ok"))
         or (designation_scored and not right_designation.get("gate_ok"))
+        or (stewardship_scored and not left_stewardship.get("gate_ok"))
+        or (stewardship_scored and not right_stewardship.get("gate_ok"))
     ):
         signal = "oracle_failure"
     return {
@@ -1290,15 +1772,21 @@ def compare_doctrine_case(case: dict[str, Any], *, left: str = "present_system",
         "right": right_result,
         "left_designation": left_designation,
         "right_designation": right_designation,
+        "left_stewardship": left_stewardship,
+        "right_stewardship": right_stewardship,
         "deltas": deltas,
         "ok": bool(left_result.get("gate_ok"))
         and bool(right_result.get("gate_ok"))
         and (not designation_scored or bool(left_designation.get("gate_ok")))
-        and (not designation_scored or bool(right_designation.get("gate_ok"))),
+        and (not designation_scored or bool(right_designation.get("gate_ok")))
+        and (not stewardship_scored or bool(left_stewardship.get("gate_ok")))
+        and (not stewardship_scored or bool(right_stewardship.get("gate_ok"))),
         "gate_ok": bool(left_result.get("gate_ok"))
         and bool(right_result.get("gate_ok"))
         and (not designation_scored or bool(left_designation.get("gate_ok")))
-        and (not designation_scored or bool(right_designation.get("gate_ok"))),
+        and (not designation_scored or bool(right_designation.get("gate_ok")))
+        and (not stewardship_scored or bool(left_stewardship.get("gate_ok")))
+        and (not stewardship_scored or bool(right_stewardship.get("gate_ok"))),
         "signal": signal,
     }
 
@@ -1362,6 +1850,9 @@ def doctrine_manifest(doctrine: str | None = None) -> dict[str, Any]:
             ),
             "enabled_designation_capability_count": sum(
                 bool(rules[rule_key]) for rule_key in DESIGNATION_ORACLE_FIELDS.values()
+            ),
+            "enabled_stewardship_capability_count": sum(
+                bool(rules[rule_key]) for rule_key in STEWARDSHIP_ORACLE_FIELDS.values()
             ),
             "namespace_rule_count": len(registry),
             "regex_alternative_terms_estimate": sum(pattern.count("|") + 1 for pattern in patterns),
@@ -1480,6 +1971,7 @@ def oracle_fingerprint(cases: list[dict[str, Any]]) -> str:
                 "declared": _oracle_for_case(case, mode="declared"),
                 "raw": _oracle_for_case(case, mode="raw"),
                 "designation": _designation_oracle_for_case(case),
+                "stewardship": _stewardship_oracle_for_case(case),
             }
         )
     return _stable_fingerprint(payload)
@@ -1502,9 +1994,11 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
     explicit_declared = 0
     explicit_raw = 0
     explicit_designation = 0
+    explicit_stewardship = 0
     declared_scored = 0
     raw_scored = 0
     designation_scored = 0
+    stewardship_scored = 0
     legacy_expectation_cases = []
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -1523,13 +2017,21 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "policy_options",
         *DESIGNATION_ORACLE_FIELDS,
     }
+    allowed_stewardship_fields = {
+        "status",
+        "open_policy_fields",
+        "policy_options",
+        *STEWARDSHIP_ORACLE_FIELDS,
+    }
     for index, case in enumerate(cases):
         explicit = case.get("oracle") or {}
         if "oracle" in case and not isinstance(case.get("oracle"), dict):
             errors.append({"code": "INVALID_ORACLE_ROOT", "index": index, "case": case.get("case")})
             explicit = {}
         if isinstance(explicit, dict):
-            unknown_modes = sorted(set(explicit) - {"declared", "raw", "designation"})
+            unknown_modes = sorted(
+                set(explicit) - {"declared", "raw", "designation", "stewardship"}
+            )
             if unknown_modes:
                 errors.append(
                     {
@@ -1544,9 +2046,13 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
         explicit_designation += int(
             isinstance(explicit, dict) and isinstance(explicit.get("designation"), dict)
         )
+        explicit_stewardship += int(
+            isinstance(explicit, dict) and isinstance(explicit.get("stewardship"), dict)
+        )
         declared_scored += int(_oracle_for_case(case, mode="declared")["scored"])
         raw_scored += int(_oracle_for_case(case, mode="raw")["scored"])
         designation_scored += int(_designation_oracle_for_case(case)["scored"])
+        stewardship_scored += int(_stewardship_oracle_for_case(case)["scored"])
         override_keys = sorted(key for key in case if key.endswith("_by_doctrine"))
         if override_keys:
             doctrine_override_cases.append(
@@ -1762,6 +2268,258 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
                                     "fields": missing_evidence,
                                 }
                             )
+            stewardship_oracle = explicit.get("stewardship")
+            if stewardship_oracle is not None:
+                if not isinstance(stewardship_oracle, dict):
+                    errors.append(
+                        {
+                            "code": "INVALID_STEWARDSHIP_ORACLE",
+                            "index": index,
+                            "case": case.get("case"),
+                        }
+                    )
+                else:
+                    unknown_fields = sorted(
+                        set(stewardship_oracle) - allowed_stewardship_fields
+                    )
+                    if unknown_fields:
+                        errors.append(
+                            {
+                                "code": "UNKNOWN_STEWARDSHIP_ORACLE_FIELDS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": unknown_fields,
+                            }
+                        )
+                    status = str(stewardship_oracle.get("status") or "verified")
+                    if status not in ORACLE_STATUSES:
+                        errors.append(
+                            {
+                                "code": "INVALID_STEWARDSHIP_ORACLE_STATUS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "value": status,
+                            }
+                        )
+                    open_fields = [
+                        str(value)
+                        for value in stewardship_oracle.get("open_policy_fields") or []
+                    ]
+                    invalid_open = sorted(
+                        set(open_fields) - set(STEWARDSHIP_ORACLE_FIELDS)
+                    )
+                    if invalid_open:
+                        errors.append(
+                            {
+                                "code": "INVALID_STEWARDSHIP_OPEN_POLICY_FIELDS",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": invalid_open,
+                            }
+                        )
+                    asserted_open = sorted(
+                        field for field in open_fields if field in stewardship_oracle
+                    )
+                    if asserted_open:
+                        errors.append(
+                            {
+                                "code": "STEWARDSHIP_OPEN_POLICY_FIELD_ASSERTED",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": asserted_open,
+                            }
+                        )
+                    non_boolean = sorted(
+                        field
+                        for field in STEWARDSHIP_ORACLE_FIELDS
+                        if field in stewardship_oracle
+                        and not isinstance(stewardship_oracle[field], bool)
+                    )
+                    if non_boolean:
+                        errors.append(
+                            {
+                                "code": "INVALID_STEWARDSHIP_CAPABILITY_VALUE",
+                                "index": index,
+                                "case": case.get("case"),
+                                "fields": non_boolean,
+                            }
+                        )
+                    if not isinstance(case.get("stewardship"), dict):
+                        errors.append(
+                            {
+                                "code": "MISSING_STEWARDSHIP_METADATA",
+                                "index": index,
+                                "case": case.get("case"),
+                            }
+                        )
+                    else:
+                        metadata = case["stewardship"]
+                        release = metadata.get("geography_release") or {}
+                        edge_type = metadata.get("edge_type")
+                        required_metadata: dict[str, bool] = {
+                            "separates_authority_scope": bool(
+                                metadata.get("authority") and metadata.get("geographic_scope")
+                            ),
+                            "enforces_family_admission": bool(
+                                metadata.get("admission_status")
+                                and metadata.get("identity_promise")
+                                and metadata.get("lifecycle_policy")
+                            ),
+                            "separates_identity_publication": bool(
+                                metadata.get("identity_promise")
+                                and metadata.get("publication_posture")
+                            ),
+                            "preserves_public_resolution": metadata.get("resolution_policy")
+                            == "tombstone_or_successor",
+                            "supports_temporal_identifier_network": bool(
+                                isinstance(metadata.get("identifier_assertions"), list)
+                                and len(metadata["identifier_assertions"]) >= 2
+                                and all(
+                                    isinstance(assertion, dict)
+                                    and assertion.get("identifier")
+                                    and assertion.get("referent_id")
+                                    and assertion.get("valid_from")
+                                    and "valid_to" in assertion
+                                    and assertion.get("assertion_source")
+                                    for assertion in metadata["identifier_assertions"]
+                                )
+                            ),
+                            "covers_admin_water_world": bool(
+                                isinstance(metadata.get("world_partition"), dict)
+                                and metadata["world_partition"].get("world_id")
+                                and metadata["world_partition"].get("surface_class")
+                                in {"land", "water"}
+                                and metadata["world_partition"].get("coverage_complete")
+                                is True
+                                and metadata["world_partition"].get("gap_count") == 0
+                                and metadata["world_partition"].get("overlap_count") == 0
+                                and metadata["world_partition"].get("partition_rule")
+                                and metadata["world_partition"].get("release_id")
+                            ),
+                            "derives_release_scale_hints": bool(
+                                isinstance(metadata.get("scale_hint"), dict)
+                                and metadata["scale_hint"].get("purpose")
+                                in {"zoom", "label_priority", "aggregation", "comparison"}
+                                and metadata["scale_hint"].get("method")
+                                and metadata["scale_hint"].get("input_release_id")
+                                and metadata["scale_hint"].get("output_release_id")
+                                and metadata["scale_hint"].get("source_native_level") is not None
+                                and metadata["scale_hint"].get("field_status") == "derived"
+                                and metadata["scale_hint"].get("affects_identity") is False
+                            ),
+                            "isolates_customer_world_branches": bool(
+                                isinstance(metadata.get("world_branch"), dict)
+                                and metadata["world_branch"].get("world_id")
+                                and metadata["world_branch"].get("branch_id")
+                                and metadata["world_branch"].get("base_release_id")
+                                and metadata["world_branch"].get("namespace_scope")
+                                and metadata["world_branch"].get("resolution_scope")
+                                == "world_and_branch"
+                                and metadata["world_branch"].get("branch_isolated") is True
+                                and metadata["world_branch"].get("official_unchanged") is True
+                                and metadata["world_branch"].get("merge_policy")
+                                == "explicit_reviewed_promotion"
+                            ),
+                            "pins_family_authority": bool(
+                                isinstance(metadata.get("authority_selection"), dict)
+                                and metadata["authority_selection"].get("family_id")
+                                and metadata["authority_selection"].get("authority_id")
+                                and metadata["authority_selection"].get("authority_release_id")
+                                and metadata["authority_selection"].get("source_artifact_id")
+                                and metadata["authority_selection"].get("effective_at")
+                                and metadata["authority_selection"].get("adopted_at")
+                                and metadata["authority_selection"].get("selection_policy")
+                                == "declared_family_authority"
+                                and metadata["authority_selection"].get("official_view_deterministic")
+                                is True
+                                and metadata["authority_selection"].get("latest_wins") is False
+                                and metadata["authority_selection"].get("alternates_preserved") is True
+                            ),
+                            "declares_geometry_distribution": bool(
+                                isinstance(metadata.get("geometry_distribution"), dict)
+                                and metadata["geometry_distribution"].get("profile") == "geometry"
+                                and metadata["geometry_distribution"].get("schema_version")
+                                and metadata["geometry_distribution"].get("access_posture")
+                                in {"public", "customer_world", "restricted"}
+                                and metadata["geometry_distribution"].get("display_precision")
+                                and metadata["geometry_distribution"].get("export_precision")
+                                and metadata["geometry_distribution"].get("generalization_method")
+                                and metadata["geometry_distribution"].get("license")
+                                and metadata["geometry_distribution"].get("attribution")
+                                and metadata["geometry_distribution"].get("privacy_review")
+                                and metadata["geometry_distribution"].get("world_id")
+                                and metadata["geometry_distribution"].get("branch_id")
+                                and metadata["geometry_distribution"].get("data_profile_inherited")
+                                is False
+                            ),
+                            "reproduces_confidence_supersession": bool(
+                                isinstance(metadata.get("confidence_supersession"), dict)
+                                and metadata["confidence_supersession"].get("relationship_method")
+                                and metadata["confidence_supersession"].get("relationship_source")
+                                and metadata["confidence_supersession"].get("algorithm_version")
+                                and metadata["confidence_supersession"].get("threshold_version")
+                                and "score" in metadata["confidence_supersession"]
+                                and metadata["confidence_supersession"].get("score_semantics")
+                                and metadata["confidence_supersession"].get("supersession_status")
+                                in {"candidate", "confirmed", "none"}
+                                and isinstance(
+                                    metadata["confidence_supersession"].get("successor_ids"), list
+                                )
+                                and metadata["confidence_supersession"].get("evidence_artifact_id")
+                                and metadata["confidence_supersession"].get("release_id")
+                                and metadata["confidence_supersession"].get("default_score_used")
+                                is False
+                            ),
+                            "preserves_multiaxial_time": all(
+                                metadata.get(field)
+                                for field in ("effective_at", "published_at", "adopted_at")
+                            ),
+                            "supports_pinnable_release": bool(
+                                isinstance(release, dict)
+                                and release.get("geography_release_id")
+                                and release.get("components")
+                                and release.get("content_hash")
+                            ),
+                            "hashes_artifacts_not_referents": bool(
+                                metadata.get("referent_id")
+                                and metadata.get("artifact_id")
+                                and metadata.get("artifact_content_hash")
+                                and metadata.get("referent_id") != metadata.get("artifact_content_hash")
+                            ),
+                            "preserves_relationship_provenance": bool(
+                                metadata.get("relationship_method")
+                                and metadata.get("relationship_source")
+                                and metadata.get("reproducibility")
+                            ),
+                            "guards_same_as": bool(
+                                edge_type
+                                and (
+                                    edge_type != "same_as"
+                                    or (
+                                        metadata.get("identity_confidence") is not None
+                                        and metadata.get("relationship_source")
+                                    )
+                                )
+                            ),
+                            "prefers_direct_crosswalk": metadata.get("crosswalk_selection_policy")
+                            == "direct_authoritative_then_admin_pivot",
+                            "declares_pack_projection": metadata.get("pack_projection")
+                            in {"source_era_primary", "present_allocation_explicit"},
+                        }
+                        missing_evidence = sorted(
+                            field
+                            for field, supported in required_metadata.items()
+                            if stewardship_oracle.get(field) is True and not supported
+                        )
+                        if missing_evidence:
+                            errors.append(
+                                {
+                                    "code": "MISSING_STEWARDSHIP_EVIDENCE",
+                                    "index": index,
+                                    "case": case.get("case"),
+                                    "fields": missing_evidence,
+                                }
+                            )
     if missing_case_names:
         errors.append({"code": "MISSING_CASE_NAME", "indexes": missing_case_names})
     if missing_identifiers:
@@ -1790,9 +2548,11 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
             "explicit_declared_cases": explicit_declared,
             "explicit_raw_cases": explicit_raw,
             "explicit_designation_cases": explicit_designation,
+            "explicit_stewardship_cases": explicit_stewardship,
             "declared_scored_cases": declared_scored,
             "raw_scored_cases": raw_scored,
             "designation_scored_cases": designation_scored,
+            "stewardship_scored_cases": stewardship_scored,
         },
         "legacy_doctrine_override_cases": doctrine_override_cases,
         "legacy_doctrine_override_case_count": len(doctrine_override_cases),
@@ -1815,6 +2575,11 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
     designation_assertions = sum(result["oracle_assertions"] for result in designation)
     designation_assertions_passed = sum(
         result["oracle_assertions_passed"] for result in designation
+    )
+    stewardship = evaluate_stewardship_cases(cases, doctrine=doctrine_name)
+    stewardship_assertions = sum(result["oracle_assertions"] for result in stewardship)
+    stewardship_assertions_passed = sum(
+        result["oracle_assertions_passed"] for result in stewardship
     )
     audit = registry_audit(cases, doctrine=doctrine_name)
     return {
@@ -1866,6 +2631,25 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
             ),
             "oracle_failure_cases": sum(result["signal"] == "oracle_failure" for result in designation),
         },
+        "stewardship": {
+            "case_count": len(stewardship),
+            "scored_cases": sum(bool(result["oracle"]["scored"]) for result in stewardship),
+            "unscored_cases": sum(not result["oracle"]["scored"] for result in stewardship),
+            "oracle_assertions": stewardship_assertions,
+            "oracle_assertions_passed": stewardship_assertions_passed,
+            "assertion_accuracy": (
+                round(stewardship_assertions_passed / stewardship_assertions, 6)
+                if stewardship_assertions
+                else None
+            ),
+            "clean_scored_cases": sum(
+                bool(result["oracle"]["scored"]) and bool(result["gate_ok"])
+                for result in stewardship
+            ),
+            "oracle_failure_cases": sum(
+                result["signal"] == "oracle_failure" for result in stewardship
+            ),
+        },
         "registry": {
             "recognized_cases": audit["recognized_cases"],
             "overlap_count": audit["overlap_count"],
@@ -1874,5 +2658,6 @@ def doctrine_scorecard(cases: list[dict[str, Any]], *, doctrine: str | None = No
         },
         "complexity": doctrine_manifest(doctrine_name)["complexity"],
         "gate_ok": all(bool(result["gate_ok"]) for result in dual_results)
-        and all(bool(result["gate_ok"]) for result in designation),
+        and all(bool(result["gate_ok"]) for result in designation)
+        and all(bool(result["gate_ok"]) for result in stewardship),
     }

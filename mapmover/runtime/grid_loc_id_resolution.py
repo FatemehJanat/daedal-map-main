@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 import pandas as pd
-from shapely.geometry import box, shape
+from shapely.geometry import Point, box, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.strtree import STRtree
 
@@ -137,25 +137,98 @@ def build_centered_grid_cell_rows(
     cell_width_deg: float,
     cell_height_deg: float,
     cell_id_field: str = "cell_id",
+    registration: str = "center",
+    longitude_domain: str = "-180_180",
+    antimeridian_policy: str = "reject",
+    latitude_boundary_policy: str = "reject",
 ) -> list[dict[str, Any]]:
-    """Expand center-point rows into bbox-backed cell rows."""
+    """Expand registered lon/lat coordinates into cell footprints.
+
+    Registration is part of raster identity.  ``center`` is appropriate for
+    ERA-style coordinate arrays; ``upper_left`` and ``lower_left`` describe
+    edge/corner registered rasters.  Wrapped cells can either be rejected or
+    represented as split MultiPolygons on the normalized longitude domain.
+    """
     half_width = float(cell_width_deg) / 2.0
     half_height = float(cell_height_deg) / 2.0
     if half_width <= 0 or half_height <= 0:
         raise ValueError("cell_width_deg and cell_height_deg must be positive")
 
+    registration = str(registration or "center").strip().lower()
+    if registration not in {"center", "upper_left", "lower_left"}:
+        raise ValueError("registration must be 'center', 'upper_left', or 'lower_left'")
+    longitude_domain = str(longitude_domain or "-180_180").strip().lower()
+    if longitude_domain not in {"-180_180", "0_360"}:
+        raise ValueError("longitude_domain must be '-180_180' or '0_360'")
+    antimeridian_policy = str(antimeridian_policy or "reject").strip().lower()
+    if antimeridian_policy not in {"reject", "split"}:
+        raise ValueError("antimeridian_policy must be 'reject' or 'split'")
+    latitude_boundary_policy = str(latitude_boundary_policy or "reject").strip().lower()
+    if latitude_boundary_policy not in {"reject", "clip"}:
+        raise ValueError("latitude_boundary_policy must be 'reject' or 'clip'")
+
     rows: list[dict[str, Any]] = []
     for idx, row in enumerate(center_rows):
         lon = float(row[lon_field])
         lat = float(row[lat_field])
+        if not math.isfinite(lon) or not math.isfinite(lat):
+            raise ValueError("grid center coordinates must be finite")
+        if longitude_domain == "0_360":
+            if lon < 0.0 or lon > 360.0:
+                raise ValueError("0_360 grid longitude must be between 0 and 360")
+            normalized_lon = lon - 360.0 if lon > 180.0 else lon
+        else:
+            normalized_lon = lon
+        if normalized_lon < -180.0 or normalized_lon > 180.0 or lat < -90.0 or lat > 90.0:
+            raise ValueError(
+                "grid center coordinates must use normalized EPSG:4326 longitude/latitude"
+            )
+        if registration == "center":
+            west, east = normalized_lon - half_width, normalized_lon + half_width
+            south, north = lat - half_height, lat + half_height
+        elif registration == "upper_left":
+            west, east = normalized_lon, normalized_lon + (2.0 * half_width)
+            south, north = lat - (2.0 * half_height), lat
+        else:
+            west, east = normalized_lon, normalized_lon + (2.0 * half_width)
+            south, north = lat, lat + (2.0 * half_height)
+        if west < -180.0 or east > 180.0:
+            if antimeridian_policy == "reject":
+                raise ValueError(
+                    "grid cell crosses the antimeridian; use antimeridian_policy='split'"
+                )
+        if south < -90.0 or north > 90.0:
+            if latitude_boundary_policy == "reject":
+                raise ValueError("grid cell footprint exceeds the latitude domain")
+            south = max(-90.0, south)
+            north = min(90.0, north)
         cell_id = str(row.get(cell_id_field) or f"cell_{idx}").strip()
         out = dict(row)
         out[cell_id_field] = cell_id
-        out["bbox"] = [lon - half_width, lat - half_height, lon + half_width, lat + half_height]
-        out["center_lon"] = lon
-        out["center_lat"] = lat
+        if west < -180.0:
+            out["geometry"] = {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[-180.0, south], [east, south], [east, north], [-180.0, north], [-180.0, south]]],
+                    [[[west + 360.0, south], [180.0, south], [180.0, north], [west + 360.0, north], [west + 360.0, south]]],
+                ],
+            }
+        elif east > 180.0:
+            out["geometry"] = {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[west, south], [180.0, south], [180.0, north], [west, north], [west, south]]],
+                    [[[-180.0, south], [east - 360.0, south], [east - 360.0, north], [-180.0, north], [-180.0, south]]],
+                ],
+            }
+        else:
+            out["bbox"] = [west, south, east, north]
+        out["center_lon"] = normalized_lon + (half_width if registration != "center" else 0.0)
+        out["center_lat"] = lat + ({"center": 0.0, "upper_left": -half_height, "lower_left": half_height}[registration])
         out["cell_width_deg"] = float(cell_width_deg)
         out["cell_height_deg"] = float(cell_height_deg)
+        out["registration"] = registration
+        out["longitude_domain"] = "-180_180"
         rows.append(out)
     return rows
 
@@ -183,17 +256,23 @@ def _normalize_feature_rows(
     id_field: str,
     loc_id_field: str | None = None,
     validate_loc_ids: bool = False,
+    require_unique_ids: bool = False,
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
         feature_id = str(row.get(id_field) or "").strip()
         if not feature_id:
             continue
+        if require_unique_ids and feature_id in seen_ids:
+            raise ValueError(f"Duplicate {id_field}: {feature_id}")
         geometry = _row_geometry(row)
         if geometry is None or geometry.is_empty:
             continue
+        if not geometry.is_valid:
+            raise ValueError(f"Invalid geometry for {id_field}: {feature_id}")
         record = dict(row)
         record[id_field] = feature_id
         record["_geometry"] = geometry
@@ -206,6 +285,7 @@ def _normalize_feature_rows(
             if validate_loc_ids and classify_grid_target_loc_id(loc_id) is None:
                 raise ValueError(f"Unsupported target loc_id: {loc_id}")
         normalized.append(record)
+        seen_ids.add(feature_id)
     return normalized
 
 
@@ -215,6 +295,7 @@ def build_grid_target_overlaps(
     *,
     cell_id_field: str = "cell_id",
     target_loc_id_field: str = "loc_id",
+    area_method: str = "planar",
 ) -> pd.DataFrame:
     """
     Compute cell-to-target overlap weights from supplied geometries or bboxes.
@@ -224,7 +305,28 @@ def build_grid_target_overlaps(
     - `bbox`: [west, south, east, north]
     - explicit bounds fields such as `west/south/east/north`
     """
-    cells = _normalize_feature_rows(cell_rows, id_field=cell_id_field)
+    area_method = str(area_method or "planar").strip().lower()
+    if area_method not in {"planar", "geodesic"}:
+        raise ValueError("area_method must be 'planar' or 'geodesic'")
+    geod = None
+    if area_method == "geodesic":
+        try:
+            from pyproj import Geod
+        except ImportError as exc:
+            raise RuntimeError("pyproj is required for geodesic overlap areas") from exc
+        geod = Geod(ellps="WGS84")
+
+    def measured_area(geometry: BaseGeometry) -> float:
+        if geod is None:
+            return float(geometry.area)
+        area, _ = geod.geometry_area_perimeter(geometry)
+        return abs(float(area))
+
+    cells = _normalize_feature_rows(
+        cell_rows,
+        id_field=cell_id_field,
+        require_unique_ids=True,
+    )
     targets = _normalize_feature_rows(
         target_rows,
         id_field=target_loc_id_field,
@@ -249,7 +351,7 @@ def build_grid_target_overlaps(
 
     for cell in cells:
         cell_geom = cell["_geometry"]
-        cell_area = float(cell["_geometry_area"] or 0.0)
+        cell_area = measured_area(cell_geom)
         if cell_area <= 0.0:
             continue
         for match in tree.query(cell_geom):
@@ -266,10 +368,10 @@ def build_grid_target_overlaps(
             intersection = cell_geom.intersection(candidate)
             if intersection.is_empty:
                 continue
-            overlap_area = float(intersection.area)
+            overlap_area = measured_area(intersection)
             if overlap_area <= 0.0:
                 continue
-            target_area = float(target["_geometry_area"] or 0.0)
+            target_area = measured_area(candidate)
             records.append(
                 {
                     cell_id_field: cell[cell_id_field],
@@ -282,6 +384,42 @@ def build_grid_target_overlaps(
             )
 
     return pd.DataFrame.from_records(records)
+
+
+def resolve_point_to_grid_cells(
+    cell_rows: list[dict[str, Any]],
+    *,
+    lon: float,
+    lat: float,
+    cell_id_field: str = "cell_id",
+    boundary_policy: str = "all",
+) -> list[str]:
+    """Resolve a point without hiding boundary ambiguity.
+
+    ``covers`` intentionally includes cell edges.  Callers must choose whether
+    to retain all matches, deterministically select the lowest id, or reject an
+    ambiguous point.
+    """
+    point = Point(float(lon), float(lat))
+    if not math.isfinite(point.x) or not math.isfinite(point.y):
+        raise ValueError("point coordinates must be finite")
+    matches = sorted(
+        row[cell_id_field]
+        for row in _normalize_feature_rows(
+            cell_rows, id_field=cell_id_field, require_unique_ids=True
+        )
+        if row["_geometry"].covers(point)
+    )
+    policy = str(boundary_policy or "all").strip().lower()
+    if policy == "all":
+        return matches
+    if policy == "lowest_id":
+        return matches[:1]
+    if policy == "error":
+        if len(matches) > 1:
+            raise ValueError(f"point lies on a shared cell boundary: {matches}")
+        return matches
+    raise ValueError("boundary_policy must be 'all', 'lowest_id', or 'error'")
 
 
 def normalize_overlap_weights(
@@ -310,7 +448,12 @@ def normalize_overlap_weights(
     else:
         raise ValueError("group_by must be 'cell' or 'target'")
 
-    overlaps_df[fraction_field] = pd.to_numeric(overlaps_df[fraction_field], errors="coerce").fillna(0.0)
+    fractions = pd.to_numeric(overlaps_df[fraction_field], errors="coerce")
+    if fractions.isna().any() or (~fractions.map(math.isfinite)).any():
+        raise ValueError(f"{fraction_field} must contain finite numbers")
+    if (fractions < 0).any():
+        raise ValueError(f"{fraction_field} must not contain negative values")
+    overlaps_df[fraction_field] = fractions
     denom = overlaps_df.groupby(group_cols, dropna=False)[fraction_field].transform("sum")
     overlaps_df[normalized_field] = overlaps_df[fraction_field] / denom.where(denom > 0, other=pd.NA)
     return overlaps_df
@@ -353,6 +496,7 @@ def aggregate_grid_to_loc_ids(
     aggregation_method: str = "area_weighted_mean",
     metric_aggregations: dict[str, str] | None = None,
     metric_stats: dict[str, list[str]] | None = None,
+    nodata_policy: str = "exclude",
 ) -> pd.DataFrame:
     """
     Aggregate cell metrics to loc_ids using overlap-derived cell fractions.
@@ -361,6 +505,9 @@ def aggregate_grid_to_loc_ids(
     Count/sum metrics should be pre-expressed at the cell level and use the
     same weighting so partial cell overlap contributes proportionally.
     """
+    nodata_policy = str(nodata_policy or "exclude").strip().lower()
+    if nodata_policy not in {"exclude", "propagate"}:
+        raise ValueError("nodata_policy must be 'exclude' or 'propagate'")
     time_columns = list(time_columns or [])
     cells_df = pd.DataFrame(cell_rows).copy()
     if cells_df.empty:
@@ -370,6 +517,13 @@ def aggregate_grid_to_loc_ids(
     if overlaps_df.empty:
         columns = [target_loc_id_field, *time_columns, *metric_columns]
         return pd.DataFrame(columns=columns)
+
+    fractions = pd.to_numeric(overlaps_df["cell_fraction"], errors="coerce")
+    if fractions.isna().any() or (~fractions.map(math.isfinite)).any():
+        raise ValueError("cell_fraction must contain finite numbers")
+    if (fractions < 0).any():
+        raise ValueError("cell_fraction must not contain negative values")
+    overlaps_df["cell_fraction"] = fractions
 
     merged = overlaps_df.merge(cells_df, on=cell_id_field, how="inner")
     if merged.empty:
@@ -386,15 +540,26 @@ def aggregate_grid_to_loc_ids(
         row["weight_sum"] = float(weight_sum)
         row["source_cell_count"] = int(group[cell_id_field].nunique())
         for metric in metric_columns:
-            values = pd.to_numeric(group[metric], errors="coerce")
             weights = pd.to_numeric(group["cell_fraction"], errors="coerce").fillna(0.0)
+            mode = _resolve_metric_aggregation(metric, aggregation_method, metric_aggregations)
+            categorical = mode in {"majority", "weighted_mode", "categorical_majority"}
+            raw_values = group[metric]
+            values = raw_values if categorical else pd.to_numeric(raw_values, errors="coerce")
             valid = values.notna() & (weights > 0)
+            valid_weight_sum = float(weights[valid].sum())
+            positive_weight_sum = float(weights[weights > 0].sum())
+            row[f"{metric}__valid_weight_sum"] = valid_weight_sum
+            row[f"{metric}__coverage_fraction"] = (
+                valid_weight_sum / positive_weight_sum if positive_weight_sum > 0 else 0.0
+            )
             if not valid.any():
+                row[metric] = None
+                continue
+            if nodata_policy == "propagate" and valid_weight_sum < positive_weight_sum:
                 row[metric] = None
                 continue
             valid_values = values[valid]
             valid_weights = weights[valid]
-            mode = _resolve_metric_aggregation(metric, aggregation_method, metric_aggregations)
             if mode in {"area_weighted_mean", "weighted_mean", "mean"}:
                 weighted_total = float((valid_values * valid_weights).sum())
                 denom = float(valid_weights.sum())
@@ -405,6 +570,15 @@ def aggregate_grid_to_loc_ids(
                 row[metric] = float(valid_values.max())
             elif mode == "min":
                 row[metric] = float(valid_values.min())
+            elif categorical:
+                totals: dict[str, float] = {}
+                originals: dict[str, Any] = {}
+                for value, weight in zip(valid_values.tolist(), valid_weights.tolist()):
+                    key = str(value)
+                    totals[key] = totals.get(key, 0.0) + float(weight)
+                    originals.setdefault(key, value)
+                winner = sorted(totals, key=lambda key: (-totals[key], key))[0]
+                row[metric] = originals[winner]
             else:
                 raise ValueError(f"Unsupported aggregation mode for {metric}: {mode}")
             requested_stats = [str(stat or "").strip().lower() for stat in (metric_stats or {}).get(metric, []) if str(stat or "").strip()]

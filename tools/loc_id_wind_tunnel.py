@@ -20,9 +20,11 @@ from mapmover.runtime.loc_id_identity_doctrine import (
     doctrine_decisions,
     doctrine_scorecard,
     evaluate_designation_cases,
+    evaluate_stewardship_cases,
     evaluate_dual_mode_cases,
     evaluate_identity_cases,
     registry_audit,
+    stewardship_ablation_report,
 )
 
 DEFAULT_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "loc_id_wind_tunnel_samples.json"
@@ -63,6 +65,7 @@ def _render_policy_rules(doctrine: str) -> list[str]:
             f"{complexity['policy_rule_count']} policy rules; "
             f"{complexity['nonbaseline_policy_rule_count']} nonbaseline rules; "
             f"{complexity['enabled_designation_capability_count']} enabled designation capabilities; "
+            f"{complexity['enabled_stewardship_capability_count']} enabled stewardship capabilities; "
             f"{complexity['namespace_rule_count']} namespace rules; "
             f"~{complexity['regex_alternative_terms_estimate']} regex alternatives; "
             f"{complexity['pattern_characters']} pattern characters.",
@@ -156,6 +159,76 @@ def _render_designation_markdown(results: list[dict[str, Any]], doctrine: str) -
     return "\n".join(lines) + "\n"
 
 
+def _render_stewardship_markdown(results: list[dict[str, Any]], doctrine: str) -> str:
+    lines = [
+        "# loc_id Wind Tunnel Stewardship Report",
+        "",
+        *_render_policy_rules(doctrine),
+        "Stewardship assertions test durability, provenance, and reproducibility against independent evidence.",
+        "",
+        "| Signal | Case | System | Assertions | Passed | Missing capabilities |",
+        "|---|---|---|---:|---:|---|",
+    ]
+    for result in results:
+        lines.append(
+            "| {signal} | {case} | {system} | {assertions} | {passed} | {failed} |".format(
+                signal=_md(result["signal"]),
+                case=_md(result["case"]),
+                system=_md(result.get("source_system")),
+                assertions=result["oracle_assertions"],
+                passed=result["oracle_assertions_passed"],
+                failed=_md(", ".join(result["failed_capabilities"]) or "none"),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _render_ablation_markdown(cases: list[dict[str, Any]], doctrine: str) -> str:
+    report = stewardship_ablation_report(cases, doctrine=doctrine)
+    baseline = report["baseline"]
+    lines = [
+        "# loc_id Wind Tunnel Stewardship Ablation",
+        "",
+        f"Doctrine: `{doctrine}`",
+        "",
+        f"Doctrine fingerprint: `{report['doctrine_fingerprint']}`",
+        "",
+        f"Oracle fingerprint: `{report['oracle_fingerprint']}`",
+        "",
+        f"Baseline: {baseline['oracle_assertions_passed']}/{baseline['oracle_assertions']} assertions across {baseline['case_count']} cases.",
+        "",
+        f"Every stewardship rule has observed contribution: {report['all_rules_have_observed_contribution']}",
+        "",
+        "Capabilities with fewer than two supporting cases: "
+        + (
+            ", ".join(report["capabilities_below_two_supporting_cases"])
+            or "none"
+        ),
+        "",
+        "Evidence concentration: "
+        + "; ".join(
+            f"{case}={count}" for case, count in report["case_concentration"].items()
+        ),
+        "",
+        "| Capability disabled | Executable rule | Assertion loss | Failing cases | Cases |",
+        "|---|---|---:|---:|---|",
+    ]
+    for mutation in report["mutations"]:
+        cases_text = ", ".join(
+            str(failure["case"]) for failure in mutation["failure_cases"]
+        ) or "none"
+        lines.append(
+            "| {capability} | {rule} | {loss} | {case_count} | {cases} |".format(
+                capability=_md(mutation["capability"]),
+                rule=_md(mutation["rule"]),
+                loss=mutation["assertion_loss"],
+                case_count=mutation["failure_case_count"],
+                cases=_md(cases_text),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _render_compare_markdown(results: list[dict[str, Any]], left: str, right: str) -> str:
     rule_differences = compare_doctrine_rules(left, right)
     left_manifest = doctrine_manifest(left)
@@ -213,17 +286,18 @@ def _render_matrix_markdown(cases: list[dict[str, Any]]) -> str:
         "",
         "Doctrine-specific expected answers are excluded. Raw cases are unscored until they declare `oracle.raw`.",
         "",
-        "| Doctrine | Rule ID | Declared assertions | Passed | Accuracy | Clean scored cases | Known issue cases | Unexpected cases | Open-policy cases | Designation assertions | Passed | Accuracy | Active designation capabilities | Raw scored | Raw deltas | Overlaps | Specific collisions | Namespace rules | Regex terms |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Doctrine | Rule ID | Declared assertions | Passed | Accuracy | Clean scored cases | Known issue cases | Unexpected cases | Open-policy cases | Designation assertions | Passed | Accuracy | Active designation capabilities | Stewardship assertions | Passed | Accuracy | Active stewardship capabilities | Raw scored | Raw deltas | Overlaps | Specific collisions | Namespace rules | Regex terms |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for doctrine in doctrines:
         score = doctrine_scorecard(cases, doctrine=doctrine)
         declared = score["declared"]
         raw = score["raw"]
         designation = score["designation"]
+        stewardship = score["stewardship"]
         complexity = score["complexity"]
         lines.append(
-            "| {doctrine} | `{rule_id}` | {assertions} | {passed} | {accuracy} | {clean} | {known} | {unexpected} | {open_policy} | {designation_assertions} | {designation_passed} | {designation_accuracy} | {designation_capabilities} | {raw_scored} | {raw_deltas} | {overlaps} | {specific_collisions} | {namespace_rules} | {regex_terms} |".format(
+            "| {doctrine} | `{rule_id}` | {assertions} | {passed} | {accuracy} | {clean} | {known} | {unexpected} | {open_policy} | {designation_assertions} | {designation_passed} | {designation_accuracy} | {designation_capabilities} | {stewardship_assertions} | {stewardship_passed} | {stewardship_accuracy} | {stewardship_capabilities} | {raw_scored} | {raw_deltas} | {overlaps} | {specific_collisions} | {namespace_rules} | {regex_terms} |".format(
                 doctrine=doctrine,
                 rule_id=score["doctrine_fingerprint"][:12],
                 assertions=declared["oracle_assertions"],
@@ -237,6 +311,10 @@ def _render_matrix_markdown(cases: list[dict[str, Any]]) -> str:
                 designation_passed=designation["oracle_assertions_passed"],
                 designation_accuracy=designation["assertion_accuracy"],
                 designation_capabilities=complexity["enabled_designation_capability_count"],
+                stewardship_assertions=stewardship["oracle_assertions"],
+                stewardship_passed=stewardship["oracle_assertions_passed"],
+                stewardship_accuracy=stewardship["assertion_accuracy"],
+                stewardship_capabilities=complexity["enabled_stewardship_capability_count"],
                 raw_scored=raw["scored_cases"],
                 raw_deltas=raw["declared_delta_cases"],
                 overlaps=score["registry"]["overlap_count"],
@@ -311,9 +389,11 @@ def _render_audit_markdown(cases: list[dict[str, Any]], doctrine: str) -> str:
         f"Explicit declared oracles: {oracle['explicit_declared_cases']}; "
         f"explicit raw oracles: {oracle['explicit_raw_cases']}; "
         f"explicit designation oracles: {oracle['explicit_designation_cases']}; "
+        f"explicit stewardship oracles: {oracle['explicit_stewardship_cases']}; "
         f"declared scored cases: {oracle['declared_scored_cases']}; "
         f"raw scored cases: {oracle['raw_scored_cases']}; "
-        f"designation scored cases: {oracle['designation_scored_cases']}.",
+        f"designation scored cases: {oracle['designation_scored_cases']}; "
+        f"stewardship scored cases: {oracle['stewardship_scored_cases']}.",
         "",
         f"Legacy doctrine-specific expectation cases excluded from scoring: {corpus['legacy_doctrine_override_case_count']}",
         "",
@@ -372,7 +452,7 @@ def main() -> int:
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     parser.add_argument(
         "--mode",
-        choices=("single", "dual", "designation", "compare", "matrix", "rules", "audit", "decisions"),
+        choices=("single", "dual", "designation", "stewardship", "ablation", "compare", "matrix", "rules", "audit", "decisions"),
         default="single",
     )
     doctrine_choices = tuple(DOCTRINE_PROFILES)
@@ -383,7 +463,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cases = _load_cases(args.fixture)
-    if args.mode in {"matrix", "rules", "audit", "decisions"}:
+    if args.mode in {"matrix", "rules", "audit", "ablation", "decisions"}:
         results = []
     elif args.mode == "compare":
         results = compare_doctrine_cases(cases, left=args.left_doctrine, right=args.right_doctrine)
@@ -391,6 +471,8 @@ def main() -> int:
         results = evaluate_dual_mode_cases(cases, doctrine=args.doctrine)
     elif args.mode == "designation":
         results = evaluate_designation_cases(cases, doctrine=args.doctrine)
+    elif args.mode == "stewardship":
+        results = evaluate_stewardship_cases(cases, doctrine=args.doctrine)
     else:
         results = evaluate_identity_cases(cases, doctrine=args.doctrine)
     if args.mode == "rules":
@@ -417,6 +499,12 @@ def main() -> int:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(_render_decisions_markdown(), end="")
+    elif args.mode == "ablation":
+        report = stewardship_ablation_report(cases, doctrine=args.doctrine)
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(_render_ablation_markdown(cases, args.doctrine), end="")
     elif args.mode == "matrix":
         if args.format == "json":
             payload = {
@@ -453,6 +541,8 @@ def main() -> int:
         print(_render_dual_markdown(results, args.doctrine), end="")
     elif args.mode == "designation":
         print(_render_designation_markdown(results, args.doctrine), end="")
+    elif args.mode == "stewardship":
+        print(_render_stewardship_markdown(results, args.doctrine), end="")
     else:
         print(_render_markdown(results, args.doctrine), end="")
 
@@ -463,7 +553,7 @@ def main() -> int:
                 for doctrine in DOCTRINE_PROFILES
             ):
                 return 1
-        elif args.mode in {"single", "dual", "designation", "compare"} and any(
+        elif args.mode in {"single", "dual", "designation", "stewardship", "compare"} and any(
             result.get("gate_ok") is False for result in results
         ):
             return 1
