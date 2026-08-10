@@ -105,6 +105,8 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(payload["resolved_count"], 2)
         self.assertEqual(payload["results"][0]["row_index"], 10)
         bulk_mock.assert_called_once()
+        self.assertFalse(bulk_mock.call_args.kwargs["include_geometry"])
+        self.assertIsNone(bulk_mock.call_args.kwargs["target_admin_level"])
 
     def test_point_lookup_batch_endpoint_challenges_over_free_limit(self) -> None:
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:

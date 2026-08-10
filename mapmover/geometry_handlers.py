@@ -93,7 +93,14 @@ GEOMETRY_METADATA_COLUMNS.extend([
     "valid_from_date",
     "valid_to_date",
     "geometry_vintage",
+    "source_vintage",
+    "reference_date",
+    "source_id",
+    "source_system",
+    "geometry_source",
     "bank_id",
+    "release_id",
+    "geography_release_id",
 ])
 
 
@@ -761,19 +768,27 @@ def _load_subcounty_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list
     if not sub_admin_levels:
         return pd.DataFrame()
 
+    # A loc_id path is an identity namespace, not a promise that hyphen count
+    # equals admin_level. Canada intentionally embeds its CD prefix inside CSD
+    # and finer source codes, so admin_4/admin_5 IDs are one segment shallower
+    # than a generic path counter expects. Probe the country's declared deep
+    # banks by exact ID instead of guessing the bank from string depth.
     grouped: dict[tuple[int, str | None], list[str]] = {}
+    configured_levels = sorted(
+        int(key.split("_", 1)[1])
+        for key in sub_admin_levels
+        if str(key).startswith("admin_") and str(key).split("_", 1)[1].isdigit()
+    )
+    by_state: dict[str | None, list[str]] = {}
     for loc_id in requested_ids:
         parts = str(loc_id).split("-")
         if not parts or parts[0] != iso3:
             continue
-        segment_count = len(parts)
-        if segment_count < 4:
-            continue
-        admin_level = segment_count - 1
-        if f"admin_{admin_level}" not in sub_admin_levels:
-            continue
         state_abbrev = parts[1] if len(parts) >= 2 else None
-        grouped.setdefault((admin_level, state_abbrev), []).append(loc_id)
+        by_state.setdefault(state_abbrev, []).append(loc_id)
+    for admin_level in configured_levels:
+        for state_abbrev, state_ids in by_state.items():
+            grouped[(admin_level, state_abbrev)] = state_ids
 
     frames = []
     for (admin_level, state_abbrev), group_ids in grouped.items():
@@ -1193,6 +1208,24 @@ def _row_state_abbrev(row) -> str | None:
     return _state_code_from_row(row)
 
 
+def _compact_point_stack_entry(row) -> dict:
+    """Return the intentionally small public point-chain representation."""
+    entry = {
+        "loc_id": row.get("loc_id"),
+        "name": row.get("name"),
+        "admin_level": int(row.get("admin_level", 0)),
+    }
+    vintage = _geometry_metadata_value(
+        row,
+        "reference_date",
+        "source_vintage",
+        "geometry_vintage",
+    )
+    if vintage is not None:
+        entry["vintage"] = vintage
+    return entry
+
+
 def _add_timing_ms(timing_ms: dict[str, int] | None, key: str, started_at: float) -> None:
     if timing_ms is None:
         return
@@ -1203,7 +1236,7 @@ def resolve_points_to_locations(
     points: list[dict],
     include_geometry: bool = False,
     timing_ms: dict[str, int] | None = None,
-    target_admin_level: int | None = 2,
+    target_admin_level: int | None = None,
     max_admin_level: int | None = None,
     country_scope: str | None = None,
 ):
@@ -1301,6 +1334,11 @@ def resolve_points_to_locations(
             admin2_match = admin2_spine_match.row if admin2_spine_match is not None else None
             item["admin1_match"] = admin1_match
             item["admin2_match"] = admin2_match
+            item["matches_by_level"] = {
+                0: item["country_match"],
+                **({1: admin1_match} if admin1_match is not None else {}),
+                **({2: admin2_match} if admin2_match is not None else {}),
+            }
             if target_admin_level is not None and target_admin_level <= 0:
                 item["deepest_row"] = item["country_match"]
             elif target_admin_level == 1:
@@ -1358,18 +1396,17 @@ def resolve_points_to_locations(
                 stage_started = time.perf_counter()
                 deep_index = geometry_spine_index_for_frame(df)
 
-                def _deep_parent_filter(row, item):
-                    parent_scope = item.get("parent_scope")
-                    if not parent_scope or "parent_id" not in row.index:
-                        return True
-                    parent_id = str(row.get("parent_id") or "")
-                    return parent_id == str(parent_scope) or parent_id.startswith(str(parent_scope) + "-")
-
-                deep_matches = deep_index.match_points(grouped_items, row_filter=_deep_parent_filter) if deep_index is not None else [None] * len(grouped_items)
+                # Point context is resolved independently at every depth. This is
+                # deliberately not filtered through the preceding row's strict
+                # parent_id: the latest available fine tier can be older than a
+                # newly published shallow tier. Strict parent traversal belongs
+                # to one pinned release and is exposed by loc_id_info/scope tools.
+                deep_matches = deep_index.match_points(grouped_items) if deep_index is not None else [None] * len(grouped_items)
                 for item, deep_spine_match in zip(grouped_items, deep_matches):
                     match_row = deep_spine_match.row if deep_spine_match is not None else None
                     if match_row is not None:
                         item["deepest_row"] = match_row
+                        item.setdefault("matches_by_level", {})[admin_level] = match_row
                         item["parent_scope"] = canonicalize_loc_id(match_row.get("loc_id"))
                 _add_timing_ms(timing_ms, f"{iso3}_admin{admin_level}_match_ms", stage_started)
 
@@ -1390,7 +1427,7 @@ def resolve_points_to_locations(
             available_deeper_levels = [
                 f"admin_{level}"
                 for level in supported_deep_levels
-                if target_admin_level is None or level > target_admin_level
+                if target_admin_level is not None and level > target_admin_level
             ]
             if target_admin_level is not None and deepest_level != target_admin_level:
                 error_code = (
@@ -1423,13 +1460,11 @@ def resolve_points_to_locations(
                     },
                 }
                 continue
-            stack = []
-            for row in (country_match, item.get("admin1_match"), item.get("admin2_match")):
-                if row is None:
-                    continue
-                stack.append({"loc_id": row.get("loc_id"), "name": row.get("name"), "admin_level": int(row.get("admin_level", 0))})
-            if deepest_level >= 3 and deepest_row is not None:
-                stack.append({"loc_id": deepest_loc_id, "name": deepest_name, "admin_level": deepest_level})
+            stack = [
+                _compact_point_stack_entry(row)
+                for level, row in sorted((item.get("matches_by_level") or {}).items())
+                if row is not None and level <= deepest_level
+            ]
             result = {
                 "point": {"lon": lon, "lat": lat},
                 "country": {"loc_id": iso3, "name": country_name},
@@ -1441,6 +1476,7 @@ def resolve_points_to_locations(
                     "iso3": iso3,
                 },
                 "stack": stack,
+                "resolution_mode": "latest_available_per_depth",
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
                 "deeper_available": bool(available_deeper_levels),
                 "available_deeper_admin_levels": available_deeper_levels,
@@ -1781,6 +1817,33 @@ def get_location_places(loc_id: str):
     }
 
 
+def _append_location_version_metadata(result: dict, row) -> dict:
+    field_aliases = {
+        "valid_from": ("valid_from", "valid_from_date"),
+        "valid_to": ("valid_to", "valid_to_date"),
+        "geometry_vintage": ("geometry_vintage",),
+        "source_vintage": ("source_vintage", "reference_date"),
+        "source_id": ("source_id",),
+        "source_system": ("source_system",),
+        "geometry_source": ("geometry_source",),
+        "bank_id": ("bank_id",),
+        "release_id": ("geography_release_id", "release_id"),
+    }
+    for output_key, input_keys in field_aliases.items():
+        value = _geometry_metadata_value(row, *input_keys)
+        if value is not None:
+            result[output_key] = value
+    return result
+
+
+def _location_row_has_polygon(row) -> bool:
+    declared = _geometry_metadata_value(row, "has_polygon")
+    if declared is not None:
+        return bool(declared)
+    geometry = _geometry_metadata_value(row, "geometry")
+    return geometry is not None and str(geometry).strip() not in {"", "null", "None"}
+
+
 def get_location_info(loc_id: str):
     """
     Get detailed information about a specific location for popup display.
@@ -1875,10 +1938,10 @@ def get_location_info(loc_id: str):
                 result["level_names"] = _get_level_names(iso3)
                 result["centroid"] = {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")}
                 result["bbox"] = _bbox_from_feature_props(row.to_dict())
-                result["has_polygon"] = bool(row.get("has_polygon"))
+                result["has_polygon"] = _location_row_has_polygon(row)
                 result["iso3"] = row.get("iso_a3") or iso3
 
-                return result
+                return _append_location_version_metadata(result, row)
 
     # For sub-national, check country parquet
     df = load_country_parquet(iso3)
@@ -1923,10 +1986,10 @@ def get_location_info(loc_id: str):
     result["level_names"] = _get_level_names(iso3)
     result["centroid"] = {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")}
     result["bbox"] = _bbox_from_feature_props(row.to_dict())
-    result["has_polygon"] = bool(row.get("has_polygon"))
+    result["has_polygon"] = _location_row_has_polygon(row)
     result["iso3"] = row.get("iso_a3") or iso3
 
-    return result
+    return _append_location_version_metadata(result, row)
 
 
 def _get_country_memberships(iso3: str) -> list:
@@ -2058,7 +2121,7 @@ def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
     memberships = [
         f"Part of: {', '.join(str(ancestor_names.get(parent_id) or parent_id) for parent_id in ancestor_ids)}"
     ] if ancestor_ids else []
-    return {
+    result = {
         "loc_id": props.get("local_loc_id") or loc_id,
         "name": props.get("name"),
         "admin_level": props.get("admin_level"),
@@ -2080,6 +2143,7 @@ def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
         "water_area": props.get("water_area"),
         "geometry_source": props.get("geometry_source"),
     }
+    return _append_location_version_metadata(result, props)
 
 
 # Default level names (fallback if conversions.json unavailable)
@@ -2125,6 +2189,8 @@ def _read_subcounty_geometry(
             ("bbox_min_lat", "<=", max_lat),
         ]
 
+    read_columns = _physical_parquet_columns(file_path, columns)
+
     if _prefer_local_geometry_reads() and file_path.exists():
         filters = []
         if parent_loc_id:
@@ -2133,11 +2199,11 @@ def _read_subcounty_geometry(
             filters.append(("loc_id", "in", loc_ids))
         if compare_filters:
             filters.extend(compare_filters)
-        return pd.read_parquet(file_path, columns=columns, filters=filters or None)
+        return pd.read_parquet(file_path, columns=read_columns, filters=filters or None)
 
     return select_rows(
         file_path,
-        columns=columns,
+        columns=read_columns,
         exact_filters=exact_filters,
         in_filters=in_filters,
         compare_filters=compare_filters,
@@ -2882,10 +2948,9 @@ def get_selection_geometries(loc_ids: list):
                 family = classify_loc_id_family(lid)
                 parts = str(lid).split("-")
                 segment_count = len(parts)
-                admin_level = segment_count - 1
                 if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
                     regular_sub_level_ids.append(lid)
-                elif segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                elif segment_count >= 4 and sub_admin_levels:
                     deep_level_ids.append(lid)
                 else:
                     regular_sub_level_ids.append(lid)
@@ -2952,7 +3017,12 @@ def _geometry_metadata_row(row) -> dict:
         "valid_from": _geometry_metadata_value(row, "valid_from", "valid_from_date"),
         "valid_to": _geometry_metadata_value(row, "valid_to", "valid_to_date"),
         "geometry_vintage": row.get("geometry_vintage"),
+        "source_vintage": _geometry_metadata_value(row, "source_vintage", "reference_date"),
+        "source_id": row.get("source_id"),
+        "source_system": row.get("source_system"),
+        "geometry_source": row.get("geometry_source"),
         "bank_id": row.get("bank_id"),
+        "release_id": _geometry_metadata_value(row, "geography_release_id", "release_id"),
     }
 
 
@@ -3002,10 +3072,9 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
             for lid in sub_level_ids:
                 family = classify_loc_id_family(lid)
                 segment_count = len(str(lid).split("-"))
-                admin_level = segment_count - 1
                 if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
                     regular_sub_level_ids.append(lid)
-                elif segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                elif segment_count >= 4 and sub_admin_levels:
                     deep_level_ids.append(lid)
                 else:
                     regular_sub_level_ids.append(lid)

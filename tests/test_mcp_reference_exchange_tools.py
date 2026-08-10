@@ -142,8 +142,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["resolved_count"], 2)
         self.assertEqual(payload["results"][0]["row_index"], 10)
         self.assertEqual(payload["results"][0]["deepest_resolved_loc_id"], "TEST-49.2--123.1")
+        self.assertEqual(payload["results"][0]["resolution_mode"], "latest_available_per_depth")
         self.assertTrue(payload["results"][0]["deeper_available"])
         self.assertEqual(payload["results"][0]["available_deeper_admin_levels"], ["admin_3"])
+        self.assertIsNone(bulk_mock.call_args.kwargs["target_admin_level"])
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["capability_id"], "point_lookup")
         self.assertEqual(analytics["pack_id"], "geography_tools")
@@ -378,21 +380,15 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["include_polygon"], False)
         self.assertIn("geometry_fetch_ms", analytics["metadata"]["compute"]["stage_ms"])
 
-    def test_get_geometry_tool_bulk_include_info_is_explicit(self) -> None:
-        with (
-            mock.patch(
-                "mapmover.runtime.reference_exchange.get_geometry_references",
-                return_value={"ok": True, "requested": 1, "results": [{"ok": True, "loc_id": "USA-CA-037"}]},
-            ) as geometry_mock,
-            mock.patch("mapmover.routes.mcp.log_api_query_event"),
-        ):
-            _tool_call(
-                self.client,
-                "get_geometry",
-                {"loc_ids": ["USA-CA-037"], "include_info": True},
-            )
+    def test_point_and_geometry_schemas_keep_details_in_loc_id_info(self) -> None:
+        envelope = _mcp_call(self.client, "tools/list")
+        tools = {tool["name"]: tool for tool in envelope["result"]["tools"]}
 
-        geometry_mock.assert_called_once_with(["USA-CA-037"], include_polygon=False, include_info=True)
+        self.assertNotIn("include_geometry", tools["resolve_point"]["inputSchema"]["properties"])
+        self.assertNotIn("include_info", tools["get_geometry"]["inputSchema"]["properties"])
+        self.assertIn("Pass the returned stack loc_ids to loc_id_info", tools["resolve_point"]["description"])
+        self.assertIn("drill-down tool", tools["loc_id_info"]["description"])
+        self.assertIn("does not explain hierarchy", tools["get_geometry"]["description"])
 
     def test_get_geometry_tool_trusted_token_bypasses_batch_limit(self) -> None:
         with mock.patch.dict("os.environ", {"ARTIFACT_ACCESS_TOKENS": "tok_test_bypass", "MCP_TOOL_BATCH_LIMIT_GET_GEOMETRY": "2"}):
@@ -439,6 +435,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                     "iso3": "USA",
                     "centroid": {"lon": -140, "lat": 59},
                     "bbox": [-142, 58, -138, 60],
+                    "has_polygon": True,
+                    "source_vintage": "2021",
+                    "source_system": "test_authority",
+                    "release_id": "test-release-2021",
                     "children_count": 0,
                     "children_by_level": "{}",
                     "descendants_count": 0,
@@ -457,8 +457,56 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         references_mock.assert_called_once()
         self.assertEqual(payload["loc_id"], "USA-AK-282")
+        self.assertEqual(payload["source_vintage"], "2021")
+        self.assertEqual(payload["release_id"], "test-release-2021")
         self.assertEqual(payload["reference_count"], 1)
         self.assertEqual(payload["references"]["references"][0]["system"], "overlay_nws_fire_weather_zone")
+
+    def test_loc_id_info_hierarchy_follows_stored_country_parentage(self) -> None:
+        rows = {
+            "CAN-BC-5915004": {
+                "loc_id": "CAN-BC-5915004",
+                "name": "Surrey",
+                "admin_level": 3,
+                "parent_id": "CAN-BC-5915",
+                "family": "admin_boundary",
+                "iso3": "CAN",
+            },
+            "CAN-BC-5915": {
+                "loc_id": "CAN-BC-5915",
+                "name": "Greater Vancouver",
+                "admin_level": 2,
+                "parent_id": "CAN-BC",
+                "family": "admin_boundary",
+                "iso3": "CAN",
+            },
+            "CAN-BC": {
+                "loc_id": "CAN-BC",
+                "name": "British Columbia",
+                "admin_level": 1,
+                "parent_id": "CAN",
+                "family": "admin_boundary",
+                "iso3": "CAN",
+            },
+            "CAN": {
+                "loc_id": "CAN",
+                "name": "Canada",
+                "admin_level": 0,
+                "parent_id": None,
+                "family": "admin_boundary",
+                "iso3": "CAN",
+            },
+        }
+        with mock.patch("mapmover.geometry_handlers.get_location_info", side_effect=lambda loc_id: rows[loc_id]):
+            payload = _tool_call(
+                self.client,
+                "loc_id_info",
+                {"loc_id": "CAN-BC-5915004", "include_hierarchy": True},
+            )
+
+        self.assertEqual(payload["hierarchy"]["relationship_mode"], "strict_stored_parent")
+        self.assertEqual(payload["hierarchy"]["parent"], "CAN-BC-5915")
+        self.assertEqual(payload["hierarchy"]["ancestors"], ["CAN-BC-5915", "CAN-BC", "CAN"])
 
     def test_loc_id_info_references_batch_uses_smaller_guard(self) -> None:
         with (

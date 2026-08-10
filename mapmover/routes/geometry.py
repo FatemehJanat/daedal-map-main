@@ -86,7 +86,7 @@ def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
 
 
 def _point_lookup_target_admin_level(value=None) -> int | None:
-    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "2"))
+    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "deepest"))
     raw = str(value if value is not None else default).strip().lower()
     if raw in {"", "none", "null", "deepest", "all"}:
         return None
@@ -95,7 +95,7 @@ def _point_lookup_target_admin_level(value=None) -> int | None:
     try:
         return max(0, int(raw))
     except ValueError:
-        return 2
+        return None
 
 
 async def decode_request_body(request: Request) -> dict:
@@ -258,7 +258,7 @@ async def resolve_point_endpoint(req: Request):
 
         target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
         country_scope = str(body.get("country_scope") or body.get("country_hint") or "").strip().upper() or None
-        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=True, target_admin_level=target_admin_level, country_scope=country_scope)
+        results = resolve_points_to_locations([{"lon": lon, "lat": lat}], include_geometry=False, target_admin_level=target_admin_level, country_scope=country_scope)
         result = results[0] if results else {"error": "point did not resolve"}
         if result.get("error"):
             return msgpack_response(result, status_code=404)
@@ -281,7 +281,7 @@ async def resolve_point_json_endpoint(req: Request):
     if lon is None or lat is None:
         return JSONResponse({"error": "lon and lat are required"}, status_code=400)
 
-    include_geometry = bool(body.get("include_geometry", False))
+    include_geometry = False
     target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
     country_scope = str(body.get("country_scope") or body.get("country_hint") or "").strip().upper() or None
     try:
@@ -365,7 +365,7 @@ async def resolve_points_json_endpoint(req: Request):
             logger.warning(f"Point lookup batch challenge analytics failed: {exc}")
         return JSONResponse(quote_payload, status_code=402)
 
-    include_geometry = bool(body.get("include_geometry", False))
+    include_geometry = False
     target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
     country_scope = str(body.get("country_scope") or body.get("country_hint") or "").strip().upper() or None
     source = str(body.get("source") or "").strip()[:80] or "unknown"

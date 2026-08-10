@@ -4001,12 +4001,20 @@ export const ChatManager = {
         resolution_stack: resolution?.stack || []
       };
 
-      if (!resolution?.matched?.loc_id || !resolution?.geojson?.features?.length) {
+      if (!resolution?.matched?.loc_id) {
         status.textContent = 'Address captured, but I could not match a containing loc_id shape yet.';
         return;
       }
 
-      this.showResolvedAddressOnMap(parsed, resolution);
+      const geojson = await postMsgpack('/geometry/features', {
+        loc_ids: [resolution.matched.loc_id]
+      });
+      if (!geojson?.features?.length) {
+        status.textContent = 'Address matched, but its selected map shape is not available yet.';
+        return;
+      }
+
+      this.showResolvedAddressOnMap(parsed, { ...resolution, geojson });
       status.textContent = `Address matched to ${resolution.matched.name} (${resolution.matched.loc_id}).`;
 
       const matchLines = [

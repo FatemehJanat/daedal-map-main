@@ -132,7 +132,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Geography utility (reverse geocoding). Converts one WGS84 latitude/longitude point, or a bounded list of points, into DaedalMap loc_id administrative chains at a requested admin level in one MCP tool call. Default target_admin_level is admin_2; use country_scope when the caller already knows all points belong to one country. If a caller requests deeper geometry than the country serves, the tool returns a structured target_admin_level_unavailable error with max_available_admin_level. Responses say when deeper admin_3+ levels exist so callers can ask intentionally. The free preview executes small batches; larger valid batches return a payment-required quote that can be satisfied through account credits or x402.",
+            "description": "Compact reverse geocoding. Converts one WGS84 point, or a bounded point list, into the complete latest-available administrative loc_id chain through the deepest served country tier. Each chain row is intentionally small: loc_id, name, admin level, and vintage when available. This tool does not return polygons, hierarchy analysis, references, overlap percentages, lifecycle, provenance, or release-conversion detail. Pass the returned stack loc_ids to loc_id_info for chain details; use get_geometry for shapes, compare_geographies for spatial/temporal relationships, and conversion tools for another reference system. Set target_admin_level only to stop at a shallower tier. A mixed-vintage point chain is context, not a strict parent assertion. The free preview executes small batches; larger valid batches return a payment-required quote.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -156,11 +156,10 @@ def build_tool_definitions() -> list[dict]:
                     },
                     "target_admin_level": {
                         "anyOf": [{"type": "string"}, {"type": "integer"}],
-                        "description": "Requested administrative level such as admin_0, admin_1, admin_2, admin_3, admin_4, or admin_5. Default admin_2. Use deepest/all only when the caller explicitly needs the deepest supported local geometry.",
+                        "description": "Optional stopping level such as admin_0 through admin_5. Omit for the normal complete chain through the deepest currently served tier.",
                     },
                     "country_scope": {"type": "string", "description": "Optional ISO3/admin_0 loc_id scope such as USA or CAN. Use only when every point in the request should be resolved inside that one country; this lets the runtime skip global country detection and use one country geometry bank."},
                     "country_hint": {"type": "string", "description": "Alias for country_scope for clients that already use hint terminology."},
-                    "include_geometry": {"type": "boolean", "description": "When true, include geometry in resolver internals where available. Default false to keep responses small."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id echoed in the result."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -174,14 +173,14 @@ def build_tool_definitions() -> list[dict]:
         },
         {
             "name": "loc_id_info",
-            "title": "Get loc_id Info",
-            "description": "Free geography utility. Returns descriptive metadata for one DaedalMap loc_id, or a bounded list of loc_ids: name, admin level, parent, centroid, bounding box, and child counts by level. Set include_hierarchy for ancestors and include_references for known external/side-chain references. No payment required.",
+            "title": "Get loc_id / Chain Details",
+            "description": "The drill-down tool for loc_ids returned by resolve_point and other geography calls. Pass one loc_id, or pass the point result's stack loc_ids together, to retrieve metadata, strict stored parentage, shape status, vintage/lifecycle fields, and child counts. Set include_hierarchy for the strict same-release ancestor chain and include_references for external or side-chain crosswalks. This is where detailed chain explanation belongs; resolve_point intentionally stays compact. For exact polygons use get_geometry, and for overlap or successor analysis use compare_geographies. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "loc_id": {"type": "string", "description": "DaedalMap loc_id, e.g. 'USA-CA'."},
-                    "loc_ids": {"type": "array", "items": {"type": "string"}, "description": "DaedalMap loc_ids to inspect in one call. Default public cap is deployment-configurable."},
-                    "include_hierarchy": {"type": "boolean", "description": "When true, include parent and full ancestor chain. Default false."},
+                    "loc_ids": {"type": "array", "items": {"type": "string"}, "description": "DaedalMap loc_ids to inspect together, including every loc_id from a resolve_point stack. Default public cap is deployment-configurable."},
+                    "include_hierarchy": {"type": "boolean", "description": "When true, include strict stored parent and ancestor data. This never invents a parent edge across mixed releases. Default false."},
                     "include_references": {"type": "boolean", "description": "When true, include known external or side-chain references attached to each loc_id. Default false."},
                     "systems": {"type": "array", "items": {"type": "string"}, "description": "Optional reference systems to include when include_references is true, such as zcta, nws_fire, overlay_tribal, or overlay_nws_public_zone."},
                     "iso3": {"type": "string", "description": "Optional country hint for bridge artifacts. Defaults to the loc_id country when possible."},
@@ -339,7 +338,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "check_geometry",
             "title": "Check loc_id Geometry Availability",
-            "description": "Free geography utility. Fast preflight for one DaedalMap loc_id, or a bounded list of loc_ids, that reports whether DaedalMap has reusable boundary shapes before requesting full GeoJSON geometry. No payment required.",
+            "description": "Fast shape-only preflight for one loc_id or a bounded loc_id list. Reports whether each exact identity has reusable geometry and its geometry vintage; it does not resolve points or explain identity relationships. Use before get_geometry or an export. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -363,7 +362,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "compare_geographies",
             "title": "Compare Geographic Identities",
-            "description": "Free geography utility. Compares two DaedalMap loc_ids spatially and temporally. Returns validity state, successor relationships, exact topological relation, geodesic intersection area, and directional overlap shares when approved geometry is available. Use resolve_reference first for names, ZIP codes, or outside identifiers. No payment required.",
+            "description": "Detailed relationship tool for two geographic identities. Returns temporal validity, N-way successor context, topology, geodesic intersection area, and directional overlap shares when approved geometry exists. Use this after a compact point lookup when the caller asks whether two tiers/releases really contain or overlap one another. A point-chain seam is not proof of strict parentage. Use resolve_reference first for names or outside identifiers. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -407,14 +406,13 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "get_geometry",
             "title": "Get loc_id Geometry",
-            "description": "Free geography utility. Returns reusable geometry metadata for one DaedalMap loc_id, or a bounded list of loc_ids: name, family, admin level, centroid, bounding box, and optional full GeoJSON polygon. Prefer bbox/centroid unless you need exact rendering or clipping. No payment required.",
+            "description": "Shape retrieval for exact loc_ids, including loc_ids from any level of a resolve_point chain. Returns geometry metadata, vintage, centroid, bounding box, and optional GeoJSON polygon. It does not explain hierarchy or crosswalks; use loc_id_info for those details. Prefer bbox/centroid unless exact rendering or clipping requires the polygon. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "loc_id": {"type": "string", "description": "DaedalMap loc_id, such as USA-CA-037, USA-Z-00601, USA-NWSFZ-AKZ317, EEZ-USA, or IHO1953-240001002."},
                     "loc_ids": {"type": "array", "items": {"type": "string"}, "description": "DaedalMap loc_ids to fetch in one call. Default public cap is deployment-configurable and lower when include_polygon is true."},
                     "include_polygon": {"type": "boolean", "description": "When true, include the full GeoJSON geometry. Default false."},
-                    "include_info": {"type": "boolean", "description": "When true for loc_ids batch mode, include heavier loc_id_info enrichment for each result. Default false for lean bulk geometry responses."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id for tracing."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -429,7 +427,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_loc_id_scope",
             "title": "Resolve loc_id Scope",
-            "description": "Free geography utility. Given a strict parent loc_id and target admin level, returns a count and bounded list of descendant loc_ids. Use this before package requests such as all USA county shapes. No natural-language scope decoding is performed.",
+            "description": "Strict hierarchy traversal. Given one stored parent loc_id and target admin level, returns descendants from that coherent parent chain. This is not the mixed-vintage latest-per-depth point resolver and must not bridge release seams. Use it before shape exports such as every county in a selected parent scope. No natural-language decoding is performed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -461,7 +459,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "estimate_geometry_package",
             "title": "Estimate Geometry Package",
-            "description": "Free dry-run quote. Estimates loc_id count, shape availability, bytes, delivery mode, citation requirements, and charge units for a geometry package before execution.",
+            "description": "Dry-run estimate for a selected geometry export: exact loc_id count, shape/vintage availability, bytes, delivery mode, citation requirements, and charge units. This estimates an export artifact, not a canonical DaedalMap geometry release bundle.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -492,7 +490,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "create_geometry_export",
             "title": "Create Geometry Export",
-            "description": "Creates an accepted geometry package request. Tiny requests can complete inline; larger requests return a queued job_id for artifact processing and status polling.",
+            "description": "Creates a geometry export from exact loc_ids or one strict scope. Tiny selections can complete inline; larger selections return a queued job_id. This does not define or publish a canonical geometry release package.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

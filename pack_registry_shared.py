@@ -359,13 +359,13 @@ PACK_REGISTRY: dict[str, dict] = {
         ),
         "mcp_name": "com.daedalmap/geocoding",
         "mcp_title": "DaedalMap Geography Tools (loc_id)",
-        "mcp_description": "Free geography utilities built on the DaedalMap loc_id spine. Use the reference-exchange tools to list supported systems, resolve outside geography codes into loc_id, enrich loc_ids with metadata/hierarchy/references, and convert one reference system to another through loc_id. Also includes point reverse geocoding, geometry availability, and bbox/polygon lookup. A utility tool family, not a queryable dataset pack. No payment required.",
+        "mcp_description": "Geography utilities built on the DaedalMap loc_id spine. Point lookup returns a compact latest-available chain; separate tools provide identity details, strict hierarchy, references, relationships, shapes, and exports. A utility family, not a queryable dataset pack. Interactive discovery and small lookups are free; large batches and exports may be quoted.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
                 "Catalog-backed reference exchange: external geography systems <-> DaedalMap loc_id",
                 "Convert ZIP/ZCTA, tribal, NWS public zones, and NWS fire weather zones through the same loc_id spine",
-                "Reverse geocoding: latitude/longitude to administrative loc_id chain, one point or a small batch",
+                "Compact reverse geocoding: latitude/longitude to the complete latest-available administrative chain",
                 "Boundary and bounding-box lookup for any loc_id",
                 "Walk the loc_id hierarchy up and down to clip to any admin level",
             ],
@@ -381,11 +381,11 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "compare_geographies", "summary": "two loc_ids -> temporal validity, successors, topology, intersection area, and directional overlap shares"},
             {"name": "check_geometry", "summary": "loc_id or loc_ids -> available/missing shape preflight"},
             {"name": "get_geometry", "summary": "loc_id or loc_ids -> geometry metadata, bbox, centroid, and optional polygon"},
-            {"name": "resolve_point", "summary": "one point or point batch -> target admin-level loc_ids plus ancestor chains"},
-            {"name": "loc_id_info", "summary": "loc_id or loc_ids -> metadata, optional hierarchy, optional external references"},
-            {"name": "resolve_loc_id_scope", "summary": "parent loc_id + admin level -> descendant loc_id count/list"},
-            {"name": "estimate_geometry_package", "summary": "dry-run geometry export count/bytes/price/delivery estimate"},
-            {"name": "create_geometry_export", "summary": "accepted geometry export, inline when tiny or queued as artifact job"},
+            {"name": "resolve_point", "summary": "point(s) -> compact complete latest-available admin chain"},
+            {"name": "loc_id_info", "summary": "point-chain loc_ids or other loc_ids -> detailed metadata, strict hierarchy, lifecycle, and references"},
+            {"name": "resolve_loc_id_scope", "summary": "strict parent loc_id + admin level -> coherent descendants"},
+            {"name": "estimate_geometry_package", "summary": "dry-run selected geometry export count/bytes/price/delivery estimate"},
+            {"name": "create_geometry_export", "summary": "create a selected geometry export, inline when tiny or queued"},
             {"name": "estimate_conversion_job", "summary": "dry-run user-data conversion row/error/cost estimate"},
             {"name": "create_conversion_job", "summary": "accepted loc_id conversion job, inline when small or queued"},
             {"name": "get_job_status", "summary": "poll queued/running/completed geometry and conversion jobs"},
@@ -398,19 +398,19 @@ PACK_REGISTRY: dict[str, dict] = {
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point"),
         "mcp_name": "com.daedalmap/reverse-geocoding",
         "mcp_title": "DaedalMap Reverse Geocoding (coordinates to loc_id)",
-        "mcp_description": "Reverse geocoding: convert one latitude/longitude point or a small point batch into administrative areas and hierarchical loc_id chains.",
+        "mcp_description": "Compact reverse geocoding: convert one WGS84 point or a small point batch into the complete latest-available administrative loc_id chain. Use the main geography family's loc_id_info or get_geometry tools only when details or shapes are requested.",
         "registry_meta": {
             "categories": ["geospatial", "geocoding", "data"],
             "highlights": [
-                "Latitude/longitude to a requested administrative loc_id level",
+                "Latitude/longitude to the complete latest-available administrative chain",
                 "Small point batches in one MCP call for table cleanup",
-                "Full parent chain so you can clip to any admin level",
+                "Small chain rows with loc_id, name, level, and available vintage",
                 "Free; maps coordinates onto the shared loc_id spine",
             ],
         },
         "routing": {"preferred_tool": "resolve_point"},
         "tool_summaries": (
-            {"name": "resolve_point", "summary": "one point or point batch -> target admin-level loc_ids plus ancestor chains"},
+            {"name": "resolve_point", "summary": "one point or point batch -> compact complete latest-available admin chain"},
         ),
     },
     "boundaries": {
@@ -443,10 +443,10 @@ PACK_REGISTRY: dict[str, dict] = {
         "routing": {"preferred_tool": "get_geometry"},
         "tool_summaries": (
             {"name": "check_geometry", "summary": "loc_id or loc_ids -> available/missing shape preflight"},
-            {"name": "get_geometry", "summary": "loc_id or loc_ids -> bounding box, centroid, and optional polygon"},
+            {"name": "get_geometry", "summary": "exact loc_id shape/vintage -> bounding box, centroid, and optional polygon"},
             {"name": "compare_geographies", "summary": "two loc_ids -> exact spatial and temporal relationship"},
-            {"name": "loc_id_info", "summary": "loc_id or loc_ids -> metadata, optional hierarchy, optional external references"},
-            {"name": "resolve_loc_id_scope", "summary": "parent loc_id + admin level -> descendant loc_id count/list"},
+            {"name": "loc_id_info", "summary": "loc_id or point-chain loc_ids -> detailed metadata, strict hierarchy, lifecycle, and references"},
+            {"name": "resolve_loc_id_scope", "summary": "strict parent loc_id + admin level -> coherent descendants"},
             {"name": "estimate_geometry_package", "summary": "dry-run geometry export count/bytes/price/delivery estimate"},
             {"name": "create_geometry_export", "summary": "accepted geometry export, inline when tiny or queued as artifact job"},
             {"name": "get_job_status", "summary": "poll queued/running/completed geometry export jobs"},
@@ -523,17 +523,18 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
     elif preferred_tool == "resolve_point":
         first_arguments = {"lat": 34.0522, "lon": -118.2437}
         start_here = [
-            "Call resolve_point first when you have coordinates and need a loc_id.",
-            "Take the returned deepest_resolved_loc_id or any ancestor from the stack.",
-            "Use that loc_id in pack filters.region_ids or with the other geography tools.",
+            "Call resolve_point first when you have coordinates; its compact stack is the normal answer.",
+            "Take the returned deepest_resolved_loc_id or any level from the stack for filtering.",
+            "Only when more detail is requested, pass all stack loc_ids to loc_id_info; call get_geometry separately for shapes.",
         ]
         important_rules = [
             "These are free utility tools, not a query_dataset pack.",
             "Coordinates must be WGS84 decimal degrees.",
-            "resolve_point defaults to admin_2 and returns the requested loc_id level plus the full ancestor chain; use target_admin_level when you need admin_3+.",
+            "resolve_point defaults to the complete latest-available chain through the country's deepest served tier; target_admin_level only stops earlier.",
+            "A mixed-vintage point chain is context. loc_id_info hierarchy and resolve_loc_id_scope follow strict stored parentage within a coherent release.",
             "get_geometry returns bbox and centroid by default; request include_polygon only when you need the full geometry payload.",
             "Use convert_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, or NWS fire weather-zone conversions in either direction.",
-            "Use loc_id_info with include_references=true when you already have a loc_id and want attached or overlapping references.",
+            "Use loc_id_info for chain details and set include_references=true only for attached or overlapping reference systems.",
         ]
     elif preferred_tool == "get_geometry":
         first_arguments = {"loc_id": "USA-CA-037"}
@@ -547,7 +548,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Use canonical loc_ids such as USA, CAN-BC, or USA-CA-037.",
             "BBox/centroid is the default response shape because full polygons can be large.",
             "Use check_geometry first for larger shape lists, then get_geometry for the available loc_ids.",
-            "Use loc_id_info with include_references=true when you need non-geometry identifiers attached to the same loc_id.",
+            "Use loc_id_info for hierarchy, lifecycle, provenance, or non-geometry references; get_geometry stays shape-focused.",
         ]
     else:
         first_arguments = {"loc_id": "USA-CA-037"}

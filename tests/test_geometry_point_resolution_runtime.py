@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import patch
 
-from mapmover.geometry_handlers import resolve_point_to_location, resolve_points_to_locations
+from mapmover.geometry_handlers import (
+    get_selection_geometries,
+    get_selection_geometry_metadata,
+    get_location_info,
+    resolve_point_to_location,
+    resolve_points_to_locations,
+)
 from mapmover.runtime.geometry_spine import geometry_spine_index_for_frame
 from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
@@ -97,6 +103,29 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
             "CAN-BC-5915004-59152203-59152203020",
         )
         self.assertEqual(result["matches"]["admin_2"]["loc_id"], "CAN-BC-5915")
+
+    def test_canada_complete_point_chain_can_fetch_every_level_shape(self):
+        result = resolve_points_to_locations(
+            [{"lon": -122.849, "lat": 49.191}],
+            country_scope="CAN",
+        )[0]
+        loc_ids = [row["loc_id"] for row in result["stack"]]
+
+        metadata = get_selection_geometry_metadata(loc_ids)
+        features = get_selection_geometries(loc_ids)["features"]
+
+        self.assertEqual([row["admin_level"] for row in result["stack"]], [0, 1, 2, 3, 4, 5])
+        self.assertEqual({row["loc_id"] for row in metadata}, set(loc_ids))
+        self.assertEqual({feature["properties"]["loc_id"] for feature in features}, set(loc_ids))
+
+        strict_chain = []
+        current = loc_ids[-1]
+        while current:
+            info = get_location_info(current)
+            strict_chain.append(info["loc_id"])
+            self.assertTrue(info["has_polygon"])
+            current = info.get("parent_id")
+        self.assertEqual(strict_chain, list(reversed(loc_ids)))
 
     def test_brazil_bairro_point_resolves_to_declared_admin5_spine(self):
         result = resolve_point_to_loc_id_stack(-48.12994234942419, -22.793495497153657, include_geometry=False)
@@ -419,7 +448,7 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["available_admin_levels"], ["admin_0", "admin_1", "admin_2"])
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
 
-    def test_resolve_points_defaults_to_admin2_and_reports_deeper_levels(self):
+    def test_resolve_points_defaults_to_complete_deep_chain(self):
         import pandas as pd
 
         country_df = pd.DataFrame(
@@ -466,20 +495,45 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
                 }
             ]
         )
+        deep_frames = []
+        parent_id = "USA-CA-037"
+        for level, loc_id, name in (
+            (3, "USA-CA-037-000100", "Tract 100"),
+            (4, "USA-CA-037-000100-1", "Block Group 1"),
+            (5, "USA-CA-037-000100-1-1001", "Block 1001"),
+        ):
+            stored_parent_id = "USA-CA-037-OLD" if level == 4 else parent_id
+            deep_frames.append(
+                pd.DataFrame(
+                    [
+                        {
+                            "loc_id": loc_id,
+                            "parent_id": stored_parent_id,
+                            "name": name,
+                            "admin_level": level,
+                            "source_vintage": "2025" if level == 3 else "2021",
+                            "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+                        }
+                    ]
+                )
+            )
+            parent_id = loc_id
 
         with (
             patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
             patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]),
             patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[3, 4, 5]),
-            patch("mapmover.geometry_handlers.load_subcounty_geometry") as deep_mock,
+            patch("mapmover.geometry_handlers.load_subcounty_geometry", side_effect=deep_frames) as deep_mock,
         ):
             results = resolve_points_to_locations([{"lon": -118.25, "lat": 34.05}])
 
-        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
-        self.assertEqual(results[0]["target_admin_level"], "admin_2")
-        self.assertTrue(results[0]["deeper_available"])
-        self.assertEqual(results[0]["available_deeper_admin_levels"], ["admin_3", "admin_4", "admin_5"])
-        deep_mock.assert_not_called()
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037-000100-1-1001")
+        self.assertEqual(results[0]["target_admin_level"], "deepest")
+        self.assertFalse(results[0]["deeper_available"])
+        self.assertEqual([row["admin_level"] for row in results[0]["stack"]], [0, 1, 2, 3, 4, 5])
+        self.assertEqual([row.get("vintage") for row in results[0]["stack"][3:]], ["2025", "2021", "2021"])
+        self.assertEqual(results[0]["resolution_mode"], "latest_available_per_depth")
+        self.assertEqual(deep_mock.call_count, 3)
 
 
 if __name__ == "__main__":

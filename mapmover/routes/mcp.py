@@ -212,7 +212,7 @@ def _parse_env_int_optional(name: str) -> int | None:
         return None
 
 
-def _parse_admin_level_value(value: Any, default: int | None = 2) -> int | None:
+def _parse_admin_level_value(value: Any, default: int | None = None) -> int | None:
     raw = str(value if value is not None else default).strip().lower()
     if raw in {"", "none", "null", "deepest", "all"}:
         return None
@@ -227,9 +227,9 @@ def _parse_admin_level_value(value: Any, default: int | None = 2) -> int | None:
 def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
     import os
 
-    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "2"))
+    default = os.getenv("POINT_LOOKUP_TARGET_ADMIN_LEVEL", os.getenv("POINT_LOOKUP_MAX_ADMIN_LEVEL", "deepest"))
     value = payload.get("target_admin_level", payload.get("max_admin_level"))
-    return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=2))
+    return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=None))
 
 
 def _point_lookup_paid_batch_limit(free_limit: int) -> int:
@@ -536,9 +536,9 @@ def get_server_description(pack_id: str | None = None) -> str:
         return (
             f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} "
             "Start with free discovery: call read_geometry_catalog for coverage, admin depths, shape-backed families, bridges, named geometries, and package availability; then call list_reference_systems to see supported exchange systems, bridge vintages, counts, and license/source context. "
-            "For coordinates, call resolve_point with lat/lon or points. The default target_admin_level is admin_2; when a result has deeper_available=true, retry with target_admin_level admin_3, admin_4, admin_5, or deepest only when that depth is needed. "
-            "For outside geography codes or names, call resolve_reference to get loc_id matches, then use loc_id_info, check_geometry, or get_geometry. "
-            "For bulk geometry, call resolve_loc_id_scope and estimate_geometry_package before create_geometry_export. "
+            "For coordinates, call resolve_point with lat/lon or points; it returns only the compact complete latest-available chain and defaults to the deepest served tier. Do not request geometry or relationship detail in that call. "
+            "When the caller asks for details about that chain, pass its stack loc_ids to loc_id_info; use get_geometry only for shapes and compare_geographies only for overlap, topology, validity, or successor questions. Mixed-vintage point context is not strict parentage. "
+            "For outside geography codes or names, call resolve_reference first. For bulk geometry, call resolve_loc_id_scope only for one strict hierarchy, then estimate_geometry_package before create_geometry_export. "
             "Small batches execute in the free preview lane, medium batches return a payment-required quote that can be satisfied by account credits or x402, and very large requests should use async job/export tools instead of waiting on one interactive response."
         )
     if not normalized:
@@ -1194,6 +1194,7 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
         "deepest_resolved_loc_id": raw.get("deepest_resolved_loc_id") or (raw.get("matched") or {}).get("loc_id"),
         "deepest_resolved_admin_level": raw.get("deepest_resolved_admin_level") or (raw.get("matched") or {}).get("admin_level"),
         "stack": raw.get("stack") or [],
+        "resolution_mode": raw.get("resolution_mode") or "latest_available_per_depth",
         "target_admin_level": raw.get("target_admin_level"),
         "deeper_available": bool(raw.get("deeper_available")),
         "available_deeper_admin_levels": raw.get("available_deeper_admin_levels") or [],
@@ -1313,7 +1314,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(quote_payload, is_error=True), rpc_request_id)
 
-        include_geometry = bool(payload.get("include_geometry", False))
+        # resolve_point is the compact chain call; shapes are fetched by
+        # get_geometry after the caller chooses which chain levels it needs.
+        include_geometry = False
         target_admin_level = _point_lookup_target_admin_level(payload)
         country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         results: list[dict[str, Any]] = []
@@ -1811,18 +1814,49 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "iso3": info.get("iso3"),
         "centroid": info.get("centroid"),
         "bbox": info.get("bbox"),
+        "has_polygon": info.get("has_polygon"),
+        "valid_from": info.get("valid_from"),
+        "valid_to": info.get("valid_to"),
+        "geometry_vintage": info.get("geometry_vintage"),
+        "source_vintage": info.get("source_vintage"),
+        "source_id": info.get("source_id"),
+        "source_system": info.get("source_system"),
+        "geometry_source": info.get("geometry_source"),
+        "bank_id": info.get("bank_id"),
+        "release_id": info.get("release_id"),
         "children_count": info.get("children_count"),
         "children_by_level": _parse_children_by_level(info.get("children_by_level")),
         "descendants_count": info.get("descendants_count"),
     }
     if bool(payload.get("include_hierarchy")):
         try:
-            from mapmover.runtime.admin_hierarchy import get_ancestors, get_parent_loc_id, infer_admin_level_from_loc_id
-
+            ancestors: list[str] = []
+            ancestor_rows: list[dict[str, Any]] = []
+            seen = {str(result["loc_id"])}
+            current_parent = str(result.get("parent_id") or "").strip()
+            while current_parent and current_parent not in seen and len(ancestors) < 32:
+                seen.add(current_parent)
+                ancestors.append(current_parent)
+                parent_info = get_location_info(current_parent)
+                if not isinstance(parent_info, dict) or parent_info.get("error"):
+                    ancestor_rows.append({"loc_id": current_parent})
+                    break
+                ancestor_rows.append(
+                    {
+                        "loc_id": parent_info.get("loc_id") or current_parent,
+                        "name": parent_info.get("name"),
+                        "admin_level": parent_info.get("admin_level"),
+                        "source_vintage": parent_info.get("source_vintage"),
+                        "release_id": parent_info.get("release_id"),
+                    }
+                )
+                current_parent = str(parent_info.get("parent_id") or "").strip()
             result["hierarchy"] = {
-                "parent": get_parent_loc_id(str(result["loc_id"])),
-                "ancestors": get_ancestors(str(result["loc_id"])),
-                "admin_level": infer_admin_level_from_loc_id(str(result["loc_id"])),
+                "relationship_mode": "strict_stored_parent",
+                "parent": result.get("parent_id"),
+                "ancestors": ancestors,
+                "ancestor_rows": ancestor_rows,
+                "admin_level": result.get("admin_level"),
             }
         except Exception as exc:
             result["hierarchy_error"] = {"code": "hierarchy_failed", "message": str(exc)}
@@ -2465,7 +2499,9 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
     payload = _ensure_request_id(arguments, "get_geometry")
     request_id = str(payload.get("request_id") or "")
     include_polygon = bool(payload.get("include_polygon", False))
-    include_info = bool(payload.get("include_info", False))
+    # Geometry retrieval stays shape-focused. Identity/hierarchy enrichment is
+    # an explicit loc_id_info call so point and map workflows remain composable.
+    include_info = False
     if "loc_ids" in payload:
         batch_id = str(payload.get("batch_id") or "").strip() or None
         loc_ids = payload.get("loc_ids")
