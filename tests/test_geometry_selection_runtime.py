@@ -38,6 +38,9 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
         )
 
         with patch(
+            "mapmover.geometry_handlers.get_country_sub_admin_levels",
+            return_value={"admin_5": {"folder": "block"}},
+        ), patch(
             "mapmover.geometry_handlers.load_subcounty_geometry",
             return_value=returned,
         ) as load_subcounty:
@@ -83,6 +86,10 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
         self.assertEqual(
             _direct_family_bank_path("overlay_nws_public_zone", "USA").name,
             "USA.parquet",
+        )
+        self.assertEqual(
+            _direct_family_bank_path("can_federal_electoral_district_2013", "CAN").name,
+            "CAN.parquet",
         )
         self.assertIsNone(_direct_family_bank_path("admin_local", "USA"))
 

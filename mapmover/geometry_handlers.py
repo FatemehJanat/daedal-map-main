@@ -490,6 +490,8 @@ def _direct_family_bank_path(family: str | None, iso3: str) -> Path | None:
         return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_public_zone" / f"{iso3_value}.parquet"
     if family_value == "overlay_nws_fire_weather_zone" and iso3_value:
         return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_fire_weather_zone" / f"{iso3_value}.parquet"
+    if family_value == "can_federal_electoral_district_2013" and iso3_value == "CAN":
+        return DATA_ROOT / "countries" / "CAN" / "geometry" / "federal_electoral_district_2013" / "CAN.parquet"
     return None
 
 
@@ -1865,7 +1867,7 @@ def get_location_info(loc_id: str):
     iso3 = parts[0]
     family = classify_loc_id_family(loc_id)
     inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
-    if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "marine_eez", "water_body", "regional_base"} or (
+    if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "marine_eez", "water_body", "regional_base"} or (
         inferred_admin_level is not None and inferred_admin_level >= 3
     ):
         feature = _get_selection_feature_for_loc_id(loc_id)
@@ -2948,7 +2950,7 @@ def get_selection_geometries(loc_ids: list):
                 family = classify_loc_id_family(lid)
                 parts = str(lid).split("-")
                 segment_count = len(parts)
-                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
+                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "regional_base"}:
                     regular_sub_level_ids.append(lid)
                 elif segment_count >= 4 and sub_admin_levels:
                     deep_level_ids.append(lid)
@@ -3072,7 +3074,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
             for lid in sub_level_ids:
                 family = classify_loc_id_family(lid)
                 segment_count = len(str(lid).split("-"))
-                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
+                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "regional_base"}:
                     regular_sub_level_ids.append(lid)
                 elif segment_count >= 4 and sub_admin_levels:
                     deep_level_ids.append(lid)

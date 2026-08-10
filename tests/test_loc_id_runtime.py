@@ -74,6 +74,7 @@ class LocIdRuntimeTests(unittest.TestCase):
             "USA-Z-22031": "overlay_zcta",
             "USA-AK-TRIBAL-6650": "overlay_tribal",
             "USA-NWSZ-TXZ001": "overlay_nws_public_zone",
+            "CAN-FED-2013-10006": "can_federal_electoral_district_2013",
             "EEZ-USA": "marine_eez",
             "XSM": "water_body",
             "USA-FLOOD-DFO-9": "event_or_entity",

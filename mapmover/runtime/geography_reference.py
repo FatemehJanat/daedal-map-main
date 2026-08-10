@@ -116,6 +116,10 @@ def _looks_like_nws_fire_weather_zone_loc_id(value: str) -> bool:
     return bool(re.fullmatch(r"USA-NWSFZ-[A-Z]{2}Z\d{3}", value))
 
 
+def _looks_like_can_federal_electoral_district_loc_id(value: str) -> bool:
+    return bool(re.fullmatch(r"CAN-FED-2013-\d{5}", value))
+
+
 def classify_loc_id_family(loc_id: str | None) -> str | None:
     """Classify the shared runtime loc_id family.
 
@@ -142,6 +146,8 @@ def classify_loc_id_family(loc_id: str | None) -> str | None:
         return "overlay_nws_public_zone"
     if _looks_like_nws_fire_weather_zone_loc_id(value):
         return "overlay_nws_fire_weather_zone"
+    if _looks_like_can_federal_electoral_district_loc_id(value):
+        return "can_federal_electoral_district_2013"
     if derive_eurostat_geo_level(value):
         return "regional_base"
     if _looks_like_event_or_entity_loc_id(value):
