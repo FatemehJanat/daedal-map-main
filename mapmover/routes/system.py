@@ -1319,13 +1319,14 @@ def _build_geometry_catalog_payload() -> dict:
     from mapmover.runtime.country_geography import load_country_geometry_profile
 
     catalog = load_geometry_catalog()
+    collections = [item for item in (catalog.get("geometry_collections") or []) if isinstance(item, dict)]
     banks = [item for item in (catalog.get("geometry_banks") or []) if isinstance(item, dict)]
     families = [item for item in (catalog.get("geometry_families") or []) if isinstance(item, dict)]
     bridges = [item for item in (catalog.get("bridge_artifacts") or []) if isinstance(item, dict)]
-    assets = [item for item in (catalog.get("geometry_assets") or []) if isinstance(item, dict)]
-    packages = [item for item in (catalog.get("geometry_packages") or []) if isinstance(item, dict)]
-    named = [item for item in (catalog.get("named_geometries") or []) if isinstance(item, dict)]
-    groups = [item for item in (catalog.get("named_geometry_groups") or []) if isinstance(item, dict)]
+    assets = [item for item in (catalog.get("geometry_products") or []) if isinstance(item, dict)]
+    packages = [item for item in (catalog.get("release_packages") or []) if isinstance(item, dict)]
+    named = [item for item in (catalog.get("named_reference_objects") or []) if isinstance(item, dict)]
+    groups = [item for item in (catalog.get("resolver_groups") or []) if isinstance(item, dict)]
 
     country_codes = sorted({
         code
@@ -1405,7 +1406,7 @@ def _build_geometry_catalog_payload() -> dict:
                 asset.get("scope"),
                 asset.get("local_probe_path"),
                 asset.get("cloud_probe_path"),
-                asset.get("asset_id"),
+                asset.get("product_id"),
             )
         ]
         admin_spine_assets = [
@@ -1437,11 +1438,12 @@ def _build_geometry_catalog_payload() -> dict:
         "ok": bool(catalog),
         "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
         "generated_at": catalog.get("generated_at"),
+        "collection_count": len(collections),
         "bank_count": len(banks),
         "family_count": len(families),
         "bridge_artifact_count": len(bridges),
-        "asset_count": len(assets),
-        "package_count": len(packages),
+        "product_count": len(assets),
+        "release_package_count": len(packages),
         "named_geometry_count": len(named),
         "named_group_count": len(groups),
         "country_count": len(country_codes),

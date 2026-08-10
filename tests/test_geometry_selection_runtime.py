@@ -122,7 +122,7 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
             result = load_geometry_rows_by_loc_ids("USA", ["USA-Z-22031", "EEZ-USA"])
 
         self.assertEqual(set(result["loc_id"]), {"USA-Z-22031", "EEZ-USA"})
-        load_marine.assert_called_once_with(["EEZ-USA"])
+        load_marine.assert_called_once_with(["EEZ-USA"], columns=None)
 
     def test_get_selection_geometries_handles_marine_and_admin_together(self):
         marine_df = pd.DataFrame(
@@ -159,6 +159,28 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
         }
         self.assertEqual(feature_ids, {"EEZ-USA", "USA-Z-22031"})
         load_marine.assert_called_once_with(["EEZ-USA"])
+
+    def test_state_scoped_tribal_id_uses_direct_family_bank_not_admin3_loader(self):
+        tribal_df = pd.DataFrame(
+            [{
+                "loc_id": "USA-CA-TRIBAL-4760",
+                "name": "Yurok",
+                "geometry": '{"type":"Polygon","coordinates":[]}',
+            }]
+        )
+
+        with patch(
+            "mapmover.geometry_handlers.load_geometry_rows_by_loc_ids",
+            return_value=tribal_df,
+        ) as direct_loader, patch(
+            "mapmover.geometry_handlers._load_subcounty_rows_by_loc_ids",
+            return_value=pd.DataFrame(),
+        ) as deep_loader:
+            payload = get_selection_geometries(["USA-CA-TRIBAL-4760"])
+
+        self.assertEqual(len(payload["features"]), 1)
+        direct_loader.assert_called_once_with("USA", ["USA-CA-TRIBAL-4760"])
+        deep_loader.assert_not_called()
 
     def test_load_geometry_rows_by_loc_ids_falls_back_to_level_loader_for_usa_admin1(self):
         level_df = pd.DataFrame(

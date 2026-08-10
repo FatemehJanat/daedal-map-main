@@ -202,20 +202,20 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "read_geometry_catalog",
             "title": "Read Geometry Catalog",
-            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so you can see available admin coverage, geometry families, bridges/crosswalks, named geometries, and downloadable packages before choosing loc_id tools. Use view='summary' first; use view='full' only when you need the whole catalog. No payment required.",
+            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so you can see collections, families, banks, crosswalk products, and named reference objects before choosing loc_id tools. Use view='summary' first; use view='full' only when you need the whole catalog. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "view": {
                         "type": "string",
-                        "enum": ["summary", "admin_coverage", "bridges", "packages", "named_geometries", "full"],
+                        "enum": ["summary", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
                         "description": "Catalog view to return. Default summary.",
                     },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 500,
-                        "description": "Maximum named geometries to return when view='named_geometries'. Default 50.",
+                        "description": "Maximum named reference objects to return. Default 50.",
                     },
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -243,7 +243,7 @@ def build_tool_definitions() -> list[dict]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "from_system": {"type": "string", "description": "Input reference system, such as loc_id, admin_boundary, zip, zcta, overlay_zcta, nws_zone, nws_fire, overlay_nws_fire_weather_zone, tribal, water_body, marine_eez, nuts, or a catalog family id."},
+                    "from_system": {"type": "string", "description": "Input reference system, such as loc_id, admin_boundary, zip, zcta, overlay_zcta, nws_zone, nws_fire, overlay_nws_fire_weather_zone, tribal, water_body, marine_eez, nuts, historical_country/iso3166_3, or a catalog family id."},
                     "value": {"type": "string", "description": "Identifier or name in the input system. Examples: 00601, USA-Z-00601, AKZ317, USA-NWSFZ-AKZ317, Fairfax County, Mediterranean Sea."},
                     "items": {
                         "type": "array",
@@ -260,6 +260,7 @@ def build_tool_definitions() -> list[dict]:
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum ranked matches for this row."},
                                 "country_hint": {"type": "string", "description": "Optional country hint for admin/name resolution."},
                                 "admin_level_hint": {"type": "integer", "minimum": 0, "maximum": 5, "description": "Optional admin-level hint for admin/name resolution."},
+                                "as_of": {"type": "string", "description": "ISO date or year used to select a time-bounded identity assertion."},
                                 "row_index": {"anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Optional caller row identifier echoed in the result."},
                                 "id": {"anyOf": [{"type": "integer"}, {"type": "string"}], "description": "Optional caller identifier echoed in the result."},
                             },
@@ -275,6 +276,7 @@ def build_tool_definitions() -> list[dict]:
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum ranked matches to return. Default 10."},
                     "country_hint": {"type": "string", "description": "Optional country hint for admin/name resolution."},
                     "admin_level_hint": {"type": "integer", "minimum": 0, "maximum": 5, "description": "Optional admin-level hint for admin/name resolution."},
+                    "as_of": {"type": "string", "description": "ISO date or year used to select a time-bounded identity assertion, especially for historical names and codes."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id for tracing."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -353,6 +355,50 @@ def build_tool_definitions() -> list[dict]:
                 "anyOf": [
                     {"required": ["loc_id"]},
                     {"required": ["loc_ids"]},
+                ],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "compare_geographies",
+            "title": "Compare Geographic Identities",
+            "description": "Free geography utility. Compares two DaedalMap loc_ids spatially and temporally. Returns validity state, successor relationships, exact topological relation, geodesic intersection area, and directional overlap shares when approved geometry is available. Use resolve_reference first for names, ZIP codes, or outside identifiers. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "left_loc_id": {"type": "string", "description": "First DaedalMap loc_id."},
+                    "right_loc_id": {"type": "string", "description": "Second DaedalMap loc_id."},
+                    "as_of": {"type": "string", "description": "ISO date or year applied to both identities."},
+                    "left_as_of": {"type": "string", "description": "Optional ISO date or year for the left identity; overrides as_of."},
+                    "right_as_of": {"type": "string", "description": "Optional ISO date or year for the right identity; overrides as_of."},
+                    "include_successors": {"type": "boolean", "description": "Include direct successors and present-day descendants for maintained historical identities. Default true."},
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "left_loc_id": {"type": "string"},
+                                "right_loc_id": {"type": "string"},
+                                "as_of": {"type": "string"},
+                                "left_as_of": {"type": "string"},
+                                "right_as_of": {"type": "string"},
+                                "include_successors": {"type": "boolean"},
+                                "row_index": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                                "id": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                            },
+                            "required": ["left_loc_id", "right_loc_id"],
+                            "additionalProperties": False,
+                        },
+                        "description": "Bounded geography pairs to compare in one call.",
+                    },
+                    "batch_id": {"type": "string", "description": "Optional caller-supplied batch id for tracing."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "anyOf": [
+                    {"required": ["left_loc_id", "right_loc_id"]},
+                    {"required": ["items"]},
                 ],
                 "additionalProperties": False,
             },

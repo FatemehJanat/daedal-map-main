@@ -24,6 +24,7 @@ from .geography_reference import (
     translate_loc_id_to_geometry_id,
 )
 from .geometry_catalog import load_geometry_catalog, resolve_geometry_name
+from .geography_relationships import resolve_historical_country_reference
 from .loc_id_resolution import resolve_admin_text_to_loc_id
 from .sidechain_admin_bridge import admin_level_name, resolve_admin_to_sidechains, resolve_sidechain_to_admin
 
@@ -61,6 +62,10 @@ SYSTEM_ALIASES = {
     "iho_water_body": "water_body",
     "nuts": "regional_base",
     "eurostat_nuts": "regional_base",
+    "historical": "historical_country",
+    "historical_country_name": "historical_country",
+    "iso3166_3": "historical_country",
+    "iso_3166_3": "historical_country",
 }
 
 
@@ -84,6 +89,17 @@ def _clean_json(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_clean_json(item) for item in value]
     return str(value)
+
+
+def _first_populated(mapping: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and text.lower() not in {"nan", "nat", "<na>"}:
+            return value
+    return None
 
 
 def _catalog_bridge_path(artifact: dict[str, Any]) -> Path | None:
@@ -200,23 +216,25 @@ def list_reference_systems() -> dict[str, Any]:
 
 
 def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
-    return {
+    counts = {
         key: len(catalog.get(key) or []) if isinstance(catalog.get(key), list) else 0
         for key in (
+            "geometry_collections",
             "geometry_banks",
             "geometry_families",
             "bridge_artifacts",
-            "geometry_assets",
-            "geometry_packages",
-            "named_geometry_groups",
-            "named_geometries",
+            "geometry_products",
+            "release_packages",
+            "resolver_groups",
+            "named_reference_objects",
         )
     }
+    return counts
 
 
 def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    assets = catalog.get("geometry_assets") or catalog.get("geometry_packages") or []
+    assets = catalog.get("geometry_products") or []
     for asset in assets:
         if not isinstance(asset, dict):
             continue
@@ -225,7 +243,7 @@ def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, 
             continue
         levels = coverage.get("levels") if isinstance(coverage.get("levels"), list) else []
         rows.append({
-            "asset_id": asset.get("asset_id"),
+            "product_id": asset.get("product_id"),
             "label": asset.get("label"),
             "scope": asset.get("scope") or coverage.get("scope"),
             "family": asset.get("family"),
@@ -244,7 +262,7 @@ def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, 
                 if isinstance(item, dict)
             ],
         })
-    rows.sort(key=lambda item: (str(item.get("scope") or ""), str(item.get("asset_id") or "")))
+    rows.sort(key=lambda item: (str(item.get("scope") or ""), str(item.get("product_id") or "")))
     return rows
 
 
@@ -270,16 +288,16 @@ def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _geometry_catalog_packages(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+def _geometry_catalog_products(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for package in catalog.get("geometry_packages") or catalog.get("geometry_assets") or []:
+    for package in catalog.get("geometry_products") or []:
         if not isinstance(package, dict):
             continue
         coverage = package.get("admin_coverage") if isinstance(package.get("admin_coverage"), dict) else {}
         rows.append({
-            "asset_id": package.get("asset_id"),
+            "product_id": package.get("product_id"),
             "label": package.get("label"),
-            "group": package.get("group"),
+            "group": package.get("product_group") or package.get("group"),
             "family": package.get("family"),
             "scope": package.get("scope"),
             "summary": package.get("summary"),
@@ -292,9 +310,13 @@ def _geometry_catalog_packages(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _geometry_catalog_named_geometries(catalog: dict[str, Any], *, limit: int) -> dict[str, Any]:
+def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit: int) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    items = [item for item in (catalog.get("named_geometries") or []) if isinstance(item, dict)]
+    items = [
+        item
+        for item in catalog.get("named_reference_objects") or []
+        if isinstance(item, dict)
+    ]
     for item in items[: max(0, limit)]:
         rows.append({
             "loc_id": item.get("loc_id"),
@@ -330,6 +352,7 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
     if selected_view == "summary":
         return _clean_json({
             **base,
+            "collections": catalog.get("geometry_collections") or [],
             "families": catalog.get("geometry_families") or [],
             "admin_coverage": _geometry_catalog_admin_coverage(catalog),
         })
@@ -337,10 +360,10 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
         return _clean_json({**base, "admin_coverage": _geometry_catalog_admin_coverage(catalog)})
     if selected_view == "bridges":
         return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog)})
-    if selected_view == "packages":
-        return _clean_json({**base, "packages": _geometry_catalog_packages(catalog)})
-    if selected_view == "named_geometries":
-        return _clean_json({**base, "named_geometries": _geometry_catalog_named_geometries(catalog, limit=row_limit)})
+    if selected_view == "products":
+        return _clean_json({**base, "products": _geometry_catalog_products(catalog)})
+    if selected_view == "named_reference_objects":
+        return _clean_json({**base, "named_reference_objects": _geometry_catalog_named_reference_objects(catalog, limit=row_limit)})
     if selected_view == "full":
         return _clean_json({**base, "catalog": catalog})
     return _clean_json({
@@ -348,7 +371,7 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
         "ok": False,
         "error": {
             "code": "invalid_view",
-            "message": "view must be one of summary, admin_coverage, bridges, packages, named_geometries, or full",
+            "message": "view must be one of summary, admin_coverage, bridges, products, named_reference_objects, or full",
         },
     })
 
@@ -394,6 +417,7 @@ def resolve_reference(
     limit: int | None = 10,
     country_hint: str | None = None,
     admin_level_hint: int | None = None,
+    as_of: str | None = None,
 ) -> dict[str, Any]:
     """Resolve a reference-system value into one or more ``loc_id`` matches."""
     system = _normalize_system(from_system)
@@ -404,6 +428,17 @@ def resolve_reference(
         return _clean_json(_direct_loc_id_result(text, request_system=system))
     if system == ADMIN_SYSTEM:
         return _clean_json(_admin_text_result(text, country_hint=country_hint or iso3, admin_level_hint=admin_level_hint, request_system=system))
+    if system == "historical_country":
+        historical = resolve_historical_country_reference(text, as_of=as_of)
+        if historical:
+            return _clean_json(historical)
+        return {
+            "ok": False,
+            "from_system": system,
+            "input": value,
+            "as_of": as_of,
+            "error": {"code": "historical_reference_not_found", "message": "no maintained historical country assertion matched the value"},
+        }
     if system in {"water_body", "marine_eez", "regional_base"}:
         named = resolve_geometry_name(text)
         if named and named.get("loc_id"):
@@ -604,6 +639,10 @@ def _shape_geometry_reference(
             props.get("bbox_max_lon"),
             props.get("bbox_max_lat"),
         ],
+        "valid_from": _first_populated(props, "valid_from", "valid_from_date"),
+        "valid_to": _first_populated(props, "valid_to", "valid_to_date"),
+        "geometry_vintage": props.get("geometry_vintage"),
+        "bank_id": props.get("bank_id"),
     }
     if include_info:
         payload["info"] = get_location_info(canonical)
@@ -635,6 +674,10 @@ def _metadata_geometry_reference(
             row.get("bbox_max_lon"),
             row.get("bbox_max_lat"),
         ],
+        "valid_from": row.get("valid_from"),
+        "valid_to": row.get("valid_to"),
+        "geometry_vintage": row.get("geometry_vintage"),
+        "bank_id": row.get("bank_id"),
     }
     if include_info:
         payload["info"] = get_location_info(canonical)

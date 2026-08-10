@@ -31,6 +31,7 @@ from mapmover.runtime.reference_exchange import (
     loc_id_references,
     resolve_reference,
 )
+from mapmover.runtime.geography_relationships import compare_geographies
 
 
 router = APIRouter()
@@ -528,6 +529,7 @@ async def resolve_reference_endpoint(req: Request):
             limit=body.get("limit", 10),
             country_hint=body.get("country_hint"),
             admin_level_hint=body.get("admin_level_hint"),
+            as_of=body.get("as_of"),
         )
         return JSONResponse(result, status_code=200 if result.get("ok") else 404)
     except Exception as e:
@@ -610,4 +612,34 @@ async def get_reference_geometry_endpoint(req: Request):
         return JSONResponse(result, status_code=200 if result.get("ok") else 404)
     except Exception as e:
         logger.error(f"Error in /api/internal/reference/geometry: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@router.post("/api/internal/reference/compare")
+async def compare_geographies_endpoint(req: Request):
+    """Compare two canonical geographic identities in space and time."""
+    error = _internal_json_allowed(req)
+    if error:
+        return error
+    body, body_error = await _json_body(req)
+    if body_error:
+        return body_error
+    left_loc_id = body.get("left_loc_id")
+    right_loc_id = body.get("right_loc_id")
+    if not left_loc_id or not right_loc_id:
+        return JSONResponse({"ok": False, "error": "left_loc_id and right_loc_id are required"}, status_code=400)
+    try:
+        result = compare_geographies(
+            str(left_loc_id),
+            str(right_loc_id),
+            as_of=body.get("as_of"),
+            left_as_of=body.get("left_as_of"),
+            right_as_of=body.get("right_as_of"),
+            include_successors=bool(body.get("include_successors", True)),
+        )
+        return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error(f"Error in /api/internal/reference/compare: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

@@ -120,6 +120,18 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("no bridge artifact", payload["error"])
 
+    def test_historical_country_resolution_is_time_scoped(self) -> None:
+        in_2000 = resolve_reference(from_system="iso3166_3", value="YUG", as_of="2000")
+        in_2025 = resolve_reference(from_system="historical_country", value="Yugoslavia", as_of="2025")
+
+        self.assertEqual(in_2000["resolved_loc_id"], "HIST-YUG-FRY")
+        self.assertTrue(in_2000["valid_at_requested_time"])
+        self.assertFalse(in_2025["valid_at_requested_time"])
+        self.assertEqual(
+            {item["loc_id"] for item in in_2025["lifecycle"]["present_day_descendants"]},
+            {"SRB", "MNE"},
+        )
+
     def test_cloud_mode_keeps_catalog_bridge_artifacts_without_local_file(self) -> None:
         artifact = {
             "status": "complete",
@@ -187,6 +199,25 @@ class ReferenceExchangeRouteTests(unittest.TestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["loc_id"], "USA-AK-282")
+
+    def test_internal_compare_route_accepts_local_loopback(self) -> None:
+        expected = {"ok": True, "spatial_relation": "overlaps", "left_area_share": 0.2, "right_area_share": 0.1}
+        with mock.patch("mapmover.routes.geometry.compare_geographies", return_value=expected) as compare_mock:
+            response = self.local_client.post(
+                "/api/internal/reference/compare",
+                json={"left_loc_id": "USA-Z-90001", "right_loc_id": "USA-TRIBAL-1823", "as_of": "2025"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        compare_mock.assert_called_once_with(
+            "USA-Z-90001",
+            "USA-TRIBAL-1823",
+            as_of="2025",
+            left_as_of=None,
+            right_as_of=None,
+            include_successors=True,
+        )
 
 
 if __name__ == "__main__":

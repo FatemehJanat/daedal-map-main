@@ -47,11 +47,13 @@ rapidfuzz==3.14.3
 
 # Required for country bounds bbox intersection (viewport geometry loading):
 shapely==2.1.2
+# Required for WGS84 geodesic areas in compare_geographies.  Planar degree
+# areas are not valid overlap percentages for global geometry.
+pyproj==3.7.2
 
 # Fairfax LST raster endpoint (reads GeoTIFF pixel data, pure-Python, no native libs):
 tifffile==2026.3.3
 
 # Legacy/Archive tools (not required for main app):
 # geopandas>=0.14.0
-# pyproj>=3.6.0
 # pyogrio>=0.7.0

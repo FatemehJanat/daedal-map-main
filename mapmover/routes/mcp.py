@@ -1944,7 +1944,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
     result_payload = {"request_id": request_id, **result}
     counts = result.get("counts") if isinstance(result, dict) else {}
     if isinstance(counts, dict):
-        row_count = int(counts.get("geometry_assets") or counts.get("geometry_packages") or counts.get("geometry_banks") or 0)
+        row_count = int(counts.get("geometry_products") or counts.get("geometry_banks") or 0)
     else:
         row_count = 0
     if isinstance(result, dict) and result.get("ok") is False:
@@ -2158,6 +2158,7 @@ def _resolve_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
             limit=_normalize_bridge_limit(payload.get("limit")) or 10,
             country_hint=payload.get("country_hint"),
             admin_level_hint=payload.get("admin_level_hint"),
+            as_of=payload.get("as_of"),
         )
     except Exception as exc:
         return {"ok": False, "from_system": from_system, "input": value, "error": {"code": "resolve_reference_failed", "message": str(exc)}}
@@ -2339,6 +2340,124 @@ def _convert_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception as exc:
         return {"ok": False, "from_system": from_system, "input": value, "to_system": to_system, "error": {"code": "convert_reference_failed", "message": str(exc)}}
+
+
+def _compare_geographies_item(payload: dict[str, Any]) -> dict[str, Any]:
+    left_loc_id = str(payload.get("left_loc_id") or "").strip()
+    right_loc_id = str(payload.get("right_loc_id") or "").strip()
+    if not left_loc_id or not right_loc_id:
+        return {"ok": False, "error": {"code": "invalid_comparison", "message": "left_loc_id and right_loc_id are required"}}
+    try:
+        from mapmover.runtime.geography_relationships import compare_geographies
+
+        return compare_geographies(
+            left_loc_id,
+            right_loc_id,
+            as_of=payload.get("as_of"),
+            left_as_of=payload.get("left_as_of"),
+            right_as_of=payload.get("right_as_of"),
+            include_successors=bool(payload.get("include_successors", True)),
+        )
+    except ValueError as exc:
+        return {"ok": False, "error": {"code": "invalid_temporal_selector", "message": str(exc)}}
+    except Exception as exc:
+        return {"ok": False, "error": {"code": "compare_geographies_failed", "message": str(exc)}}
+
+
+async def _execute_compare_geographies_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
+    started_at = time.perf_counter()
+    payload = _ensure_request_id(arguments, "compare_geographies")
+    request_id = str(payload.get("request_id") or "")
+    items = payload.get("items") if "items" in payload else None
+    if items is not None:
+        batch_id = str(payload.get("batch_id") or "").strip() or None
+        if not isinstance(items, list):
+            result_payload = {"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_items", "message": "items must be a list"}}
+            return _jsonrpc_response(_tool_result(result_payload, is_error=True), rpc_request_id)
+        limit = _tool_batch_item_limit("compare_geographies", default=100)
+        if len(items) > limit:
+            result_payload = _batch_error_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                code="too_many_items",
+                message=f"compare_geographies accepts at most {limit} items per call",
+                limit=limit,
+                loc_id_count=len(items),
+            )
+            return _jsonrpc_response(_tool_result(result_payload, is_error=True), rpc_request_id)
+        base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
+        results = []
+        runtime_started = time.perf_counter()
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+                continue
+            result = dict(_compare_geographies_item({**base_payload, **item}))
+            result["row_index"] = item.get("row_index", item.get("id", index))
+            results.append(result)
+        result_payload = {
+            "request_id": request_id,
+            "batch_id": batch_id,
+            "item_count": len(items),
+            "compared_count": sum(1 for result in results if result.get("ok")),
+            "failed_count": sum(1 for result in results if not result.get("ok")),
+            "results": results,
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id or batch_id or "",
+            tool_name="compare_geographies",
+            capability_id="geography_comparison",
+            decision="allow",
+            started_at=started_at,
+            row_count=len(items),
+            query_granularity=f"bulk_{len(items)}",
+            response_payload=result_payload,
+            metadata={
+                "event": "geography_comparison",
+                "tool_mode": "bulk",
+                "quantity": len(items),
+                "item_count": len(items),
+                "batch_id": batch_id,
+                **_compute_metadata(
+                    response_payload=result_payload,
+                    stages={"relationship_lookup_ms": _elapsed_ms(runtime_started)},
+                    input_count=len(items) * 2,
+                    output_count=result_payload["compared_count"],
+                    batch_limit=limit,
+                ),
+            },
+        )
+        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+
+    runtime_started = time.perf_counter()
+    result = {"request_id": request_id, **_compare_geographies_item(payload)}
+    ok = bool(result.get("ok"))
+    _log_mcp_tool_usage_event(
+        request,
+        request_id=request_id,
+        tool_name="compare_geographies",
+        capability_id="geography_comparison",
+        decision="allow" if ok else "deny",
+        started_at=started_at,
+        row_count=1 if ok else 0,
+        query_granularity="single",
+        response_payload=result,
+        error_code=None if ok else str((result.get("error") or {}).get("code") or "comparison_failed"),
+        metadata={
+            "event": "geography_comparison",
+            "tool_mode": "single",
+            "quantity": 1,
+            "item_count": 1,
+            **_compute_metadata(
+                response_payload=result,
+                stages={"relationship_lookup_ms": _elapsed_ms(runtime_started)},
+                input_count=2,
+                output_count=1 if ok else 0,
+            ),
+        },
+    )
+    return _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
 
 
 async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
@@ -3270,6 +3389,12 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         if rate_limit_response:
             return rate_limit_response
         return await _execute_convert_reference_tool(request, arguments, request_id)
+
+    if tool_name == "compare_geographies":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        return await _execute_compare_geographies_tool(request, arguments, request_id)
 
     if tool_name == "check_geometry":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)

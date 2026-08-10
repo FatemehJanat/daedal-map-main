@@ -19,7 +19,6 @@ from ..runtime_config import get_runtime_config
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
-WATER_BODY_CROSSWALK_PATH = GEOMETRY_DIR / "marine" / "water_bodies_crosswalk.json"
 
 
 def _normalize(value: str | None) -> str:
@@ -52,7 +51,7 @@ def _fetch_geometry_catalog_from_s3() -> dict[str, Any] | None:
 
 @lru_cache(maxsize=1)
 def load_geometry_catalog() -> dict[str, Any]:
-    """Load the generated catalog, with a narrow water-body fallback for dev."""
+    """Load the generated schema-1.1 geometry catalog."""
     if _is_cloud_mode():
         try:
             payload = _fetch_geometry_catalog_from_s3()
@@ -68,25 +67,17 @@ def load_geometry_catalog() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         pass
 
-    # A local checkout may predate the generated catalog. Keep the resolver
-    # correct for the existing marine bank rather than silently using the old
-    # heuristic registry.
-    try:
-        payload = json.loads(WATER_BODY_CROSSWALK_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"geometry_families": [], "named_geometries": []}
-    entries = []
-    for loc_id, item in (payload.get("crosswalk") or {}).items():
-        if not isinstance(item, dict):
-            continue
-        entries.append({
-            "loc_id": str(loc_id).upper(),
-            "label": str(item.get("label") or loc_id),
-            "family": "water_body",
-            "aliases": list(item.get("iho_names") or []),
-            "resolvable": True,
-        })
-    return {"geometry_families": [], "named_geometries": entries}
+    return {
+        "schema_version": "1.1.0",
+        "geometry_collections": [],
+        "geometry_families": [],
+        "geometry_banks": [],
+        "geometry_products": [],
+        "release_packages": [],
+        "bridge_artifacts": [],
+        "resolver_groups": [],
+        "named_reference_objects": [],
+    }
 
 
 def clear_geometry_catalog_cache() -> None:
@@ -98,7 +89,8 @@ def clear_geometry_catalog_cache() -> None:
 @lru_cache(maxsize=1)
 def _named_index() -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
-    for entry in load_geometry_catalog().get("named_geometries") or []:
+    catalog = load_geometry_catalog()
+    for entry in catalog.get("named_reference_objects") or []:
         if not isinstance(entry, dict):
             continue
         loc_id = str(entry.get("loc_id") or "").strip().upper()
@@ -128,7 +120,8 @@ def _named_group_index() -> dict[str, dict[str, Any]]:
     be first, nor to substitute a legacy X* SST product zone.
     """
     index: dict[str, dict[str, Any]] = {}
-    for entry in load_geometry_catalog().get("named_geometry_groups") or []:
+    catalog = load_geometry_catalog()
+    for entry in catalog.get("resolver_groups") or []:
         if not isinstance(entry, dict):
             continue
         label = str(entry.get("label") or "").strip()
@@ -169,7 +162,12 @@ def expand_geometry_loc_id(value: str | None) -> list[str]:
     root = str(value or "").strip().upper()
     if not root:
         return []
-    entries = [entry for entry in load_geometry_catalog().get("named_geometries") or [] if isinstance(entry, dict)]
+    catalog = load_geometry_catalog()
+    entries = [
+        entry
+        for entry in catalog.get("named_reference_objects") or []
+        if isinstance(entry, dict)
+    ]
     known = {str(entry.get("loc_id") or "").strip().upper() for entry in entries if bool(entry.get("resolvable", True))}
     if root not in known:
         return []

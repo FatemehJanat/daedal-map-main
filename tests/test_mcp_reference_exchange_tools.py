@@ -45,8 +45,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("read_geometry_catalog", tool_names)
         self.assertIn("resolve_reference", tool_names)
         self.assertIn("convert_reference", tool_names)
+        self.assertIn("compare_geographies", tool_names)
         self.assertIn("check_geometry", tool_names)
         self.assertIn("get_geometry", tool_names)
+        self.assertIn("compare_geographies", tool_names)
         self.assertIn("resolve_point", tool_names)
         self.assertIn("loc_id_info", tool_names)
         self.assertIn("resolve_loc_id_scope", tool_names)
@@ -507,12 +509,12 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         with mock.patch(
             "mapmover.runtime.reference_exchange.load_geometry_catalog",
             return_value={
-                "schema_version": "1.0.0",
+                "schema_version": "1.1.0",
                 "generated_at": "2026-08-03T18:25:18Z",
                 "geometry_families": [{"family": "admin_boundary", "label": "Admin", "feature_count": 10}],
-                "geometry_assets": [
+                "geometry_products": [
                     {
-                        "asset_id": "global_admin_spine",
+                        "product_id": "global_admin_spine",
                         "label": "Global Admin Spine",
                         "scope": "Global",
                         "family": "admin_base",
@@ -526,18 +528,19 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                     }
                 ],
                 "bridge_artifacts": [{"source_family": "overlay_zcta", "status": "complete"}],
-                "geometry_packages": [],
-                "named_geometry_groups": [],
-                "named_geometries": [],
+                "geometry_collections": [],
+                "release_packages": [],
+                "resolver_groups": [],
+                "named_reference_objects": [],
             },
         ):
             payload = _tool_call(self.client, "read_geometry_catalog", {"view": "summary"})
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["view"], "summary")
-        self.assertEqual(payload["schema_version"], "1.0.0")
-        self.assertEqual(payload["counts"]["geometry_assets"], 1)
-        self.assertEqual(payload["admin_coverage"][0]["asset_id"], "global_admin_spine")
+        self.assertEqual(payload["schema_version"], "1.1.0")
+        self.assertEqual(payload["counts"]["geometry_products"], 1)
+        self.assertEqual(payload["admin_coverage"][0]["product_id"], "global_admin_spine")
         self.assertIn("download_url", payload)
 
     def test_read_geometry_catalog_logs_runtime_analytics(self) -> None:
@@ -546,14 +549,14 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 "mapmover.runtime.reference_exchange.read_geometry_catalog",
                 return_value={
                     "ok": True,
-                    "view": "packages",
-                    "counts": {"geometry_assets": 3, "geometry_packages": 3, "geometry_banks": 2},
-                    "packages": [],
+                    "view": "products",
+                    "counts": {"geometry_products": 3, "geometry_banks": 2},
+                    "products": [],
                 },
             ),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
-            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "packages"})
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "products"})
 
         self.assertTrue(payload["ok"])
         analytics = analytics_mock.call_args.kwargs
@@ -561,7 +564,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["capability_id"], "geometry_catalog_discovery")
         self.assertEqual(analytics["row_count"], 3)
         self.assertEqual(analytics["metadata"]["event"], "geometry_catalog_discovery")
-        self.assertEqual(analytics["metadata"]["view"], "packages")
+        self.assertEqual(analytics["metadata"]["view"], "products")
         self.assertEqual(analytics["metadata"]["compute"]["input_count"], 1)
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 3)
 
@@ -606,6 +609,21 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["normalized_input"], "USA-Z-00601")
         self.assertEqual(payload["resolved_loc_id"], "USA-PR-001")
         self.assertEqual(payload["match_type"], "bridge_overlap")
+
+    def test_resolve_reference_tool_selects_historical_identity_as_of_date(self) -> None:
+        payload = _tool_call(
+            self.client,
+            "resolve_reference",
+            {"from_system": "iso3166_3", "value": "YUG", "as_of": "2025"},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["resolved_loc_id"], "HIST-YUG-FRY")
+        self.assertFalse(payload["valid_at_requested_time"])
+        self.assertEqual(
+            {row["loc_id"] for row in payload["lifecycle"]["present_day_descendants"]},
+            {"SRB", "MNE"},
+        )
 
     def test_resolve_reference_tool_accepts_item_batch(self) -> None:
         payload = _tool_call(
@@ -741,6 +759,58 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "unsupported_target_system")
         self.assertEqual(analytics_mock.call_args.kwargs["decision"], "deny")
         self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "unsupported_target_system")
+
+    def test_compare_geographies_tool_returns_spatial_and_temporal_relationship(self) -> None:
+        expected = {
+            "ok": True,
+            "temporal_relation": "coexistent",
+            "spatial_relation": "overlaps",
+            "left_area_share": 0.18,
+            "right_area_share": 0.03,
+        }
+        with (
+            mock.patch("mapmover.runtime.geography_relationships.compare_geographies", return_value=expected) as compare_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "compare_geographies",
+                {"left_loc_id": "USA-Z-90001", "right_loc_id": "USA-TRIBAL-1823", "as_of": "2025"},
+            )
+
+        self.assertEqual(payload["spatial_relation"], "overlaps")
+        self.assertEqual(payload["left_area_share"], 0.18)
+        compare_mock.assert_called_once_with(
+            "USA-Z-90001",
+            "USA-TRIBAL-1823",
+            as_of="2025",
+            left_as_of=None,
+            right_as_of=None,
+            include_successors=True,
+        )
+        self.assertEqual(analytics_mock.call_args.kwargs["capability_id"], "geography_comparison")
+
+    def test_compare_geographies_tool_accepts_pair_batch(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.geography_relationships.compare_geographies",
+            return_value={"ok": True, "spatial_relation": "disjoint"},
+        ):
+            payload = _tool_call(
+                self.client,
+                "compare_geographies",
+                {
+                    "batch_id": "relations-1",
+                    "items": [
+                        {"id": "one", "left_loc_id": "USA-Z-90001", "right_loc_id": "USA-TRIBAL-1823"},
+                        {"id": "two", "left_loc_id": "USA-Z-10001", "right_loc_id": "USA-TRIBAL-1823"},
+                    ],
+                },
+            )
+
+        self.assertEqual(payload["batch_id"], "relations-1")
+        self.assertEqual(payload["item_count"], 2)
+        self.assertEqual(payload["compared_count"], 2)
+        self.assertEqual([row["row_index"] for row in payload["results"]], ["one", "two"])
 
     def test_resolve_loc_id_scope_uses_geometry_index(self) -> None:
         with (

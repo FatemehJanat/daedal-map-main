@@ -87,6 +87,14 @@ GEOMETRY_INDEX_COLUMNS = [
 ]
 
 GEOMETRY_METADATA_COLUMNS = list(GEOMETRY_INDEX_COLUMNS)
+GEOMETRY_METADATA_COLUMNS.extend([
+    "valid_from",
+    "valid_to",
+    "valid_from_date",
+    "valid_to_date",
+    "geometry_vintage",
+    "bank_id",
+])
 
 
 def _project_frame(df, columns: list[str] | None):
@@ -2871,10 +2879,13 @@ def get_selection_geometries(loc_ids: list):
         if sub_level_ids:
             sub_admin_levels = get_country_sub_admin_levels(iso3)
             for lid in sub_level_ids:
+                family = classify_loc_id_family(lid)
                 parts = str(lid).split("-")
                 segment_count = len(parts)
                 admin_level = segment_count - 1
-                if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
+                    regular_sub_level_ids.append(lid)
+                elif segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
                     deep_level_ids.append(lid)
                 else:
                     regular_sub_level_ids.append(lid)
@@ -2907,6 +2918,21 @@ def get_selection_geometries(loc_ids: list):
     return {"type": "FeatureCollection", "features": features}
 
 
+def _geometry_metadata_value(row, *keys):
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        try:
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
+        if str(value).strip():
+            return value
+    return None
+
+
 def _geometry_metadata_row(row) -> dict:
     """Return loc_id geometry metadata without polygon payload."""
     return {
@@ -2923,6 +2949,10 @@ def _geometry_metadata_row(row) -> dict:
         "bbox_max_lat": row.get("bbox_max_lat"),
         "has_polygon": row.get("has_polygon"),
         "iso_a3": row.get("iso_a3"),
+        "valid_from": _geometry_metadata_value(row, "valid_from", "valid_from_date"),
+        "valid_to": _geometry_metadata_value(row, "valid_to", "valid_to_date"),
+        "geometry_vintage": row.get("geometry_vintage"),
+        "bank_id": row.get("bank_id"),
     }
 
 
@@ -2970,9 +3000,12 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
         if sub_level_ids:
             sub_admin_levels = get_country_sub_admin_levels(iso3)
             for lid in sub_level_ids:
+                family = classify_loc_id_family(lid)
                 segment_count = len(str(lid).split("-"))
                 admin_level = segment_count - 1
-                if segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
+                if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "regional_base"}:
+                    regular_sub_level_ids.append(lid)
+                elif segment_count >= 4 and f"admin_{admin_level}" in sub_admin_levels:
                     deep_level_ids.append(lid)
                 else:
                     regular_sub_level_ids.append(lid)
