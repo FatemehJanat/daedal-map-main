@@ -394,6 +394,84 @@ class OpsHurricaneSourcesRuntimeTest(unittest.TestCase):
         self.assertEqual("09W", bavi["source_identities"]["JTWC"]["aliases"]["jtwc_warning_id"])
         self.assertEqual("2609", bavi["source_identities"]["JMA"]["aliases"]["jma_number"])
 
+    def test_jma_sequence_does_not_collide_with_distinct_jtwc_storm(self):
+        """JMA 2615 was Chan-Hom while JTWC WP15 was a different depression."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+
+        def child(collector, payload_hash, storms):
+            return {
+                "collector": collector,
+                "last_checked_at": now.isoformat(),
+                "last_changed_at": now.isoformat(),
+                "payload_hash": payload_hash,
+                "payload_summary": {"storms": storms},
+            }
+
+        jtwc_storms = [
+            {
+                "storm_id": "WP142026",
+                "identity": {"canonical_id": "WP142026", "aliases": {"jtwc_warning_id": "14W"}},
+                "name": "CHAN-HOM",
+                "year": 2026,
+                "basin": "WP",
+                "source": "JTWC",
+                "current_position": {
+                    "timestamp": now.isoformat(), "latitude": 34.0, "longitude": 149.5,
+                },
+            },
+            {
+                "storm_id": "WP152026",
+                "identity": {"canonical_id": "WP152026", "aliases": {"jtwc_warning_id": "15W"}},
+                "name": "FIFTEEN",
+                "year": 2026,
+                "basin": "WP",
+                "source": "JTWC",
+                "current_position": {
+                    "timestamp": now.isoformat(), "latitude": 25.6, "longitude": 160.1,
+                },
+            },
+        ]
+        # This is the legacy retained shape. Runtime normalization must repair
+        # it even before Railway publishes a new collector snapshot.
+        jma_storms = [{
+            "storm_id": "WP152026",
+            "identity": {
+                "canonical_id": "WP152026",
+                "aliases": {"jma_number": "2615", "atcf_id": "WP152026"},
+            },
+            "name": "CHAN-HOM",
+            "year": 2026,
+            "basin": "WP",
+            "source": "JMA",
+            "current_position": {
+                "timestamp": now.isoformat(), "latitude": 34.1, "longitude": 149.3,
+            },
+        }]
+        snapshot = ops.load_current_state_snapshot(
+            "hurricanes_live",
+            _composed_children=[
+                child("tc_jtwc", "jtwc-current", jtwc_storms),
+                child("tc_jma", "jma-current", jma_storms),
+            ],
+        )
+
+        storms = snapshot["payload_summary"]["storms"]
+        self.assertEqual({"WP142026", "WP152026"}, {storm["storm_id"] for storm in storms})
+        chan_hom = next(storm for storm in storms if storm["name"] == "CHAN-HOM")
+        fifteen = next(storm for storm in storms if storm["name"] == "FIFTEEN")
+        self.assertEqual("WP142026", chan_hom["storm_id"])
+        self.assertEqual("JMA-2615", chan_hom["source_storm_id"])
+        self.assertEqual("WP152026", fifteen["storm_id"])
+        self.assertEqual("JMA-2615", chan_hom["source_identities"]["JMA"]["canonical_id"])
+        self.assertNotIn("atcf_id", chan_hom["source_identities"]["JMA"]["aliases"])
+
+        augmented = ops._with_hurricane_history_tracks(snapshot, [{
+            "payload_summary": snapshot["payload_summary"],
+        }])
+        by_name = {storm["name"]: storm for storm in augmented["payload_summary"]["storms"]}
+        self.assertEqual(149.3, by_name["CHAN-HOM"]["observed_track"][-1]["longitude"])
+        self.assertEqual(160.1, by_name["FIFTEEN"]["observed_track"][-1]["longitude"])
+
     def test_hurricane_history_payload_keeps_retained_only_storms_and_source_tracks(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         snapshot = {

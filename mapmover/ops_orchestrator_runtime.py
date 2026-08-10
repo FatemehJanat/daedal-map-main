@@ -120,6 +120,13 @@ HURRICANE_STORM_COLORS = (
     "#35d0ff", "#ffcf5c", "#ff6f91", "#a78bfa",
     "#44d7a8", "#ff9f5c", "#60a5fa", "#f472b6",
 )
+
+HURRICANE_PLACEHOLDER_NAMES = {
+    "unnamed", "invest", "tropical depression", "tropical storm",
+    "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+}
 USGS_FDSN_EVENT_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 _LIVE_STATE_CACHE: dict[tuple[str, str], tuple[float, object]] = {}
 _LIVE_STATE_CACHE_LOCK = threading.Lock()
@@ -143,6 +150,59 @@ def _hurricane_storm_color(storm_id: object) -> str:
     encoded = str(storm_id or "").strip().upper().encode("utf-8")
     digest = hashlib.sha256(encoded).digest()
     return HURRICANE_STORM_COLORS[digest[0] % len(HURRICANE_STORM_COLORS)]
+
+
+def _normalize_hurricane_source_identity(storm: dict) -> dict:
+    """Return one source record with a collision-free agency identity.
+
+    Older retained JMA snapshots incorrectly exposed the JMA annual sequence
+    as an ATCF/JTWC ``WP`` ID.  Normalize at composition time as well as in the
+    collector so the current 72-hour replay repairs itself immediately after a
+    runtime deploy instead of waiting for the old records to expire.
+    """
+    normalized = dict(storm)
+    source = str(normalized.get("source") or "").strip().upper()
+    identity = dict(normalized.get("identity")) if isinstance(normalized.get("identity"), dict) else {}
+    aliases = dict(identity.get("aliases")) if isinstance(identity.get("aliases"), dict) else {}
+    if source == "JMA":
+        jma_number = str(aliases.get("jma_number") or "").strip().upper()
+        if jma_number:
+            source_id = f"JMA-{jma_number}"
+            original_id = str(normalized.get("storm_id") or "").strip()
+            if original_id and original_id != source_id:
+                normalized["source_storm_id"] = original_id
+            aliases.pop("atcf_id", None)
+            identity = {**identity, "canonical_id": source_id, "aliases": aliases}
+            normalized["identity"] = identity
+            normalized["storm_id"] = source_id
+    return normalized
+
+
+def _hurricane_name_year_key(storm: dict) -> str:
+    """Return a conservative cross-agency correlation key for named storms."""
+    name = str(storm.get("name") or "").strip()
+    normalized_name = re.sub(r"[-_\s]?\d{2,4}$", "", name).strip().lower()
+    if not normalized_name or normalized_name in HURRICANE_PLACEHOLDER_NAMES:
+        return ""
+    if re.fullmatch(r"(?:tropical\s+(?:depression|storm)\s+)?\d+[a-z]?", normalized_name):
+        return ""
+    year = str(storm.get("year") or "")[:4]
+    return f"{normalized_name}:{year}" if year else ""
+
+
+def _hurricane_logical_identity(storm: dict, fallback_key: str) -> tuple[str, dict]:
+    """Choose one stable logical ID without mistaking JMA numbers for ATCF."""
+    source_identities = storm.get("source_identities") if isinstance(storm.get("source_identities"), dict) else {}
+    for source in ("NHC", "JTWC", "JMA", "GDACS"):
+        identity = source_identities.get(source)
+        if not isinstance(identity, dict):
+            continue
+        canonical_id = str(identity.get("canonical_id") or "").strip()
+        if canonical_id:
+            return canonical_id, dict(identity)
+    identity = storm.get("identity") if isinstance(storm.get("identity"), dict) else {}
+    canonical_id = str(identity.get("canonical_id") or fallback_key or storm.get("storm_id") or "").strip()
+    return canonical_id, {**identity, "canonical_id": canonical_id}
 
 
 def _hurricane_source_priority_for_storm(storm: dict, source: object | None = None) -> int:
@@ -732,13 +792,11 @@ def load_current_state_snapshot(
         name_year_index: dict[str, str] = {}
         for child in children:
             summary = child.get("payload_summary") if isinstance(child.get("payload_summary"), dict) else {}
-            for item in summary.get("storms") or []:
-                if not isinstance(item, dict):
+            for raw_item in summary.get("storms") or []:
+                if not isinstance(raw_item, dict):
                     continue
-                name = str(item.get("name") or item.get("storm_id") or "").strip()
-                normalized_name = re.sub(r"[-_\s]?\d{2,4}$", "", name).strip().lower()
-                year = str(item.get("year") or "")[:4]
-                name_year_key = f"{normalized_name}:{year}" if normalized_name else ""
+                item = _normalize_hurricane_source_identity(raw_item)
+                name_year_key = _hurricane_name_year_key(item)
                 identity = item.get("identity") if isinstance(item.get("identity"), dict) else {}
                 canonical_id = str(identity.get("canonical_id") or "").strip()
                 key = (
@@ -793,7 +851,19 @@ def load_current_state_snapshot(
                     if existing.get("gdacs_alert"):
                         replacement["gdacs_alert"] = existing["gdacs_alert"]
                     storms_by_key[key] = replacement
-        storms = [_compose_hurricane_candidates(item) for item in storms_by_key.values()]
+        storms = []
+        for group_key, grouped in storms_by_key.items():
+            logical_id, logical_identity = _hurricane_logical_identity(grouped, group_key)
+            composed = _compose_hurricane_candidates(grouped)
+            selected_source_id = str(composed.get("storm_id") or "").strip()
+            if selected_source_id and selected_source_id != logical_id:
+                composed["source_storm_id"] = selected_source_id
+            composed["storm_id"] = logical_id
+            composed["identity"] = logical_identity
+            composed["source_identities"] = grouped.get("source_identities", {})
+            if grouped.get("gdacs_alert"):
+                composed["gdacs_alert"] = grouped["gdacs_alert"]
+            storms.append(composed)
         hashes = [str(item.get("payload_hash") or "") for item in children]
         latest_checked = max(str(item.get("last_checked_at") or "") for item in children)
         latest_changed = max(str(item.get("last_changed_at") or "") for item in children)
