@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from mapmover import logger
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.api_query_commercial import get_trusted_artifact_token
+from mapmover.routes.mcp import _access_lane
 from mapmover.security import get_client_ip
 from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
@@ -461,7 +462,7 @@ async def resolve_points_json_endpoint(req: Request):
         "unresolved_count": unresolved_count,
         "limit": limit,
         "paid_batch_limit": paid_limit,
-        "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+        "access_lane": _access_lane(trusted_token),
         "artifact_token_id": trusted_token_id,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "country_scope": country_scope,
@@ -476,7 +477,7 @@ async def resolve_points_json_endpoint(req: Request):
             pack_id="geography_tools",
             source_id="resolve_points",
             decision="allow",
-            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            payment_rail=_access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
             auth_user_id=None,
             ip_hash=hash_ip_for_analytics(get_client_ip(req)),

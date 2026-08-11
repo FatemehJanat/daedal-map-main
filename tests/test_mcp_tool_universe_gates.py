@@ -65,12 +65,27 @@ class AccessLaneEnumTests(unittest.TestCase):
         self.assertEqual(_access_lane("token", paid=True), ACCESS_LANE_TRUSTED_ARTIFACT)
 
     def test_no_legacy_free_preview_lane_remains(self) -> None:
+        """Scan the whole runtime package, not just one module.
+
+        The first version of this test only read routes/mcp.py, which let
+        routes/geometry.py keep emitting `free_preview` after the unification -
+        so MCP and the HTTP batch endpoint disagreed about the same lane.
+        """
         from pathlib import Path
 
-        import mapmover.routes.mcp as mcp_module
+        import mapmover
 
-        source = Path(mcp_module.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("free_preview", source)
+        package_root = Path(mapmover.__file__).parent
+        offenders = [
+            path.relative_to(package_root).as_posix()
+            for path in package_root.rglob("*.py")
+            if "free_preview" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "these modules still emit the retired free_preview lane",
+        )
 
 
 class DataHelperTelemetryTests(unittest.TestCase):
