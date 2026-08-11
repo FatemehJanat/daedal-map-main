@@ -1,0 +1,217 @@
+"""Who is calling?
+
+One answer, used by rate limits, quotas, analytics, and billing, so those four
+never disagree about which caller they are looking at.
+
+The old shape was `auth_user_id or ip_hash or "anonymous"`. Two problems:
+
+1. **Collision.** Every caller with no resolvable IP collapsed onto the literal
+   string ``"anonymous"``, so they shared one rate-limit bucket and one
+   settlement binding. Unrelated callers could match each other's binding.
+2. **No confidence signal.** A verified session and a guessable IP hash were the
+   same kind of thing to the caller, so nothing could say "this identity is
+   strong enough to spend money" versus "this is a best-effort throttle key".
+
+So an identity now carries a *kind*, a *namespaced* identifier, and a
+*confidence*. Namespacing means an account id can never collide with an IP hash.
+Confidence means billing can demand `verified` while a rate limiter happily
+accepts `weak`.
+
+Spending rule: only a `verified` `account` identity may spend account credits.
+An IP hash is a throttling key, never an authorisation to move money.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import os
+import secrets
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from fastapi import Request
+
+
+# Identity kinds, strongest first. Order matters: resolution takes the first
+# kind that produces an identifier.
+KIND_ACCOUNT = "account"
+KIND_API_KEY = "api_key"
+KIND_ANON_SESSION = "anon_session"
+KIND_IP = "ip"
+KIND_UNKNOWN = "unknown"
+
+CONFIDENCE_VERIFIED = "verified"
+CONFIDENCE_WEAK = "weak"
+
+# Cookie carrying a server-issued anonymous session id. High entropy so it
+# cannot be guessed, and server-issued so a caller cannot pick their own bucket.
+ANON_SESSION_COOKIE = "dm_anon"
+ANON_SESSION_BYTES = 24
+
+
+@dataclass(frozen=True)
+class CallerIdentity:
+    kind: str
+    identifier: str
+    confidence: str
+    auth_user_id: Optional[str] = None
+    ip_hash: Optional[str] = None
+    plan_id: Optional[str] = None
+
+    @property
+    def binding(self) -> str:
+        """Namespaced caller binding. Safe to compare across requests.
+
+        Namespacing is the point: ``account:abc`` can never collide with
+        ``ip:abc``, and there is no shared literal fallback bucket.
+        """
+        return f"{self.kind}:{self.identifier}"
+
+    @property
+    def is_verified(self) -> bool:
+        return self.confidence == CONFIDENCE_VERIFIED
+
+    @property
+    def can_spend_credits(self) -> bool:
+        """Only a verified account may move money.
+
+        An API key is verified but belongs to an account; callers that resolve
+        to `api_key` carry the owning `auth_user_id`, so they spend as that
+        account rather than as the key.
+        """
+        return bool(self.auth_user_id) and self.is_verified
+
+    @property
+    def is_anonymous(self) -> bool:
+        return self.kind in {KIND_ANON_SESSION, KIND_IP, KIND_UNKNOWN}
+
+    def as_analytics_fields(self) -> dict[str, Any]:
+        return {
+            "caller_kind": self.kind,
+            "caller_binding": self.binding,
+            "caller_confidence": self.confidence,
+            "auth_user_id": self.auth_user_id,
+            "ip_hash": self.ip_hash,
+        }
+
+
+def _anon_session_secret() -> str:
+    return str(os.getenv("ANON_SESSION_SECRET", "")).strip()
+
+
+def sign_anon_session(raw_id: str) -> str:
+    """Sign an anonymous session id so a caller cannot mint their own.
+
+    Without a configured secret the id is returned unsigned; it is still
+    server-issued and high-entropy, just not tamper-evident. Set
+    ANON_SESSION_SECRET in any deployment where anonymous quotas matter.
+    """
+    secret = _anon_session_secret()
+    if not secret:
+        return raw_id
+    digest = hmac.new(secret.encode("utf-8"), raw_id.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    return f"{raw_id}.{digest}"
+
+
+def verify_anon_session(value: str | None) -> Optional[str]:
+    """Return the raw id when the cookie is intact, else None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    secret = _anon_session_secret()
+    if not secret:
+        return text if len(text) >= 16 else None
+    if "." not in text:
+        return None
+    raw_id, _, provided = text.rpartition(".")
+    if not raw_id or not provided:
+        return None
+    expected = hmac.new(secret.encode("utf-8"), raw_id.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    return raw_id if hmac.compare_digest(expected, provided) else None
+
+
+def issue_anon_session_id() -> str:
+    return sign_anon_session(secrets.token_urlsafe(ANON_SESSION_BYTES))
+
+
+def resolve_caller_identity(
+    request: Request,
+    *,
+    auth_user: dict | None = None,
+    ip_hash: str | None = None,
+) -> CallerIdentity:
+    """Resolve one caller to a single identity.
+
+    Precedence is strongest-first, and it stops at the first hit:
+
+    1. ``account``      - verified session user
+    2. ``api_key``      - verified key, resolved to its owning account
+    3. ``anon_session`` - server-issued signed cookie
+    4. ``ip``           - salted IP hash, best-effort only
+    5. ``unknown``      - nothing resolvable; gets a per-request id so callers
+                          never share a bucket
+    """
+    plan_id = None
+    user_id = None
+    if isinstance(auth_user, dict):
+        raw_id = auth_user.get("id")
+        if raw_id:
+            user_id = str(raw_id).strip() or None
+        for source in (auth_user.get("app_metadata"), auth_user.get("user_metadata"), auth_user):
+            if isinstance(source, dict) and source.get("plan_id"):
+                plan_id = str(source["plan_id"]).strip().lower()
+                break
+
+    if user_id:
+        return CallerIdentity(
+            kind=KIND_ACCOUNT,
+            identifier=user_id,
+            confidence=CONFIDENCE_VERIFIED,
+            auth_user_id=user_id,
+            ip_hash=ip_hash,
+            plan_id=plan_id,
+        )
+
+    # An API key is verified upstream; it resolves to the account that owns it,
+    # so usage and spend land on that account rather than on the key.
+    key_account = getattr(request.state, "api_key_account_id", None)
+    if key_account:
+        key_id = str(getattr(request.state, "api_key_id", "") or key_account).strip()
+        return CallerIdentity(
+            kind=KIND_API_KEY,
+            identifier=key_id,
+            confidence=CONFIDENCE_VERIFIED,
+            auth_user_id=str(key_account).strip(),
+            ip_hash=ip_hash,
+            plan_id=plan_id,
+        )
+
+    session_id = verify_anon_session(request.cookies.get(ANON_SESSION_COOKIE))
+    if session_id:
+        return CallerIdentity(
+            kind=KIND_ANON_SESSION,
+            identifier=session_id,
+            confidence=CONFIDENCE_WEAK,
+            auth_user_id=None,
+            ip_hash=ip_hash,
+        )
+
+    if ip_hash:
+        return CallerIdentity(
+            kind=KIND_IP,
+            identifier=str(ip_hash),
+            confidence=CONFIDENCE_WEAK,
+            auth_user_id=None,
+            ip_hash=ip_hash,
+        )
+
+    # No shared fallback bucket: an unidentifiable caller gets its own id so it
+    # cannot borrow another caller's quota or match their settlement binding.
+    return CallerIdentity(
+        kind=KIND_UNKNOWN,
+        identifier=secrets.token_hex(8),
+        confidence=CONFIDENCE_WEAK,
+        auth_user_id=None,
+        ip_hash=None,
+    )
