@@ -1,6 +1,6 @@
 {
   "name": "daedalmap-runtime",
-  "version": "2.0.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Legacy package metadata for the DaedalMap open runtime repository.",
   "scripts": {
