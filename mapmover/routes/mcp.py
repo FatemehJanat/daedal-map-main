@@ -25,6 +25,7 @@ from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.api_query_commercial import get_trusted_artifact_token
+from mapmover.caller_identity import resolve_caller_identity
 from mapmover.routes.disasters.related import (
     get_disaster_link_chain_for_exact_event,
     get_disaster_links_for_exact_event,
@@ -307,7 +308,12 @@ async def _commercial_access_decision(
 
     auth_user_id = getattr(request.state, "auth_user_id", None)
     ip_hash = hash_ip_for_analytics(get_client_ip(request))
-    caller_binding = auth_user_id or ip_hash or "anonymous"
+    auth_user = {"id": auth_user_id} if auth_user_id else None
+    caller_identity = resolve_caller_identity(request, auth_user=auth_user, ip_hash=ip_hash)
+    caller_binding = caller_identity.binding
+    # A generic app session is not authority to spend through MCP. The future
+    # OAuth/API-key middleware must set this only after audience + scope checks.
+    mcp_credit_authorized = bool(getattr(request.state, "mcp_credit_authorized", False)) and caller_identity.can_spend_credits
     fingerprint_source = f"{tool_name}:{capability_id}:{units}:{include_polygon}:{caller_binding}"
     request_fingerprint = _hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
 
@@ -328,9 +334,11 @@ async def _commercial_access_decision(
                     "request_fingerprint": request_fingerprint,
                 },
                 "caller": {
-                    "auth_user_id": auth_user_id,
+                    "auth_user_id": caller_identity.auth_user_id if mcp_credit_authorized else None,
                     "ip_hash": ip_hash,
                     "caller_binding": caller_binding,
+                    "caller_kind": caller_identity.kind,
+                    "caller_confidence": caller_identity.confidence if mcp_credit_authorized else "weak",
                 },
             },
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -120,7 +121,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     auth_user = get_authenticated_user(req)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     ip_hash = hash_ip_for_analytics(_get_request_ip(req))
-    caller_key = auth_user_id or ip_hash or "anonymous"
+    caller_identity = resolve_caller_identity(req, auth_user=auth_user, ip_hash=ip_hash)
+    caller_key = caller_identity.binding
     user_agent = req.headers.get("user-agent", "").strip() or None
     payment_rail: str | None = None
     artifact_token_id: str | None = None
@@ -999,7 +1001,6 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     request_fingerprint = build_request_fingerprint_hash(request_fingerprint_payload)
     # Namespaced identity, so an account id can never collide with an IP hash
     # and unidentified callers never share one "anonymous" bucket.
-    caller_identity = resolve_caller_identity(req, auth_user=auth_user, ip_hash=ip_hash)
     caller_binding = caller_identity.binding
 
     settlement_id: str | None = None
@@ -1166,7 +1167,12 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             select_columns.append(sort_field)
 
     try:
-        async with acquire_query_slot(caller_key):
+        concurrency_keys = [caller_key]
+        if caller_identity.is_anonymous and ip_hash:
+            concurrency_keys.append(f"ip:{ip_hash}")
+        async with AsyncExitStack() as concurrency_stack:
+            for concurrency_key in dict.fromkeys(concurrency_keys):
+                await concurrency_stack.enter_async_context(acquire_query_slot(concurrency_key))
             rows = execute_dataset_query(
                 spec,
                 select_columns=select_columns,

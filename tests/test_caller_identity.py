@@ -24,6 +24,7 @@ from mapmover.caller_identity import (
     KIND_UNKNOWN,
     CallerIdentity,
     issue_anon_session_id,
+    ensure_anon_session,
     resolve_caller_identity,
     sign_anon_session,
     verify_anon_session,
@@ -77,7 +78,11 @@ class IdentityResolutionTests(unittest.TestCase):
 
     def test_api_key_resolves_to_its_owning_account(self) -> None:
         identity = resolve_caller_identity(
-            _request(state={"api_key_account_id": "owner-9", "api_key_id": "key-3"}),
+            _request(state={
+                "api_key_account_id": "owner-9",
+                "api_key_id": "key-3",
+                "api_key_scopes": ["credits:spend"],
+            }),
             auth_user=None,
             ip_hash="iphash",
         )
@@ -86,6 +91,14 @@ class IdentityResolutionTests(unittest.TestCase):
         # Spend lands on the account, not the key.
         self.assertEqual(identity.auth_user_id, "owner-9")
         self.assertTrue(identity.can_spend_credits)
+
+    def test_api_key_without_spend_scope_cannot_spend(self) -> None:
+        identity = resolve_caller_identity(
+            _request(state={"api_key_account_id": "owner-9", "api_key_id": "key-3"}),
+            auth_user=None,
+            ip_hash="iphash",
+        )
+        self.assertFalse(identity.can_spend_credits)
 
     def test_signed_anon_session_beats_ip(self) -> None:
         with mock.patch.dict("os.environ", {"ANON_SESSION_SECRET": "s3cret"}, clear=False):
@@ -103,6 +116,18 @@ class IdentityResolutionTests(unittest.TestCase):
             good = sign_anon_session("raw-identifier-value")
             self.assertEqual(verify_anon_session(good), "raw-identifier-value")
 
+    def test_unsigned_cookie_is_rejected_when_env_secret_is_missing(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(verify_anon_session("caller-controlled-identifier"))
+
+    def test_new_cookie_is_available_on_the_issuing_request(self) -> None:
+        request = _request()
+        raw_id, cookie = ensure_anon_session(request)
+        self.assertTrue(cookie)
+        self.assertEqual(request.state.anon_session_id, raw_id)
+        identity = resolve_caller_identity(request, auth_user=None, ip_hash="iphash")
+        self.assertEqual(identity.kind, KIND_ANON_SESSION)
+
     def test_falls_back_to_ip_hash(self) -> None:
         identity = resolve_caller_identity(_request(), auth_user=None, ip_hash="iphash")
         self.assertEqual(identity.kind, KIND_IP)
@@ -113,7 +138,7 @@ class SpendAuthorisationTests(unittest.TestCase):
     def test_only_verified_identities_may_spend(self) -> None:
         for kind, confidence, user_id, expected in [
             (KIND_ACCOUNT, CONFIDENCE_VERIFIED, "u1", True),
-            (KIND_API_KEY, CONFIDENCE_VERIFIED, "u1", True),
+            (KIND_API_KEY, CONFIDENCE_VERIFIED, "u1", False),
             (KIND_ANON_SESSION, CONFIDENCE_WEAK, None, False),
             (KIND_IP, CONFIDENCE_WEAK, None, False),
             (KIND_UNKNOWN, CONFIDENCE_WEAK, None, False),

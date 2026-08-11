@@ -39,6 +39,12 @@ from fastapi.staticfiles import StaticFiles
 from agent_surface_shared import render_app_llms_txt
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
+from mapmover.caller_identity import (
+    ANON_SESSION_COOKIE,
+    ANON_SESSION_MAX_AGE_SECONDS,
+    ensure_anon_session,
+    resolve_caller_identity,
+)
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
 from mapmover.security import (
     get_allowed_origins,
@@ -396,21 +402,51 @@ async def static_no_cache(request: Request, call_next):
     auth_user = await get_authenticated_user_async(request)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
     client_ip = get_client_ip(request)
+    ip_hash = hash_ip_for_analytics(client_ip)
+    new_anon_cookie = None
+    if not auth_user_id and request.method != "OPTIONS":
+        _anon_id, new_anon_cookie = ensure_anon_session(request)
+    caller_identity = resolve_caller_identity(request, auth_user=auth_user, ip_hash=ip_hash)
+    request.state.caller_identity = caller_identity
+    request.state.analytics_metadata = {
+        **(getattr(request.state, "analytics_metadata", {}) or {}),
+        **caller_identity.as_analytics_fields(),
+    }
+
+    def finalize_identity(response):
+        if new_anon_cookie:
+            response.set_cookie(
+                ANON_SESSION_COOKIE,
+                new_anon_cookie,
+                max_age=ANON_SESSION_MAX_AGE_SECONDS,
+                httponly=True,
+                secure=is_https_request(request),
+                samesite="lax",
+                path="/",
+            )
+        return response
+
     rate_limit_config = _rate_limit_config_for_surface(surface)
     if rate_limit_config is None and not auth_user_id and surface == "shared_runtime":
         rate_limit_config = _shared_runtime_rate_limit_for_path(path)
     if rate_limit_config is not None and request.method != "OPTIONS":
         limit, window_seconds = rate_limit_config
-        limiter_key = auth_user_id or client_ip or "unknown"
-        allowed, retry_after = rate_limiter.check(
-            f"surface:{surface}:{limiter_key}",
-            limit=limit,
-            window_seconds=window_seconds,
-        )
+        limiter_keys = [caller_identity.binding]
+        if caller_identity.is_anonymous and ip_hash:
+            limiter_keys.append(f"ip:{ip_hash}")
+        allowed = True
+        retry_after = 0
+        for limiter_key in dict.fromkeys(limiter_keys):
+            key_allowed, key_retry_after = rate_limiter.check(
+                f"surface:{surface}:{limiter_key}",
+                limit=limit,
+                window_seconds=window_seconds,
+            )
+            allowed = allowed and key_allowed
+            retry_after = max(retry_after, key_retry_after)
         if not allowed:
             response = _rate_limit_response(surface, retry_after)
             response_size_bytes = len(getattr(response, "body", b"") or b"")
-            ip_hash = hash_ip_for_analytics(_get_request_ip(request))
             user_agent = request.headers.get("user-agent", "").strip() or None
             log_route_request_event(
                 method=request.method,
@@ -420,6 +456,9 @@ async def static_no_cache(request: Request, call_next):
                 execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
                 auth_user_id=auth_user_id,
                 ip_hash=ip_hash,
+                caller_kind=caller_identity.kind,
+                caller_binding=caller_identity.binding,
+                caller_confidence=caller_identity.confidence,
                 user_agent=user_agent,
                 request_id=getattr(request.state, "analytics_request_id", None),
                 pack_id=getattr(request.state, "analytics_pack_id", None),
@@ -430,13 +469,13 @@ async def static_no_cache(request: Request, call_next):
                 error_code="rate_limited",
                 metadata=getattr(request.state, "analytics_metadata", None),
             )
-            return response
+            return finalize_identity(response)
 
     response = await call_next(request)
     _apply_common_security_headers(response, request, path)
     _apply_surface_headers(response, request, surface)
+    finalize_identity(response)
 
-    ip_hash = hash_ip_for_analytics(_get_request_ip(request))
     user_agent = request.headers.get("user-agent", "").strip() or None
     request_id = getattr(request.state, "analytics_request_id", None)
     pack_id = getattr(request.state, "analytics_pack_id", None)
@@ -450,6 +489,9 @@ async def static_no_cache(request: Request, call_next):
         execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
         auth_user_id=auth_user_id,
         ip_hash=ip_hash,
+        caller_kind=caller_identity.kind,
+        caller_binding=caller_identity.binding,
+        caller_confidence=caller_identity.confidence,
         user_agent=user_agent,
         request_id=request_id,
         pack_id=pack_id,

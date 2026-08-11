@@ -265,6 +265,8 @@ class LLMUsageRecorder:
     session_id: Optional[str] = None
     caller_kind: Optional[str] = None
     caller_label: Optional[str] = None
+    caller_binding: Optional[str] = None
+    caller_confidence: Optional[str] = None
     auth_user_id: Optional[str] = None
     plan_id: Optional[str] = None
     ip_hash: Optional[str] = None
@@ -344,6 +346,8 @@ class LLMUsageRecorder:
                 latency_ms=latency_ms,
                 caller_kind=self.caller_kind,
                 caller_label=self.caller_label,
+                caller_binding=self.caller_binding,
+                caller_confidence=self.caller_confidence,
                 auth_user_id=self.auth_user_id,
                 plan_id=self.plan_id,
                 ip_hash=self.ip_hash,

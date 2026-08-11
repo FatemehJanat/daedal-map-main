@@ -50,13 +50,20 @@ def anonymous_turn_limit_rejection_payload(
     lane: str,
 ) -> tuple[dict | None, int | None, dict[str, str] | None]:
     caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
-    if caller_kind != "anonymous" or not session_id:
+    quota_key = str((caller_ctx or {}).get("caller_binding") or session_id or "").strip()
+    if caller_kind != "anonymous" or not quota_key:
         return None, None, None
 
     normalized_lane = _normalize_lane(lane)
     turn_limit = _anon_turn_limit_for_lane(normalized_lane)
-    cache = session_manager.get_or_create(session_id)
-    turns_used = cache.get_anon_chat_turn_count(normalized_lane)
+    quota_keys = [quota_key]
+    ip_hash = str((caller_ctx or {}).get("ip_hash") or "").strip()
+    if ip_hash:
+        quota_keys.append(f"ip:{ip_hash}")
+    turns_used = max(
+        session_manager.get_or_create(f"quota:{key}").get_anon_chat_turn_count(normalized_lane)
+        for key in dict.fromkeys(quota_keys)
+    )
     if turns_used < turn_limit:
         return None, None, None
 
@@ -83,10 +90,16 @@ def anonymous_turn_limit_rejection_payload(
 
 def register_anonymous_chat_turn(*, session_id: str, caller_ctx: dict, lane: str) -> None:
     caller_kind = str((caller_ctx or {}).get("caller_kind") or "").strip().lower()
-    if caller_kind != "anonymous" or not session_id:
+    quota_key = str((caller_ctx or {}).get("caller_binding") or session_id or "").strip()
+    if caller_kind != "anonymous" or not quota_key:
         return
-    cache = session_manager.get_or_create(session_id)
-    cache.increment_anon_chat_turn_count(_normalize_lane(lane))
+    quota_keys = [quota_key]
+    ip_hash = str((caller_ctx or {}).get("ip_hash") or "").strip()
+    if ip_hash:
+        quota_keys.append(f"ip:{ip_hash}")
+    for key in dict.fromkeys(quota_keys):
+        cache = session_manager.get_or_create(f"quota:{key}")
+        cache.increment_anon_chat_turn_count(_normalize_lane(lane))
 
 
 def anonymous_budget_rejection_payload(caller_ctx: dict) -> tuple[dict | None, int | None, dict[str, str] | None]:

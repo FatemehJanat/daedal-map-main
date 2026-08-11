@@ -219,6 +219,9 @@ def log_api_query_event(
     artifact_token_id: str | None = None,
     auth_user_id: str | None = None,
     ip_hash: str | None = None,
+    caller_kind: str | None = None,
+    caller_binding: str | None = None,
+    caller_confidence: str | None = None,
     user_agent: str | None = None,
     execution_latency_ms: int | None = None,
     row_count: int | None = None,
@@ -234,6 +237,10 @@ def log_api_query_event(
 ) -> None:
     if _runtime_analytics_disabled():
         return
+    identity_meta = metadata if isinstance(metadata, dict) else {}
+    caller_kind = caller_kind or str(identity_meta.get("caller_kind") or "").strip() or None
+    caller_binding = caller_binding or str(identity_meta.get("caller_binding") or "").strip() or None
+    caller_confidence = caller_confidence or str(identity_meta.get("caller_confidence") or "").strip() or None
     event = {
         "timestamp": datetime.utcnow().isoformat(),
         "request_id": request_id,
@@ -246,6 +253,9 @@ def log_api_query_event(
         "caller": {
             "auth_user_id": auth_user_id,
             "ip_hash": ip_hash,
+            "caller_kind": caller_kind,
+            "caller_binding": caller_binding,
+            "caller_confidence": caller_confidence,
             "user_agent": user_agent[:300] if user_agent else None,
         },
         "usage": {
@@ -293,6 +303,9 @@ def log_api_query_event(
             artifact_token_id=artifact_token_id,
             auth_user_id=auth_user_id,
             ip_hash=ip_hash,
+            caller_kind=caller_kind,
+            caller_binding=caller_binding,
+            caller_confidence=caller_confidence,
             status_code=status_code,
             row_count=row_count or 0,
             response_size_bytes=response_size_bytes or 0,
@@ -317,6 +330,9 @@ def log_route_request_event(
     execution_latency_ms: int | None = None,
     auth_user_id: str | None = None,
     ip_hash: str | None = None,
+    caller_kind: str | None = None,
+    caller_binding: str | None = None,
+    caller_confidence: str | None = None,
     user_agent: str | None = None,
     request_id: str | None = None,
     pack_id: str | None = None,
@@ -344,6 +360,9 @@ def log_route_request_event(
         "caller": {
             "auth_user_id": auth_user_id,
             "ip_hash": ip_hash,
+            "caller_kind": caller_kind,
+            "caller_binding": caller_binding,
+            "caller_confidence": caller_confidence,
             "user_agent": user_agent[:300] if user_agent else None,
         },
         "usage": {
@@ -406,6 +425,9 @@ def log_route_request_event(
             source_id=source_id,
             auth_user_id=auth_user_id,
             ip_hash=ip_hash,
+            caller_kind=caller_kind,
+            caller_binding=caller_binding,
+            caller_confidence=caller_confidence,
             user_agent=user_agent[:300] if user_agent else None,
             status_code=status_code,
             execution_latency_ms=execution_latency_ms,
@@ -509,6 +531,8 @@ def log_llm_usage_event(
     latency_ms: int | None = None,
     caller_kind: str | None = None,
     caller_label: str | None = None,
+    caller_binding: str | None = None,
+    caller_confidence: str | None = None,
     auth_user_id: str | None = None,
     plan_id: str | None = None,
     ip_hash: str | None = None,
@@ -549,6 +573,8 @@ def log_llm_usage_event(
             latency_ms=latency_ms,
             caller_kind=caller_kind,
             caller_label=caller_label,
+            caller_binding=caller_binding,
+            caller_confidence=caller_confidence,
             auth_user_id=auth_user_id,
             plan_id=plan_id,
             ip_hash=ip_hash,

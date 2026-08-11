@@ -69,12 +69,20 @@ class HostedRuntimeAccountTests(unittest.TestCase):
             "mapmover.hosted_runtime_account._post_internal",
             return_value=(200, {"cost_usd": "0.37"}),
         ) as post_internal:
-            result = load_anonymous_usage_cost("ip-1", "2026-06-30T00:00:00+00:00")
+            result = load_anonymous_usage_cost(
+                "anon_session:anon-1",
+                "ip-1",
+                "2026-06-30T00:00:00+00:00",
+            )
 
         self.assertEqual(result, 0.37)
         post_internal.assert_called_once_with(
             "/internal/runtime-account/anonymous-usage",
-            {"ip_hash": "ip-1", "start_at": "2026-06-30T00:00:00+00:00"},
+            {
+                "caller_binding": "anon_session:anon-1",
+                "ip_hash": "ip-1",
+                "start_at": "2026-06-30T00:00:00+00:00",
+            },
         )
 
 

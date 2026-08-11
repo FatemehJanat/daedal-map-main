@@ -48,6 +48,13 @@ CONFIDENCE_WEAK = "weak"
 # cannot be guessed, and server-issued so a caller cannot pick their own bucket.
 ANON_SESSION_COOKIE = "dm_anon"
 ANON_SESSION_BYTES = 24
+ANON_SESSION_MAX_AGE_SECONDS = 365 * 24 * 60 * 60
+
+# Local/self-hosted runtimes still need tamper-evident cookies when an explicit
+# secret was not configured. The process secret is deliberately ephemeral; a
+# multi-worker/hosted deployment must set ANON_SESSION_SECRET so every worker
+# accepts the same cookie across restarts.
+_PROCESS_ANON_SESSION_SECRET = secrets.token_urlsafe(32)
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,7 @@ class CallerIdentity:
     auth_user_id: Optional[str] = None
     ip_hash: Optional[str] = None
     plan_id: Optional[str] = None
+    scopes: tuple[str, ...] = ()
 
     @property
     def binding(self) -> str:
@@ -80,7 +88,11 @@ class CallerIdentity:
         to `api_key` carry the owning `auth_user_id`, so they spend as that
         account rather than as the key.
         """
-        return bool(self.auth_user_id) and self.is_verified
+        if not self.auth_user_id or not self.is_verified:
+            return False
+        if self.kind == KIND_API_KEY:
+            return "credits:spend" in self.scopes
+        return self.kind == KIND_ACCOUNT
 
     @property
     def is_anonymous(self) -> bool:
@@ -97,19 +109,17 @@ class CallerIdentity:
 
 
 def _anon_session_secret() -> str:
-    return str(os.getenv("ANON_SESSION_SECRET", "")).strip()
+    return str(os.getenv("ANON_SESSION_SECRET", "")).strip() or _PROCESS_ANON_SESSION_SECRET
 
 
 def sign_anon_session(raw_id: str) -> str:
     """Sign an anonymous session id so a caller cannot mint their own.
 
-    Without a configured secret the id is returned unsigned; it is still
-    server-issued and high-entropy, just not tamper-evident. Set
-    ANON_SESSION_SECRET in any deployment where anonymous quotas matter.
+    ANON_SESSION_SECRET should be configured in hosted/multi-worker deployments.
+    Local runtimes use a process-local fallback secret rather than accepting
+    unsigned caller-controlled values.
     """
     secret = _anon_session_secret()
-    if not secret:
-        return raw_id
     digest = hmac.new(secret.encode("utf-8"), raw_id.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
     return f"{raw_id}.{digest}"
 
@@ -120,8 +130,6 @@ def verify_anon_session(value: str | None) -> Optional[str]:
     if not text:
         return None
     secret = _anon_session_secret()
-    if not secret:
-        return text if len(text) >= 16 else None
     if "." not in text:
         return None
     raw_id, _, provided = text.rpartition(".")
@@ -133,6 +141,24 @@ def verify_anon_session(value: str | None) -> Optional[str]:
 
 def issue_anon_session_id() -> str:
     return sign_anon_session(secrets.token_urlsafe(ANON_SESSION_BYTES))
+
+
+def ensure_anon_session(request: Request) -> tuple[str, str | None]:
+    """Return the authoritative raw anonymous id and an optional new cookie.
+
+    The raw id is placed on request.state so the request that creates a cookie
+    uses the same identity immediately; it does not wait for the next roundtrip.
+    """
+    existing = verify_anon_session(request.cookies.get(ANON_SESSION_COOKIE))
+    if existing:
+        request.state.anon_session_id = existing
+        return existing, None
+    signed = issue_anon_session_id()
+    raw_id = verify_anon_session(signed)
+    if not raw_id:  # Defensive: issue/sign/verify must be internally coherent.
+        raise RuntimeError("failed to issue anonymous session identity")
+    request.state.anon_session_id = raw_id
+    return raw_id, signed
 
 
 def resolve_caller_identity(
@@ -178,6 +204,11 @@ def resolve_caller_identity(
     key_account = getattr(request.state, "api_key_account_id", None)
     if key_account:
         key_id = str(getattr(request.state, "api_key_id", "") or key_account).strip()
+        raw_scopes = getattr(request.state, "api_key_scopes", ()) or ()
+        if isinstance(raw_scopes, str):
+            scopes = tuple(part for part in raw_scopes.replace(",", " ").split() if part)
+        else:
+            scopes = tuple(str(part).strip() for part in raw_scopes if str(part).strip())
         return CallerIdentity(
             kind=KIND_API_KEY,
             identifier=key_id,
@@ -185,9 +216,12 @@ def resolve_caller_identity(
             auth_user_id=str(key_account).strip(),
             ip_hash=ip_hash,
             plan_id=plan_id,
+            scopes=scopes,
         )
 
-    session_id = verify_anon_session(request.cookies.get(ANON_SESSION_COOKIE))
+    session_id = str(getattr(request.state, "anon_session_id", "") or "").strip() or None
+    if not session_id:
+        session_id = verify_anon_session(request.cookies.get(ANON_SESSION_COOKIE))
     if session_id:
         return CallerIdentity(
             kind=KIND_ANON_SESSION,

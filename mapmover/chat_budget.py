@@ -77,8 +77,8 @@ def get_anonymous_cap_usd() -> Decimal:
     return _read_cap("CHAT_DAILY_USD_ANON_PER_IP", _DEFAULT_ANON_CAP_USD)
 
 
-def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
-    """Sum of cost_usd today (UTC) for anonymous calls from this ip_hash.
+def _fetch_anonymous_cost_today(caller_binding: str | None, ip_hash: str | None) -> Decimal:
+    """Sum today's anonymous cost by signed caller, with IP compatibility fallback.
 
     Returns 0 on hosted budget-store unavailable / query failure - we fail open
     rather than blocking traffic on a control-plane outage.
@@ -86,12 +86,12 @@ def _fetch_anonymous_cost_today(ip_hash: str) -> Decimal:
     from .logging_analytics import logger
 
     try:
-        cost = load_anonymous_usage_cost(ip_hash, _utc_today_start_iso())
+        cost = load_anonymous_usage_cost(caller_binding, ip_hash, _utc_today_start_iso())
         if cost is None:
             return Decimal("0")
         return Decimal(str(cost))
     except Exception as exc:
-        logger.warning("anonymous budget fetch failed ip_hash=%s: %s", ip_hash, exc)
+        logger.warning("anonymous budget fetch failed caller=%s ip_hash=%s: %s", caller_binding, ip_hash, exc)
         return Decimal("0")
 
 
@@ -113,7 +113,8 @@ def check_anonymous_chat_budget(caller_ctx: dict) -> BudgetDecision:
         )
 
     ip_hash = (caller_ctx or {}).get("ip_hash") or None
-    cache_key = ip_hash or _NO_IP_BUCKET
+    caller_binding = (caller_ctx or {}).get("caller_binding") or None
+    cache_key = caller_binding or ip_hash or _NO_IP_BUCKET
     now = time.time()
 
     cached: Optional[Decimal] = None
@@ -123,7 +124,7 @@ def check_anonymous_chat_budget(caller_ctx: dict) -> BudgetDecision:
             cached = entry[1]
 
     if cached is None:
-        cost = _fetch_anonymous_cost_today(ip_hash) if ip_hash else Decimal("0")
+        cost = _fetch_anonymous_cost_today(caller_binding, ip_hash) if (caller_binding or ip_hash) else Decimal("0")
         with _BUDGET_CACHE_LOCK:
             _BUDGET_CACHE[cache_key] = (now, cost)
         cached = cost
@@ -150,12 +151,13 @@ def check_anonymous_chat_budget(caller_ctx: dict) -> BudgetDecision:
     )
 
 
-def invalidate_anonymous_cache(ip_hash: Optional[str]) -> None:
+def invalidate_anonymous_cache(ip_hash: Optional[str], caller_binding: Optional[str] = None) -> None:
     """Best-effort eviction. Not required for correctness; the TTL bounds drift."""
-    if not ip_hash:
+    cache_key = caller_binding or ip_hash
+    if not cache_key:
         return
     with _BUDGET_CACHE_LOCK:
-        _BUDGET_CACHE.pop(ip_hash, None)
+        _BUDGET_CACHE.pop(cache_key, None)
 
 
 def budget_rejection_payload(decision: BudgetDecision) -> dict:

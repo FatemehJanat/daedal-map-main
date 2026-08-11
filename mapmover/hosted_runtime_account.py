@@ -83,17 +83,18 @@ def load_saved_corpus_for_user(user_id: str, corpus_id: str) -> dict[str, Any] |
     return corpus if isinstance(corpus, dict) else None
 
 
-def load_anonymous_usage_cost(ip_hash: str, start_at: str) -> float | None:
+def load_anonymous_usage_cost(caller_binding: str | None, ip_hash: str | None, start_at: str) -> float | None:
     if not hosted_runtime_control_enabled():
         return None
     payload = {
+        "caller_binding": caller_binding,
         "ip_hash": ip_hash,
         "start_at": start_at,
     }
     try:
         status_code, body = _post_internal(RUNTIME_ACCOUNT_ANONYMOUS_USAGE_PATH, payload)
     except Exception as exc:
-        logger.warning("Hosted anonymous-usage read failed ip_hash=%s: %s", ip_hash, exc)
+        logger.warning("Hosted anonymous-usage read failed caller=%s ip_hash=%s: %s", caller_binding, ip_hash, exc)
         return None
     if status_code != 200 or not isinstance(body, dict):
         logger.warning(
