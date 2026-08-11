@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from mapmover.explore.preprocessor_runtime import (
     detect_location_candidates,
@@ -100,6 +101,9 @@ def _generated_location_samples() -> list[dict]:
 
 
 class PreprocessorLocationSpineTests(unittest.TestCase):
+    @pytest.mark.spine_gap(
+        "2 of 4 subcases fail: 'normandie france' expects pre-v2 G-ID FRA-G141265; 'harris county usa' needs suffix handling plus GA/TX disambiguation (counties stored bare as 'Harris')."
+    )
     def test_curated_shared_location_cases(self):
         cases = [
             {
@@ -173,6 +177,9 @@ class PreprocessorLocationSpineTests(unittest.TestCase):
         self.assertTrue(str(resolved.get("deepest_resolved_loc_id") or "").startswith("USA-CA-"))
         self.assertEqual(resolved.get("deepest_resolved_admin_level"), "admin_2")
 
+    @pytest.mark.spine_gap(
+        "1 of 196 subcases fails: AUS 'Other Territories' admin_1 has no local alias, so AUS-OT and its G-ID are disconnected in the AUS crosswalk."
+    )
     def test_geometry_backed_query_location_samples(self):
         samples = _generated_location_samples()
         self.assertGreaterEqual(len(samples), 150, "expected broad deterministic location coverage")

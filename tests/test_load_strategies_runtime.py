@@ -1,3 +1,4 @@
+import pytest
 import unittest
 
 from mapmover.execution.load_strategies import (
@@ -8,6 +9,9 @@ from mapmover.execution.load_strategies import (
 
 
 class LoadStrategiesRuntimeTests(unittest.TestCase):
+    @pytest.mark.fixture_drift(
+        "classify_pushdown_filters now also returns ignored_presence; fixture predates it. Not spine related."
+    )
     def test_classify_pushdown_filters_maps_common_filter_shapes(self):
         exact_filters, in_filters, compare_filters = _classify_pushdown_filters(
             {

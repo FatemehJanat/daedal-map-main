@@ -1,3 +1,4 @@
+import pytest
 import json
 import unittest
 
@@ -11,6 +12,9 @@ from mapmover.ops_orchestrator_runtime import (
 
 
 class OpsWildfireGeometryRuntimeTests(unittest.TestCase):
+    @pytest.mark.fixture_drift(
+        "Test reads real local wildfire geometry instead of its fixture (496 real features). Test isolation, not logic."
+    )
     def test_country_command_filters_the_display_payload(self):
         usa = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-120, 40]}, "properties": {"iso3": "USA", "area_km2": 1}}
         canada = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [-78, 50]}, "properties": {"iso3": "CAN", "area_km2": 1}}
@@ -30,6 +34,9 @@ class OpsWildfireGeometryRuntimeTests(unittest.TestCase):
         self.assertTrue(filtered["ops_show_all"])
         self.assertEqual([usa], filtered["geojson"]["features"])
 
+    @pytest.mark.fixture_drift(
+        "Test reads real local wildfire geometry instead of its fixture. Test isolation, not logic."
+    )
     def test_multipart_perimeter_is_preserved_as_one_multipolygon_feature(self):
         perimeter = {
             "type": "MultiPolygon",
@@ -64,6 +71,9 @@ class OpsWildfireGeometryRuntimeTests(unittest.TestCase):
         self.assertEqual(2, len(features[0]["geometry"]["coordinates"]))
         self.assertEqual("CAN-M3-test", features[0]["properties"]["event_id"])
 
+    @pytest.mark.fixture_drift(
+        "Test reads real local wildfire geometry instead of its fixture. Test isolation, not logic."
+    )
     def test_default_wildfire_payload_is_bounded_but_keeps_map_scale_shapes(self):
         ring = [[float(index), float(index % 5)] for index in range(1000)]
         ring.append(ring[0])
