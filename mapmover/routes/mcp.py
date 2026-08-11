@@ -32,6 +32,19 @@ from mapmover.routes.disasters.related import (
 )
 from mapmover.security import get_allowed_origins, get_client_ip, rate_limiter
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event, logger
+from tool_access_shared import (
+    FAMILY_GEOGRAPHY,
+    licensing_permits_paid_bulk,
+    tool_capability_id,
+    tool_family as _tool_family,
+    tool_profile,
+    tool_inline_item_limit,
+    tool_free_item_limit,
+    tool_is_paid_bulk,
+    tool_legacy_limit_env,
+    tool_paid_item_limit,
+    tool_sub_limit,
+)
 
 
 router = APIRouter()
@@ -54,6 +67,39 @@ PACK_SERVER_PROFILES = {
 }
 
 PACK_TOOL_ALLOWLIST: dict[str, set[str]] = pack_tool_allowlists()
+
+# Canonical access lanes. These are the same values the dataset/query lane emits
+# from api_query.execute_query_dataset_payload, so analytics can group the whole
+# tool universe on one enum. Do not introduce lane names in one lane only.
+ACCESS_LANE_FREE = "free"
+ACCESS_LANE_PAID = "paid"
+ACCESS_LANE_TRUSTED_ARTIFACT = "trusted_artifact"
+ACCESS_LANE_LOCAL_INSTALLED = "local_installed"
+
+# Analytics pack_id per tool family. The dataset tools log under their own pack
+# through the query lane; these two cover the tools dispatched inside this file.
+ANALYTICS_PACK_GEOGRAPHY = "geography_tools"
+ANALYTICS_PACK_DISCOVERY = "agent_api_discovery"
+
+# Free data helpers dispatched inline here. Each maps to a stable capability_id
+# so it produces an api_usage_events row like every other tool in the universe.
+DATA_HELPER_CAPABILITIES: dict[str, str] = {
+    "get_catalog": "catalog_discovery",
+    "get_pack": "pack_detail_discovery",
+    "get_live_earthquake_events": "live_earthquake_lookup",
+    "get_live_volcano_events": "live_volcano_lookup",
+    "get_disaster_links_for_event": "disaster_links_for_event",
+    "get_disaster_link_chain": "disaster_link_chain",
+    "search_disaster_links": "disaster_link_search",
+}
+
+
+def _access_lane(trusted_token: str | None, *, paid: bool = False) -> str:
+    """Canonical access lane for analytics. Trusted-artifact traffic is QA and
+    must stay separable from real free/paid usage."""
+    if trusted_token is not None:
+        return ACCESS_LANE_TRUSTED_ARTIFACT
+    return ACCESS_LANE_PAID if paid else ACCESS_LANE_FREE
 PACK_PROMPT_ALLOWLIST: dict[str, set[str]] = pack_prompt_allowlists()
 
 PACK_RESOURCE_COMMON_URIS = {
@@ -232,14 +278,61 @@ def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
     return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=None))
 
 
-def _point_lookup_paid_batch_limit(free_limit: int) -> int:
-    import os
+def _tool_paid_bulk_enforced(tool_name: str) -> bool:
+    """True when this tool should actually charge for bulk throughput.
 
-    raw = str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "10000")).strip()
+    Two independent conditions, both required:
+
+    1. the tool is authored ``paid_bulk`` in tool_access_shared, and
+    2. every licence behind it permits paid hosted use.
+
+    Condition 2 is the licensing chain from
+    docs/future/open_data_business_model.md: a source whose permission is
+    ``free`` may be used in free lanes but must never sit behind paid hosted
+    access. A missing or unreadable catalog fails closed to free, so a licence
+    problem can only ever make us charge less, never more.
+    """
+    if not tool_is_paid_bulk(tool_name):
+        return False
+    if _tool_family(tool_name) != FAMILY_GEOGRAPHY:
+        # Dataset tools price through the pack registry, not here.
+        return False
     try:
-        return max(free_limit, int(raw or "10000"))
-    except ValueError:
-        return max(free_limit, 10000)
+        from mapmover.runtime.geometry_catalog import geometry_bank_permissions
+
+        permissions = geometry_bank_permissions()
+    except Exception as exc:
+        logger.warning("paid-bulk licensing check failed for %s: %s", tool_name, exc)
+        return False
+    if licensing_permits_paid_bulk(permissions):
+        return True
+    logger.warning(
+        "tool %s is authored paid_bulk but licence permissions %s do not permit paid hosted use; serving free",
+        tool_name,
+        sorted(permissions) or ["<none>"],
+    )
+    return False
+
+
+def _tool_paid_batch_limit(tool_name: str, free_limit: int) -> int:
+    """Ceiling for a paid-bulk tool. Never below the free limit.
+
+    Authored in tool_access_shared; env overrides exist for load testing.
+    """
+    suffix = _tool_env_suffix(tool_name)
+    profile_envs = tuple(
+        str(name) for name in (tool_profile(tool_name).get("legacy_paid_limit_env") or ())
+    )
+    for env_name in (f"MCP_TOOL_PAID_BATCH_LIMIT_{suffix}", *profile_envs):
+        value = _parse_env_int_optional(env_name)
+        if value is not None:
+            return max(free_limit, value)
+    authored = tool_paid_item_limit(tool_name)
+    return max(free_limit, int(authored)) if authored is not None else free_limit
+
+
+def _point_lookup_paid_batch_limit(free_limit: int) -> int:
+    return _tool_paid_batch_limit("resolve_point", free_limit)
 
 
 def _point_lookup_quote_payload(
@@ -287,7 +380,11 @@ def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
     token = get_trusted_artifact_token(request)
     if token is None:
         return None, None
-    return token, hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
+    token_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
+    # Stamp once so every logging path on this request inherits the QA lane,
+    # including error/cap branches that do not thread the id through directly.
+    request.state.trusted_artifact_token_id = token_id
+    return token, token_id
 
 
 def _tool_env_suffix(tool_name: str) -> str:
@@ -366,13 +463,35 @@ def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id:
     return response
 
 
-def _tool_batch_item_limit(tool_name: str, *, default: int, fallback_env_names: tuple[str, ...] = ()) -> int:
+def _tool_batch_item_limit(
+    tool_name: str,
+    *,
+    default: int | None = None,
+    fallback_env_names: tuple[str, ...] = (),
+) -> int:
+    """Resolve a tool's per-call item cap.
+
+    Precedence: ``MCP_TOOL_BATCH_LIMIT_<TOOL>`` env, then the tool's legacy
+    compatibility env names, then the value authored in
+    ``tool_access_shared.TOOL_ACCESS_REGISTRY``, then an explicit caller
+    default. Authoring a limit belongs in the registry; the env vars exist for
+    incident response and load testing.
+    """
     suffix = _tool_env_suffix(tool_name)
-    for env_name in (f"MCP_TOOL_BATCH_LIMIT_{suffix}", *fallback_env_names):
+    registry_envs = tool_legacy_limit_env(tool_name)
+    for env_name in (f"MCP_TOOL_BATCH_LIMIT_{suffix}", *fallback_env_names, *registry_envs):
         value = _parse_env_int_optional(env_name)
         if value is not None:
-            return value
-    return max(1, default)
+            return max(1, value)
+
+    authored = tool_free_item_limit(tool_name)
+    if authored is None:
+        authored = tool_inline_item_limit(tool_name)
+    if authored is None:
+        authored = default
+    if authored is None:
+        raise ValueError(f"no authored item limit for tool '{tool_name}'")
+    return max(1, int(authored))
 
 
 def _batch_error_payload(
@@ -481,24 +600,29 @@ def _log_mcp_tool_usage_event(
     query_granularity: str,
     response_payload: Any | None = None,
     error_code: str | None = None,
-    payment_rail: str | None = "free_preview",
+    payment_rail: str | None = None,
     artifact_token_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    analytics_pack_id: str = ANALYTICS_PACK_GEOGRAPHY,
 ) -> None:
+    artifact_token_id = artifact_token_id or getattr(request.state, "trusted_artifact_token_id", None)
+    if payment_rail is None:
+        payment_rail = _access_lane(artifact_token_id)
     merged_metadata = {
         **getattr(request.state, "analytics_metadata", {}),
         "surface": "agent_api_mcp",
         "mcp_tool_name": tool_name,
         **(metadata or {}),
     }
-    request.state.analytics_pack_id = "geography_tools"
+    merged_metadata.setdefault("access_lane", _access_lane(artifact_token_id))
+    request.state.analytics_pack_id = analytics_pack_id
     request.state.analytics_source_id = tool_name
     request.state.analytics_metadata = {key: value for key, value in merged_metadata.items() if value is not None}
     try:
         log_api_query_event(
             request_id=request_id or f"mcp-{tool_name}-{uuid.uuid4().hex[:12]}",
             capability_id=capability_id,
-            pack_id="geography_tools",
+            pack_id=analytics_pack_id,
             source_id=tool_name,
             decision=decision,
             payment_rail=payment_rail,
@@ -516,6 +640,99 @@ def _log_mcp_tool_usage_event(
         )
     except Exception as exc:
         logger.warning("MCP tool usage analytics failed for %s: %s", tool_name, exc)
+
+
+def _finish_data_helper(
+    request: Request,
+    *,
+    tool_name: str,
+    started_at: float,
+    payload: Any,
+    rpc_request_id: Any,
+    row_count: int = 1,
+    is_error: bool = False,
+    error_code: str | None = None,
+) -> Response:
+    """Log a free data-helper call to the product usage ledger, then return it.
+
+    The geometry family already writes an api_usage_events row for every tool.
+    These helpers are the data-side equivalent so the whole tool universe is
+    visible on one ledger instead of only as anonymous route hits.
+    """
+    capability_id = DATA_HELPER_CAPABILITIES.get(tool_name, tool_name)
+    _log_mcp_tool_usage_event(
+        request,
+        request_id="",
+        tool_name=tool_name,
+        capability_id=capability_id,
+        decision="deny" if is_error else "allow",
+        started_at=started_at,
+        row_count=row_count,
+        query_granularity="single",
+        response_payload=payload,
+        error_code=error_code,
+        analytics_pack_id=ANALYTICS_PACK_DISCOVERY,
+        metadata={
+            "event": capability_id,
+            "tool_mode": "single",
+            "quantity": row_count,
+        },
+    )
+    return _jsonrpc_response(_tool_result(payload, is_error=is_error), rpc_request_id)
+
+
+def _log_passthrough_data_helper(
+    request: Request,
+    *,
+    tool_name: str,
+    started_at: float,
+    response: Response,
+) -> Response:
+    """Log a data helper whose handler already built the JSON-RPC response.
+
+    Reads the tool envelope back out so row count and error state match what the
+    caller actually received, then returns the untouched response.
+    """
+    payload: Any = None
+    is_error = False
+    try:
+        body = json.loads((getattr(response, "body", b"") or b"").decode("utf-8"))
+        result = body.get("result") if isinstance(body, dict) else None
+        if isinstance(result, dict):
+            payload = result.get("structuredContent")
+            is_error = bool(result.get("isError"))
+    except Exception:
+        payload = None
+    _log_mcp_tool_usage_event(
+        request,
+        request_id="",
+        tool_name=tool_name,
+        capability_id=DATA_HELPER_CAPABILITIES.get(tool_name, tool_name),
+        decision="deny" if is_error else "allow",
+        started_at=started_at,
+        row_count=_payload_row_count(payload),
+        query_granularity="single",
+        response_payload=payload,
+        error_code="tool_error" if is_error else None,
+        analytics_pack_id=ANALYTICS_PACK_DISCOVERY,
+        metadata={
+            "event": DATA_HELPER_CAPABILITIES.get(tool_name, tool_name),
+            "tool_mode": "single",
+            "quantity": _payload_row_count(payload),
+        },
+    )
+    return response
+
+
+def _payload_row_count(payload: Any) -> int:
+    if isinstance(payload, dict):
+        for key in ("events", "results", "items", "rows", "links", "chains", "packs"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return len(value)
+    if isinstance(payload, list):
+        return len(payload)
+    return 1
 
 
 def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
@@ -1232,8 +1449,11 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": 0, "point_count": 0, "batch_id": batch_id},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        limit = _tool_batch_item_limit("resolve_point", default=25, fallback_env_names=("POINT_LOOKUP_BATCH_LIMIT",))
-        paid_limit = _point_lookup_paid_batch_limit(limit)
+        limit = _tool_batch_item_limit("resolve_point")
+        paid_bulk = _tool_paid_bulk_enforced("resolve_point")
+        # When the tool is not sold as paid bulk, the free limit IS the ceiling:
+        # a caller gets a plain cap error rather than a quote they cannot settle.
+        paid_limit = _point_lookup_paid_batch_limit(limit) if paid_bulk else limit
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
         if len(points) > paid_limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
@@ -1455,7 +1675,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "unresolved_count": unresolved_count,
                 "batch_limit": limit,
                 "paid_batch_limit": paid_limit,
-                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "access_lane": _access_lane(trusted_token),
                 "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
                 "country_scope": country_scope,
@@ -1468,7 +1688,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                     batch_limit=limit,
                 ),
             },
-            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            payment_rail=_access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
@@ -1616,13 +1836,14 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
                 rpc_request_id,
             )
         loc_ids = [str(value or "").strip() for value in raw_loc_ids if str(value or "").strip()]
-        limit = _tool_batch_item_limit("loc_id_info", default=100, fallback_env_names=("LOC_ID_INFO_BATCH_LIMIT",))
+        limit = _tool_batch_item_limit("loc_id_info")
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
         if bool(payload.get("include_references")):
             references_limit = (
                 _parse_env_int_optional("MCP_TOOL_REFERENCES_BATCH_LIMIT_LOC_ID_INFO")
-                or _tool_batch_item_limit("loc_id_info_references", default=25, fallback_env_names=("LOC_ID_INFO_REFERENCES_BATCH_LIMIT",))
+                or int(tool_sub_limit("loc_id_info", "references").get("free_item_limit") or 25)
             )
-            if len(loc_ids) > references_limit:
+            if len(loc_ids) > references_limit and trusted_token is None:
                 error_payload = _batch_error_payload(
                     request_id=request_id,
                     batch_id=batch_id,
@@ -1653,7 +1874,7 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
                     },
                 )
                 return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        if len(loc_ids) > limit:
+        if len(loc_ids) > limit and trusted_token is None:
             error_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
@@ -2045,8 +2266,9 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
-        limit = _tool_batch_item_limit("resolve_reference", default=100, fallback_env_names=("REFERENCE_RESOLVE_BATCH_LIMIT",))
-        if len(items) > limit:
+        limit = _tool_batch_item_limit("resolve_reference")
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
+        if len(items) > limit and trusted_token is None:
             error_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
@@ -2224,8 +2446,9 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
-        limit = _tool_batch_item_limit("convert_reference", default=100, fallback_env_names=("REFERENCE_CONVERT_BATCH_LIMIT",))
-        if len(items) > limit:
+        limit = _tool_batch_item_limit("convert_reference")
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
+        if len(items) > limit and trusted_token is None:
             error_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
@@ -2408,8 +2631,9 @@ async def _execute_compare_geographies_tool(request: Request, arguments: dict[st
         if not isinstance(items, list):
             result_payload = {"request_id": request_id, "batch_id": batch_id, "error": {"code": "invalid_items", "message": "items must be a list"}}
             return _jsonrpc_response(_tool_result(result_payload, is_error=True), rpc_request_id)
-        limit = _tool_batch_item_limit("compare_geographies", default=100)
-        if len(items) > limit:
+        limit = _tool_batch_item_limit("compare_geographies")
+        trusted_token, trusted_token_id = _trusted_artifact_access(request)
+        if len(items) > limit and trusted_token is None:
             result_payload = _batch_error_payload(
                 request_id=request_id,
                 batch_id=batch_id,
@@ -2526,7 +2750,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             _parse_env_int_optional("MCP_TOOL_POLYGON_BATCH_LIMIT_GET_GEOMETRY")
             if include_polygon
             else None
-        ) or _tool_batch_item_limit("get_geometry", default=1000, fallback_env_names=("GEOMETRY_GET_BATCH_LIMIT",))
+        ) or _tool_batch_item_limit("get_geometry")
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
         if len(loc_ids) > limit and trusted_token is None:
             error_payload = _batch_error_payload(
@@ -2586,7 +2810,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             row_count=len(loc_ids),
             query_granularity=f"bulk_{len(loc_ids)}",
             response_payload=result_payload,
-            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            payment_rail=_access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
             metadata={
                 "event": "geometry_lookup",
@@ -2599,7 +2823,7 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
                 "include_polygon": include_polygon,
                 "include_info": include_info,
                 "batch_limit": limit,
-                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "access_lane": _access_lane(trusted_token),
                 "artifact_token_id": trusted_token_id,
                 **_compute_metadata(
                     response_payload=result_payload,
@@ -2718,26 +2942,32 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, tool_name)
     request_id = str(payload.get("request_id") or "")
+    trusted_token, trusted_token_id = _trusted_artifact_access(request)
     try:
         from mapmover.runtime import geometry_tool_jobs
 
         runtime_started = time.perf_counter()
         if tool_name == "resolve_loc_id_scope":
-            limit = _tool_batch_item_limit("resolve_loc_id_scope", default=100, fallback_env_names=("LOC_ID_SCOPE_LIMIT",))
+            limit = _tool_batch_item_limit("resolve_loc_id_scope")
+            if trusted_token is not None:
+                limit = (
+                    _parse_env_int_optional("MCP_TOOL_TRUSTED_BATCH_LIMIT_RESOLVE_LOC_ID_SCOPE")
+                    or int(tool_profile("resolve_loc_id_scope").get("trusted_item_limit") or 100000)
+                )
             result = geometry_tool_jobs.resolve_loc_id_scope(payload, default_limit=limit)
             capability_id = "loc_id_scope"
         elif tool_name == "estimate_geometry_package":
             result = geometry_tool_jobs.estimate_geometry_package(payload)
             capability_id = "geometry_package_estimate"
         elif tool_name == "create_geometry_export":
-            inline_limit = _tool_batch_item_limit("create_geometry_export", default=10, fallback_env_names=("GEOMETRY_EXPORT_INLINE_LIMIT",))
+            inline_limit = _tool_batch_item_limit("create_geometry_export")
             result = geometry_tool_jobs.create_geometry_export(payload, inline_limit=inline_limit)
             capability_id = "geometry_export"
         elif tool_name == "estimate_conversion_job":
             result = geometry_tool_jobs.estimate_conversion_job(payload)
             capability_id = "conversion_job_estimate"
         elif tool_name == "create_conversion_job":
-            inline_limit = _tool_batch_item_limit("create_conversion_job", default=100, fallback_env_names=("CONVERSION_JOB_INLINE_LIMIT",))
+            inline_limit = _tool_batch_item_limit("create_conversion_job")
             result = geometry_tool_jobs.create_conversion_job(payload, inline_limit=inline_limit)
             capability_id = "conversion_job"
         elif tool_name == "get_job_status":
@@ -2823,7 +3053,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
                 metadata={"event": "geometry_availability", "tool_mode": "bulk", "quantity": 0, "loc_id_count": 0, "batch_id": batch_id},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
-        limit = _tool_batch_item_limit("check_geometry", default=1000, fallback_env_names=("GEOMETRY_CHECK_BATCH_LIMIT",))
+        limit = _tool_batch_item_limit("check_geometry")
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
         if len(loc_ids) > limit and trusted_token is None:
             _stamp_mcp_tool_analytics(
@@ -2914,7 +3144,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
             row_count=len(loc_ids),
             query_granularity=f"bulk_{len(loc_ids)}",
             response_payload=result_payload,
-            payment_rail="trusted_artifact" if trusted_token is not None else "free_preview",
+            payment_rail=_access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
             metadata={
                 "event": "geometry_availability",
@@ -2925,7 +3155,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
                 "available_count": available,
                 "missing_count": missing,
                 "batch_limit": limit,
-                "access_lane": "trusted_artifact" if trusted_token is not None else "free_preview",
+                "access_lane": _access_lane(trusted_token),
                 "artifact_token_id": trusted_token_id,
                 **_compute_metadata(
                     response_payload=result_payload,
@@ -3359,36 +3589,81 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
     if not _tool_allowed_for_facade(tool_name, normalized_pack_id):
         return _jsonrpc_error(request_id, -32601, f"Tool '{tool_name}' is not available on this MCP facade")
 
+    helper_started_at = time.perf_counter()
+
     if tool_name == "get_catalog":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
         payload = load_api_catalog() or {"packs": []}
         payload = _filter_catalog_payload_for_facade(payload, normalized_pack_id)
         payload = _augment_catalog_with_tool_families(payload, normalized_pack_id)
-        return _jsonrpc_response(_tool_result(payload), request_id)
+        return _finish_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            payload=payload,
+            rpc_request_id=request_id,
+            row_count=_payload_row_count(payload),
+        )
 
     if tool_name == "get_pack":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
         pack_id = str(arguments.get("pack_id") or normalized_pack_id or "").strip()
         if not pack_id:
             return _jsonrpc_error(request_id, -32602, "pack_id is required")
         if normalized_pack_id and pack_id.lower() != normalized_pack_id:
             return _jsonrpc_error(request_id, -32602, f"Pack '{pack_id}' is not available on this MCP facade")
         if pack_id.lower() in set(tool_family_ids()) | set(tool_family_alias_ids()):
-            return _jsonrpc_response(_tool_result(tool_family_pack_detail(pack_id.lower())), request_id)
+            return _finish_data_helper(
+                request,
+                tool_name=tool_name,
+                started_at=helper_started_at,
+                payload=tool_family_pack_detail(pack_id.lower()),
+                rpc_request_id=request_id,
+            )
         payload = load_api_pack_detail(pack_id)
         if not payload:
-            return _jsonrpc_response(_tool_result({"error": "Pack not found", "pack_id": pack_id}, is_error=True), request_id)
-        return _jsonrpc_response(_tool_result(payload), request_id)
+            return _finish_data_helper(
+                request,
+                tool_name=tool_name,
+                started_at=helper_started_at,
+                payload={"error": "Pack not found", "pack_id": pack_id},
+                rpc_request_id=request_id,
+                is_error=True,
+                error_code="pack_not_found",
+            )
+        return _finish_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            payload=payload,
+            rpc_request_id=request_id,
+        )
 
     if tool_name == "get_live_earthquake_events":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_live_earthquake_tool(arguments, request_id)
+        return _log_passthrough_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            response=await _execute_live_earthquake_tool(arguments, request_id),
+        )
 
     if tool_name == "get_live_volcano_events":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        return await _execute_live_volcano_tool(arguments, request_id)
+        return _log_passthrough_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            response=await _execute_live_volcano_tool(arguments, request_id),
+        )
 
     if tool_name == "resolve_point":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
@@ -3457,14 +3732,22 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
             return rate_limit_response
         return await _execute_geometry_job_runtime_tool(request, arguments, request_id, tool_name)
 
-    if tool_name == "get_disaster_links_for_event":
-        return await _execute_disaster_links_for_event_tool(arguments, request_id)
-
-    if tool_name == "get_disaster_link_chain":
-        return await _execute_disaster_link_chain_tool(arguments, request_id)
-
-    if tool_name == "search_disaster_links":
-        return await _execute_search_disaster_links_tool(arguments, request_id)
+    if tool_name in {"get_disaster_links_for_event", "get_disaster_link_chain", "search_disaster_links"}:
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        if tool_name == "get_disaster_links_for_event":
+            link_response = await _execute_disaster_links_for_event_tool(arguments, request_id)
+        elif tool_name == "get_disaster_link_chain":
+            link_response = await _execute_disaster_link_chain_tool(arguments, request_id)
+        else:
+            link_response = await _execute_search_disaster_links_tool(arguments, request_id)
+        return _log_passthrough_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            response=link_response,
+        )
 
     if tool_name not in {
         "get_earthquake_events",
