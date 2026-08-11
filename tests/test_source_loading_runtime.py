@@ -4,17 +4,34 @@ from pathlib import Path
 import pandas as pd
 
 from mapmover.execution.source_loading import load_source_data
+from mapmover.runtime.geography_reference import translate_loc_id_to_geometry_id
+
+
+# Geometry G-IDs are data, not constants: regenerating a geometry bank changes
+# them (the geoboundaries_v2 namespace rebuild changed every USA admin_1 id).
+# Resolve them through the same crosswalk the runtime uses so these tests keep
+# asserting prefix *ordering* rather than a frozen id literal.
+CA_GEOMETRY_ID = translate_loc_id_to_geometry_id("USA-CA")
+VA_GEOMETRY_ID = translate_loc_id_to_geometry_id("USA-VA")
 
 
 class SourceLoadingRuntimeTests(unittest.TestCase):
+    def test_geometry_ids_resolve_from_the_crosswalk(self):
+        """Guard the fixtures themselves: if these stop translating, the other
+        tests in this file would silently assert local-prefix-only behavior."""
+        self.assertNotEqual(CA_GEOMETRY_ID, "USA-CA")
+        self.assertNotEqual(VA_GEOMETRY_ID, "USA-VA")
+        self.assertTrue(CA_GEOMETRY_ID.startswith("USA-G"))
+        self.assertTrue(VA_GEOMETRY_ID.startswith("USA-G"))
+
     def test_load_source_data_tries_geometry_prefix_before_local_prefix(self):
         calls = []
 
         def select_rows(parquet_path, **kwargs):
             prefix = ((kwargs.get("starts_with_filters") or {}).get("loc_id"))
             calls.append(prefix)
-            if prefix == "USA-G123331":
-                return pd.DataFrame([{"loc_id": "USA-G123331-G200759", "population": 1}])
+            if prefix == CA_GEOMETRY_ID:
+                return pd.DataFrame([{"loc_id": f"{CA_GEOMETRY_ID}-G200759", "population": 1}])
             return pd.DataFrame(columns=["loc_id", "population"])
 
         df, metadata = load_source_data(
@@ -23,7 +40,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             columns=["population"],
             get_source_path_func=lambda _source_id: Path("fake/worldpop"),
             load_source_metadata_func=lambda _source_id: {"files": {"data": {"name": "population.parquet"}}},
-            candidate_parquet_paths_func=lambda _source_dir, _metadata: [Path("fake/worldpop/population.parquet")],
+            candidate_parquet_paths_func=lambda _source_dir, _metadata, preferred_file=None: [Path("fake/worldpop/population.parquet")],
             is_cloud_mode_func=lambda: True,
             path_to_uri_func=lambda path: f"s3://bucket/{path.as_posix()}",
             select_rows_func=select_rows,
@@ -31,7 +48,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             logger=type("Logger", (), {"info": lambda *args, **kwargs: None})(),
         )
 
-        self.assertEqual(calls, ["USA-G123331"])
+        self.assertEqual(calls, [CA_GEOMETRY_ID])
         self.assertEqual(len(df), 1)
         self.assertEqual(metadata["files"]["data"]["name"], "population.parquet")
 
@@ -51,7 +68,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             columns=["metric"],
             get_source_path_func=lambda _source_id: Path("fake/fema"),
             load_source_metadata_func=lambda _source_id: {"files": {"data": {"name": "nri.parquet"}}},
-            candidate_parquet_paths_func=lambda _source_dir, _metadata: [Path("fake/fema/nri.parquet")],
+            candidate_parquet_paths_func=lambda _source_dir, _metadata, preferred_file=None: [Path("fake/fema/nri.parquet")],
             is_cloud_mode_func=lambda: True,
             path_to_uri_func=lambda path: f"s3://bucket/{path.as_posix()}",
             select_rows_func=select_rows,
@@ -59,7 +76,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             logger=type("Logger", (), {"info": lambda *args, **kwargs: None})(),
         )
 
-        self.assertEqual(calls, ["USA-G125186", "USA-VA"])
+        self.assertEqual(calls, [VA_GEOMETRY_ID, "USA-VA"])
         self.assertEqual(len(df), 1)
         self.assertEqual(df.iloc[0]["loc_id"], "USA-VA-059")
 
@@ -69,8 +86,8 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
         def select_rows(parquet_path, **kwargs):
             prefix = ((kwargs.get("starts_with_filters") or {}).get("loc_id"))
             calls.append(prefix)
-            if prefix == "USA-G123331":
-                return pd.DataFrame([{"loc_id": "USA-G123331-G200759", "population": 1}])
+            if prefix == CA_GEOMETRY_ID:
+                return pd.DataFrame([{"loc_id": f"{CA_GEOMETRY_ID}-G200759", "population": 1}])
             return pd.DataFrame(columns=["loc_id", "population"])
 
         df, _metadata = load_source_data(
@@ -79,7 +96,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             columns=["population"],
             get_source_path_func=lambda _source_id: Path("fake/worldpop"),
             load_source_metadata_func=lambda _source_id: {"files": {"data": {"name": "population.parquet"}}},
-            candidate_parquet_paths_func=lambda _source_dir, _metadata: [Path("fake/worldpop/population.parquet")],
+            candidate_parquet_paths_func=lambda _source_dir, _metadata, preferred_file=None: [Path("fake/worldpop/population.parquet")],
             is_cloud_mode_func=lambda: True,
             path_to_uri_func=lambda path: f"s3://bucket/{path.as_posix()}",
             select_rows_func=select_rows,
@@ -87,7 +104,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
             logger=type("Logger", (), {"info": lambda *args, **kwargs: None})(),
         )
 
-        self.assertEqual(calls, ["USA-G123331"])
+        self.assertEqual(calls, [CA_GEOMETRY_ID])
         self.assertEqual(len(df), 1)
 
     def test_load_source_data_prefers_local_prefix_for_deeper_local_sources(self):
@@ -109,7 +126,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
                 "files": {"data": {"name": "USA.parquet"}},
                 "geographic_coverage": {"admin_levels": [2, 3, 4, 5]},
             },
-            candidate_parquet_paths_func=lambda _source_dir, _metadata: [Path("fake/fairfax/USA.parquet")],
+            candidate_parquet_paths_func=lambda _source_dir, _metadata, preferred_file=None: [Path("fake/fairfax/USA.parquet")],
             is_cloud_mode_func=lambda: True,
             path_to_uri_func=lambda path: f"s3://bucket/{path.as_posix()}",
             select_rows_func=select_rows,
@@ -139,7 +156,7 @@ class SourceLoadingRuntimeTests(unittest.TestCase):
                 "files": {"data": {"name": "classification.parquet"}},
                 "geographic_coverage": {"admin_levels": [3]},
             },
-            candidate_parquet_paths_func=lambda _source_dir, _metadata: [Path("fake/cejst/classification.parquet")],
+            candidate_parquet_paths_func=lambda _source_dir, _metadata, preferred_file=None: [Path("fake/cejst/classification.parquet")],
             is_cloud_mode_func=lambda: True,
             path_to_uri_func=lambda path: f"s3://bucket/{path.as_posix()}",
             select_rows_func=select_rows,

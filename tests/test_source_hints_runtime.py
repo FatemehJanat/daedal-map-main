@@ -59,16 +59,30 @@ class SourceHintsRuntimeTests(unittest.TestCase):
 
         self.assertEqual(contract.runtime_level, "admin_3")
         self.assertEqual(contract.country_level_name, "department")
-        self.assertEqual(contract.source_level_value, "department")
+        # The country name stays "department", but the *filter value* is the
+        # canonical level, because this source declares admin_3 in its own
+        # geographic_level. See the rule documented on the case list below.
+        self.assertEqual(contract.source_level_value, "admin_3")
         self.assertEqual(contract.source_filter_field, "geo_level")
 
     def test_real_crosswalk_terms_resolve_on_shared_runtime_contract(self):
+        # source_level_value is the value used to filter the source's geo_level
+        # column, which is not the same thing as the country's friendly name:
+        #
+        #   - source declares the level in geographic_level -> canonical admin_N
+        #     (the source stores canonical levels, so filter on those)
+        #   - source does not declare it -> the country's friendly name
+        #     (SVK "district" -> admin_4, absent from its declared levels)
+        #   - requested level is an ancestor/descendant of the source anchor
+        #     -> None, because the filter moves to a loc_id prefix instead
+        #
+        # country_level_name is what still carries the friendly local term.
         cases = [
             (
                 {"geographic_coverage": {"country": "FRA"}, "geographic_level": ["admin_0", "admin_1", "admin_2", "admin_3"]},
                 "department",
                 "admin_3",
-                "department",
+                "admin_3",
             ),
             (
                 {"geographic_coverage": {"country": "BEL"}, "geographic_level": ["admin_0", "admin_1", "admin_2", "admin_3"]},
@@ -86,13 +100,13 @@ class SourceHintsRuntimeTests(unittest.TestCase):
                 {"geographic_coverage": {"country": "SVK"}, "geographic_level": ["admin_0", "admin_1", "admin_2", "admin_3", "admin_4", "admin_5"]},
                 "obec",
                 "admin_5",
-                "municipality",
+                "admin_5",
             ),
             (
                 {"geographic_coverage": {"country": "AUT"}, "geographic_level": ["admin_0", "admin_1", "admin_2", "admin_3", "admin_4", "admin_5"]},
                 "Gemeinde",
                 "admin_5",
-                "municipality",
+                "admin_5",
             ),
         ]
 
@@ -101,6 +115,10 @@ class SourceHintsRuntimeTests(unittest.TestCase):
                 contract = resolve_geo_contract(token, metadata)
                 self.assertEqual(contract.runtime_level, expected_level)
                 self.assertEqual(contract.source_level_value, expected_source_value)
+                # The friendly local term must survive regardless of which
+                # branch set source_level_value.
+                if expected_level in {"admin_3", "admin_4", "admin_5"}:
+                    self.assertTrue(contract.country_level_name)
 
     def test_country_local_level_terms_do_not_bleed_across_other_countries(self):
         cases = [
