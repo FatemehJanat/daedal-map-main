@@ -164,7 +164,20 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("point_resolver_ms", analytics["metadata"]["compute"]["stage_ms"])
 
     def test_resolve_point_tool_challenges_point_batch_over_free_limit(self) -> None:
-        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
+        """Over the free allowance the verifier decides, and its price is passed through."""
+        challenge = (
+            "challenge",
+            {
+                "status": "challenge",
+                "message": "Commercial access is required for this capability.",
+                "context": {"pricing": {"price_display": "$0.011306", "amount_usdc_base_units": 11306}},
+                "challenge": {"opaque": True, "headers": {}},
+            },
+        )
+        with (
+            mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=challenge),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
@@ -174,10 +187,64 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertTrue(payload["payment_required"])
         self.assertEqual(payload["limits"]["free_batch_limit"], 25)
         self.assertEqual(payload["error"]["code"], "payment_required")
-        self.assertEqual(payload["quote"]["payment_rails"], ["account_credit", "x402"])
+        # The caller must receive the verifier's real price, not a guess.
+        self.assertEqual(payload["daedalmap_pricing"]["amount_usdc_base_units"], 11306)
+        self.assertTrue(payload["challenge"]["opaque"])
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "challenge")
         self.assertEqual(analytics["payment_rail"], "commercial_access")
+
+    def test_resolve_point_refuses_when_the_verifier_is_unreachable(self) -> None:
+        """Fail closed: a paid request must never execute for free."""
+        with (
+            mock.patch(
+                "mapmover.routes.mcp._commercial_access_decision",
+                return_value=("unavailable", {"error": {"code": "commercial_access_unavailable"}}),
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_point",
+                {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+            )
+
+        self.assertEqual(payload["error"]["code"], "commercial_access_unavailable")
+        self.assertEqual(analytics_mock.call_args.kwargs["decision"], "deny")
+
+    def test_resolve_point_executes_and_records_settlement_when_allowed(self) -> None:
+        """A settled call runs, and lands in analytics as paid rather than free."""
+
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [
+                {
+                    "point": {"lon": point["lon"], "lat": point["lat"]},
+                    "matched": {"loc_id": "TEST-1", "admin_level": 2, "iso3": "USA"},
+                    "stack": [{"loc_id": "USA"}, {"loc_id": "TEST-1"}],
+                    "target_admin_level": "admin_2",
+                    "deeper_available": False,
+                    "available_deeper_admin_levels": [],
+                }
+                for point in points
+            ]
+
+        allow = ("allow", {"status": "allow", "settlement": {"settlement_id": "settle-abc"}})
+        with (
+            mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=allow),
+            mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(
+                self.client,
+                "resolve_point",
+                {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+            )
+
+        self.assertEqual(payload["point_count"], 26)
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["decision"], "allow")
+        self.assertEqual(analytics["payment_rail"], "paid")
+        self.assertEqual(analytics["metadata"]["settlement_id"], "settle-abc")
 
     def test_resolve_point_tool_trusted_token_executes_over_free_limit(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):
@@ -214,8 +281,12 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIsNotNone(analytics["artifact_token_id"])
 
     def test_resolve_point_tool_uses_per_tool_batch_limit_override(self) -> None:
+        challenge = ("challenge", {"status": "challenge", "context": {}, "challenge": {}})
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):
-            with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            with (
+                mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=challenge),
+                mock.patch("mapmover.routes.mcp.log_api_query_event"),
+            ):
                 payload = _tool_call(
                     self.client,
                     "resolve_point",

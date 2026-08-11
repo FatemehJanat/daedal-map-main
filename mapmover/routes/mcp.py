@@ -278,6 +278,72 @@ def _point_lookup_target_admin_level(payload: dict[str, Any]) -> int | None:
     return _parse_admin_level_value(value, default=_parse_admin_level_value(default, default=None))
 
 
+async def _commercial_access_decision(
+    request: Request,
+    *,
+    tool_name: str,
+    capability_id: str,
+    units: int,
+    include_polygon: bool = False,
+    request_id: str,
+) -> tuple[str, dict[str, Any]]:
+    """Ask the shared commercial verifier whether this bulk call may execute.
+
+    Same rail the dataset lane uses, so geometry throughput settles through one
+    ledger rather than a parallel path. Returns ``(status, payload)`` where
+    status is ``allow``, ``challenge``, or ``unavailable``.
+
+    Fails closed: if the verifier cannot be reached we do NOT execute a paid
+    request for free, we report unavailable and the caller retries.
+    """
+    import asyncio
+    import hashlib as _hashlib
+
+    from mapmover.api_query_commercial import (
+        COMMERCIAL_ACCESS_CHECK_PATH,
+        forwarded_commercial_headers,
+        post_commercial_access,
+    )
+
+    auth_user_id = getattr(request.state, "auth_user_id", None)
+    ip_hash = hash_ip_for_analytics(get_client_ip(request))
+    caller_binding = auth_user_id or ip_hash or "anonymous"
+    fingerprint_source = f"{tool_name}:{capability_id}:{units}:{include_polygon}:{caller_binding}"
+    request_fingerprint = _hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+
+    try:
+        _status, payload = await asyncio.to_thread(
+            post_commercial_access,
+            COMMERCIAL_ACCESS_CHECK_PATH,
+            {
+                "request_id": request_id,
+                "capability_id": capability_id,
+                "resource": {"method": "POST", "path": "/mcp"},
+                "forwarded_headers": forwarded_commercial_headers(request),
+                "subject": {"auth_present": bool(auth_user_id), "user_id": auth_user_id},
+                "request_context": {
+                    "mcp_tool_name": tool_name,
+                    "units": int(units),
+                    "include_polygon": bool(include_polygon),
+                    "request_fingerprint": request_fingerprint,
+                },
+                "caller": {
+                    "auth_user_id": auth_user_id,
+                    "ip_hash": ip_hash,
+                    "caller_binding": caller_binding,
+                },
+            },
+        )
+    except Exception as exc:
+        logger.warning("commercial verifier unavailable for %s: %s", tool_name, exc)
+        return "unavailable", {"error": {"code": "commercial_access_unavailable", "message": str(exc)}}
+
+    status_name = str((payload or {}).get("status") or "").strip().lower()
+    if status_name not in {"allow", "challenge"}:
+        return "unavailable", payload or {}
+    return status_name, payload or {}
+
+
 def _tool_paid_bulk_enforced(tool_name: str) -> bool:
     """True when this tool should actually charge for bulk throughput.
 
@@ -1489,50 +1555,84 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit, "paid_batch_limit": paid_limit},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        settlement_id = None
         if len(points) > limit and trusted_token is None:
-            _stamp_mcp_tool_analytics(
+            # Above the free allowance this is a real commercial decision, not
+            # an advisory notice: ask the shared verifier, which prices from the
+            # same compute+egress model as the dataset lane and settles through
+            # the same ledger.
+            decision, verifier_payload = await _commercial_access_decision(
                 request,
-                event="mcp_tool",
-                tool_mode="bulk",
-                batch_id=batch_id,
-                decision="challenge",
-                error_code="payment_required",
-                point_count=len(points),
-                batch_limit=limit,
-                paid_batch_limit=paid_limit,
-            )
-            quote_payload = _point_lookup_quote_payload(
-                request_id=request_id,
-                batch_id=batch_id,
-                point_count=len(points),
-                free_limit=limit,
-                paid_limit=paid_limit,
-            )
-            _log_mcp_tool_usage_event(
-                request,
-                request_id=request_id or batch_id or "",
                 tool_name="resolve_point",
                 capability_id="point_lookup",
-                decision="challenge",
-                started_at=started_at,
-                row_count=len(points),
-                query_granularity=f"bulk_{len(points)}",
-                response_payload=quote_payload,
-                error_code="payment_required",
-                payment_rail="commercial_access",
-                metadata={
-                    "event": "point_lookup",
-                    "tool_mode": "bulk",
-                    "quantity": len(points),
-                    "batch_id": batch_id,
-                    "point_count": len(points),
-                    "batch_limit": limit,
-                    "paid_batch_limit": paid_limit,
-                    "quote": quote_payload.get("quote"),
-                    "challenge_reason": "over_free_limit",
-                },
+                units=len(points),
+                request_id=request_id or batch_id or "",
             )
-            return _jsonrpc_response(_tool_result(quote_payload, is_error=True), rpc_request_id)
+            if decision == "allow":
+                settlement_id = str(
+                    ((verifier_payload.get("settlement") or {}).get("settlement_id") or "")
+                ).strip() or None
+            else:
+                error_code = (
+                    "payment_required" if decision == "challenge" else "commercial_access_unavailable"
+                )
+                _stamp_mcp_tool_analytics(
+                    request,
+                    event="mcp_tool",
+                    tool_mode="bulk",
+                    batch_id=batch_id,
+                    decision="challenge" if decision == "challenge" else "reject",
+                    error_code=error_code,
+                    point_count=len(points),
+                    batch_limit=limit,
+                    paid_batch_limit=paid_limit,
+                )
+                quote_payload = _point_lookup_quote_payload(
+                    request_id=request_id,
+                    batch_id=batch_id,
+                    point_count=len(points),
+                    free_limit=limit,
+                    paid_limit=paid_limit,
+                )
+                # Carry the verifier's own pricing and challenge so the caller
+                # can actually settle instead of guessing the amount.
+                context = verifier_payload.get("context")
+                if isinstance(context, dict) and context.get("pricing"):
+                    quote_payload["daedalmap_pricing"] = context["pricing"]
+                if verifier_payload.get("challenge"):
+                    quote_payload["challenge"] = verifier_payload["challenge"]
+                quote_payload["error"] = {
+                    "code": error_code,
+                    "message": str(
+                        verifier_payload.get("message")
+                        or f"{len(points)} points exceeds the free preview limit of {limit}."
+                    ),
+                }
+                _log_mcp_tool_usage_event(
+                    request,
+                    request_id=request_id or batch_id or "",
+                    tool_name="resolve_point",
+                    capability_id="point_lookup",
+                    decision="challenge" if decision == "challenge" else "deny",
+                    started_at=started_at,
+                    row_count=len(points),
+                    query_granularity=f"bulk_{len(points)}",
+                    response_payload=quote_payload,
+                    error_code=error_code,
+                    payment_rail="commercial_access",
+                    metadata={
+                        "event": "point_lookup",
+                        "tool_mode": "bulk",
+                        "quantity": len(points),
+                        "batch_id": batch_id,
+                        "point_count": len(points),
+                        "batch_limit": limit,
+                        "paid_batch_limit": paid_limit,
+                        "quote": quote_payload.get("quote"),
+                        "challenge_reason": "over_free_limit",
+                    },
+                )
+                return _jsonrpc_response(_tool_result(quote_payload, is_error=True), rpc_request_id)
 
         # resolve_point is the compact chain call; shapes are fetched by
         # get_geometry after the caller chooses which chain levels it needs.
@@ -1679,6 +1779,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
                 "country_scope": country_scope,
+                "settlement_id": settlement_id,
                 **_compute_metadata(
                     response_payload=result_payload,
                     stages=stages,
@@ -1688,7 +1789,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                     batch_limit=limit,
                 ),
             },
-            payment_rail=_access_lane(trusted_token),
+            # A settled bulk call is paid usage, not free usage. Trusted-token
+            # QA traffic still outranks both so it never lands in revenue.
+            payment_rail=_access_lane(trusted_token, paid=bool(settlement_id)),
             artifact_token_id=trusted_token_id,
         )
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
