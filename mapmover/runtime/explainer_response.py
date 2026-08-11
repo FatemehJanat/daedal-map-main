@@ -338,6 +338,7 @@ def build_explainer_response(
     source_reference: Optional[dict] = None,
     lane: str | None = None,
     view_context: dict | None = None,
+    allow_orientation: bool = False,
 ) -> Optional[dict]:
     """Build an explainer response from pack metadata, or return None.
 
@@ -345,6 +346,12 @@ def build_explainer_response(
       - source_metadata is missing or unusable
       - the question does not look like an explainer/meta query
       - the metadata carries no `description` or `llm_summary`
+
+    `allow_orientation` widens the question gate to context-orientation phrasing
+    ("what am I looking at here?"). Callers that have already established the
+    orientation context, and resolved which source is loaded, should pass it;
+    otherwise a question that cleared `looks_like_orientation_question` upstream
+    would be dropped here by the stricter explainer test.
 
     Returned dict shape:
       {
@@ -358,7 +365,12 @@ def build_explainer_response(
     """
     if not isinstance(source_metadata, dict) and not isinstance(source_reference, dict):
         return None
-    if not looks_like_explainer_question(question):
+    question_matches = (
+        looks_like_orientation_question(question)
+        if allow_orientation
+        else looks_like_explainer_question(question)
+    )
+    if not question_matches:
         return None
 
     reference_sections = _extract_reference_sections(source_reference or {})

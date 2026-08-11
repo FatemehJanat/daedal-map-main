@@ -124,7 +124,14 @@ def maybe_build_orientation_payload(
     metadata.setdefault("source_id", source_id)
     reference = load_source_reference_func(source_id) or {}
     explainer = build_explainer_response(
-        metadata, query, reference, lane="explore", view_context=request_context,
+        metadata,
+        query,
+        reference,
+        lane="explore",
+        view_context=request_context,
+        # We already cleared looks_like_orientation_question above and resolved
+        # the single loaded source, so context-orientation phrasing is in scope.
+        allow_orientation=True,
     )
     if not isinstance(explainer, dict):
         return None
