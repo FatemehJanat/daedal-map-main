@@ -52,6 +52,11 @@ class NameStandardizer:
 
         # Alias mappings from conversions.json
         self._aliases: Dict[str, str] = {}  # alias lowercase -> canonical
+        # Reverse index over every name universe we know: common names from
+        # iso_codes.json and formal names from global.csv both point at the
+        # ISO3. Without this, a country whose geometry name is formal ("the
+        # Federal Republic of Germany") cannot be found by its common name.
+        self._name_to_code: Dict[str, str] = {}  # normalized name -> ISO3
         self._country_name_index: Dict[Tuple[str, Optional[int]], Dict[str, str]] = {}
 
         # Known aggregates (to skip logging as mismatches)
@@ -82,6 +87,8 @@ class NameStandardizer:
                 self._country_codes[code] = name
                 self._aliases[self._normalize_lookup_text(name)] = name
                 self._aliases[self._normalize_lookup_text(code)] = name
+                self._name_to_code[self._normalize_lookup_text(name)] = code
+                self._name_to_code[self._normalize_lookup_text(code)] = code
 
             # Load aggregate names from regional_groupings and region_aliases
             # These are entities like "African Region", "Europe", etc. that will be removed
@@ -122,8 +129,13 @@ class NameStandardizer:
                         self._country_names[self._normalize_lookup_text(name_str)] = name_str
                         self._country_codes[code_str] = name_str
                         self._aliases[self._normalize_lookup_text(code_str)] = name_str
+                        # Formal geometry name and code both resolve to the code.
+                        self._name_to_code[self._normalize_lookup_text(name_str)] = code_str
+                        self._name_to_code[self._normalize_lookup_text(code_str)] = code_str
                     if pd.notna(abbrev) and abbrev != name:
                         self._aliases[self._normalize_lookup_text(abbrev)] = name
+                        if len(code_str) == 3 and code_str.isalpha():
+                            self._name_to_code.setdefault(self._normalize_lookup_text(abbrev), code_str)
 
         # Optional older geometry extracts for point/city aliases.
         places_path = self.geom_dir / "places_geometry.csv"
@@ -415,13 +427,22 @@ class NameStandardizer:
         return set(self._country_names.values())
 
     def get_country_code(self, name: str) -> Optional[str]:
-        """Get ISO-3 code for a country name."""
+        """Get ISO-3 code for a country name, common or formal."""
         self._load_data()
 
-        # First standardize the name
-        std_name, _ = self.standardize_country_name(name, log_mismatch=False)
+        # Direct hit on any known name universe: common name, formal geometry
+        # name, abbreviation, or the code itself.
+        direct = self._name_to_code.get(self._normalize_lookup_text(name))
+        if direct:
+            return direct
 
-        # Find code for this name
+        # Otherwise standardize first, then match on the canonical name. This
+        # is what catches fuzzy matches.
+        std_name, _ = self.standardize_country_name(name, log_mismatch=False)
+        standardized = self._name_to_code.get(self._normalize_lookup_text(std_name))
+        if standardized:
+            return standardized
+
         for code, canon_name in self._country_codes.items():
             if canon_name == std_name:
                 return code

@@ -55,6 +55,7 @@ _ADMIN_TEXT_ALIASES = {
     "mecklenburg-western pomerania": "mecklenburg vorpommern",
 }
 _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
+_COUNTRY_FALLBACK_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 
 
 def normalize_geometry_longitude(value: float) -> float:
@@ -289,6 +290,7 @@ def _resolve_country_name_from_global_geometry(query: str) -> dict[str, Any] | N
     if not normalized_query:
         return None
 
+    known_loc_ids: dict[str, Any] = {}
     for _, row in df.iterrows():
         loc_id = str(row.get("loc_id") or "").strip()
         if not loc_id:
@@ -302,19 +304,43 @@ def _resolve_country_name_from_global_geometry(query: str) -> dict[str, Any] | N
                 method="geometry_name_lookup",
                 source_loc_id=loc_id,
             )
+        known_loc_ids.setdefault(loc_id.upper(), name)
+
+    # Fall back to the shared synonym crosswalk only after every formal
+    # geometry name has failed, so an exact geometry match always wins. The
+    # standardizer already indexes common names, abbreviations, and codes, so
+    # country synonyms stay in one place instead of being duplicated here.
+    alias_iso3 = _get_name_standardizer().get_country_code(query)
+    if alias_iso3 and alias_iso3 in known_loc_ids:
+        return _build_match_entry(
+            alias_iso3,
+            admin_level=0,
+            name=known_loc_ids[alias_iso3],
+            method="country_synonym_lookup",
+            source_loc_id=alias_iso3,
+        )
     return None
 
 
-def _build_usa_tribal_aliases() -> dict[str, str]:
+def _build_usa_tribal_aliases() -> tuple[dict[str, str], dict[str, str]]:
+    """Return (exact_aliases, derived_aliases) for USA tribal areas.
+
+    Exact names ("Onondaga Nation Reservation") are unambiguous and may resolve
+    ahead of the admin spine. Suffix-stripped names ("Onondaga") are a guess and
+    routinely collide with county names, so they are kept separate and consulted
+    only after admin resolution fails. Tribal areas are a sidechain; a sidechain
+    guess must never shadow the admin spine.
+    """
     alias_map: dict[str, str] = {}
+    derived_map: dict[str, str] = {}
     file_path = COUNTRIES_DIR / "USA" / "geometry" / "tribal" / "USA.parquet"
     if not file_path.exists():
-        return alias_map
+        return alias_map, derived_map
 
     try:
         df = pd.read_parquet(file_path, columns=["loc_id", "name"])
     except Exception:
-        return alias_map
+        return alias_map, derived_map
 
     stripped_candidates: dict[str, set[str]] = {}
     for row in df.itertuples(index=False):
@@ -330,9 +356,9 @@ def _build_usa_tribal_aliases() -> dict[str, str]:
             stripped_candidates.setdefault(stripped, set()).add(loc_id)
 
     for alias_text, loc_ids in stripped_candidates.items():
-        if len(loc_ids) == 1:
-            alias_map.setdefault(alias_text, next(iter(loc_ids)))
-    return alias_map
+        if len(loc_ids) == 1 and alias_text not in alias_map:
+            derived_map[alias_text] = next(iter(loc_ids))
+    return alias_map, derived_map
 
 
 def _load_country_direct_location_aliases(country_hint: str | None) -> dict[str, str]:
@@ -351,10 +377,27 @@ def _load_country_direct_location_aliases(country_hint: str | None) -> dict[str,
             alias_map.setdefault(alias_text, loc_id_text)
 
     if iso3 == "USA":
-        for alias_text, loc_id in _build_usa_tribal_aliases().items():
+        for alias_text, loc_id in _build_usa_tribal_aliases()[0].items():
             alias_map.setdefault(alias_text, loc_id)
 
     _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE[iso3] = alias_map
+    return alias_map
+
+
+def _load_country_fallback_location_aliases(country_hint: str | None) -> dict[str, str]:
+    """Sidechain aliases that are only safe once admin resolution has failed."""
+    iso3 = str(country_hint or "").strip().upper()
+    if not iso3:
+        return {}
+    cached = _COUNTRY_FALLBACK_LOCATION_ALIAS_CACHE.get(iso3)
+    if cached is not None:
+        return cached
+
+    alias_map: dict[str, str] = {}
+    if iso3 == "USA":
+        alias_map.update(_build_usa_tribal_aliases()[1])
+
+    _COUNTRY_FALLBACK_LOCATION_ALIAS_CACHE[iso3] = alias_map
     return alias_map
 
 
@@ -363,6 +406,72 @@ def _resolve_country_direct_location_alias(query: str, *, country_hint: str | No
     if not normalized_query:
         return None
     return _load_country_direct_location_aliases(country_hint).get(normalized_query)
+
+
+def _resolve_country_fallback_location_alias(query: str, *, country_hint: str | None) -> str | None:
+    normalized_query = _normalize_admin_text(query)
+    if not normalized_query:
+        return None
+    return _load_country_fallback_location_aliases(country_hint).get(normalized_query)
+
+
+def _prefer_same_name_ancestor(
+    local_loc_id: str,
+    query: str,
+    *,
+    country: str | None,
+    matched_level: int | None,
+    standardizer,
+) -> str:
+    """Prefer a shallower ancestor that carries the identical name.
+
+    Name lookup runs deepest-level-first so "Harris County" resolves to the
+    county rather than the state. That ordering misfires when a region has a
+    single subdivision of the same name: "Fukuoka Prefecture" and "Australian
+    Capital Territory" each exist at admin_1 and again at admin_2, and the
+    deeper row is a structural artifact rather than what the caller meant.
+    Only an exact parent carrying the exact same name wins, so genuinely
+    distinct deeper places are untouched.
+    """
+    if not local_loc_id or matched_level is None or matched_level < 1:
+        return local_loc_id
+
+    shallower_level = int(matched_level) - 1
+    shallower_local = ""
+    try:
+        shallower = standardizer.get_loc_id_from_name(
+            query, country=country, admin_level=shallower_level
+        )
+        if shallower:
+            shallower_local = translate_geometry_id_to_local_id(shallower)
+    except Exception:
+        shallower_local = ""
+
+    if not shallower_local and country and shallower_level in {1, 2}:
+        # The standardizer and the geometry-name index cover different rows, so
+        # a shallower match may only exist in the geometry names.
+        fallback = _resolve_country_geometry_name(
+            query, country_hint=country, admin_level=shallower_level
+        )
+        if fallback:
+            shallower_local = str(fallback.get("loc_id") or "")
+
+    if not shallower_local or shallower_local == local_loc_id:
+        return local_loc_id
+
+    parent = get_parent_loc_id(local_loc_id)
+    if not parent:
+        return local_loc_id
+    # Compare in the same namespace: the parent edge may still be a geometry id
+    # while the shallower match has already been translated to local form.
+    parent_local = translate_geometry_id_to_local_id(str(parent))
+    candidates = {
+        str(parent).strip().upper(),
+        str(parent_local).strip().upper(),
+    }
+    if str(shallower_local).strip().upper() in candidates:
+        return shallower_local
+    return local_loc_id
 
 
 def _level_key(admin_level: int | None) -> str | None:
@@ -704,6 +813,22 @@ def resolve_admin_text_to_loc_id(
                 )
             if fallback_entry is None:
                 continue
+            fallback_loc_id = str(fallback_entry.get("loc_id") or "")
+            preferred_loc_id = _prefer_same_name_ancestor(
+                fallback_loc_id,
+                value,
+                country=country,
+                matched_level=fallback_entry.get("admin_level"),
+                standardizer=standardizer,
+            )
+            if preferred_loc_id != fallback_loc_id:
+                fallback_entry = _build_match_entry(
+                    preferred_loc_id,
+                    admin_level=infer_admin_level_from_loc_id(preferred_loc_id),
+                    name=value,
+                    method="geometry_name_lookup",
+                    source_loc_id=preferred_loc_id,
+                )
             key = _level_key(fallback_entry.get("admin_level"))
             return {
                 "query": value,
@@ -714,6 +839,13 @@ def resolve_admin_text_to_loc_id(
                 "should_persist_deepest_loc_id": True,
             }
         local_loc_id = translate_geometry_id_to_local_id(resolved)
+        local_loc_id = _prefer_same_name_ancestor(
+            local_loc_id,
+            value,
+            country=country,
+            matched_level=admin_level,
+            standardizer=standardizer,
+        )
         resolved_level = infer_admin_level_from_loc_id(local_loc_id)
         key = _level_key(resolved_level)
         entry = _build_match_entry(
@@ -730,6 +862,40 @@ def resolve_admin_text_to_loc_id(
             "deepest_resolved_admin_level": key,
             "should_persist_deepest_loc_id": True,
         }
+
+    # Admin resolution failed, so a derived sidechain alias is now safe to use.
+    fallback_loc_id = _resolve_country_fallback_location_alias(value, country_hint=country)
+    if fallback_loc_id:
+        family = classify_loc_id_family(fallback_loc_id)
+        admin_level = (
+            infer_admin_level_from_loc_id(fallback_loc_id)
+            if family in {"admin_0", "admin_local", "admin_geometry"}
+            else None
+        )
+        key = _level_key(admin_level)
+        entry = (
+            _build_match_entry(
+                fallback_loc_id,
+                admin_level=admin_level,
+                name=value,
+                method="country_location_alias_fallback",
+                source_loc_id=fallback_loc_id,
+            )
+            if key
+            else None
+        )
+        result = {
+            "query": value,
+            "match_type": "direct_location_alias",
+            "loc_id_family": family,
+            "matches": {key: entry} if key and entry else {},
+            "deepest_resolved_loc_id": fallback_loc_id,
+            "deepest_resolved_admin_level": key,
+            "should_persist_deepest_loc_id": True,
+        }
+        if key is None:
+            result["deepest_resolved_family"] = family
+        return result
 
     return {
         "query": value,
