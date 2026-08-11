@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from mapmover.caller_identity import resolve_caller_identity
 from mapmover.api_query_commercial import (
     COMMERCIAL_ACCESS_CHECK_PATH,
     commercial_access_enabled,
@@ -996,7 +997,10 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
         output_format=output_format,
     )
     request_fingerprint = build_request_fingerprint_hash(request_fingerprint_payload)
-    caller_binding = auth_user_id or ip_hash or "anonymous"
+    # Namespaced identity, so an account id can never collide with an IP hash
+    # and unidentified callers never share one "anonymous" bucket.
+    caller_identity = resolve_caller_identity(req, auth_user=auth_user, ip_hash=ip_hash)
+    caller_binding = caller_identity.binding
 
     settlement_id: str | None = None
     verifier_payload: dict[str, Any] | None = None
@@ -1075,9 +1079,13 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                         "scope": query_scope,
                     },
                     "caller": {
-                        "auth_user_id": auth_user_id,
+                        "auth_user_id": caller_identity.auth_user_id,
                         "ip_hash": ip_hash,
                         "caller_binding": caller_binding,
+                        # The verifier spends credits only on a verified
+                        # identity; a weak one is a throttle key, not authority.
+                        "caller_kind": caller_identity.kind,
+                        "caller_confidence": caller_identity.confidence,
                     },
                 },
             )
