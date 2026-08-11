@@ -193,6 +193,37 @@ def is_known_geometry_loc_id(value: str | None) -> bool:
     return bool(entry and entry.get("loc_id") == str(value or "").strip().upper() and entry.get("resolvable", True))
 
 
+def geometry_bank_permissions() -> set[str]:
+    """Distinct licence permission values across every geometry bank.
+
+    Feeds the paid-bulk licensing guard: a geography tool may only charge for
+    throughput when every contributing bank permits paid hosted use. Returns an
+    empty set when the catalog is unavailable, which the guard treats as
+    "not permitted" so a missing catalog fails closed rather than open.
+    """
+    catalog = load_geometry_catalog() or {}
+    banks = catalog.get("geometry_banks") or {}
+    if isinstance(banks, dict):
+        banks = list(banks.values())
+    if not isinstance(banks, list):
+        return set()
+
+    permissions: set[str] = set()
+    for bank in banks:
+        if not isinstance(bank, dict):
+            continue
+        source_license = bank.get("source_license")
+        value = None
+        if isinstance(source_license, dict):
+            value = source_license.get("permission")
+        if not value:
+            value = bank.get("permission")
+        text = str(value or "").strip().lower()
+        if text:
+            permissions.add(text)
+    return permissions
+
+
 def is_deprecated_geometry_loc_id(value: str | None) -> bool:
     entry = _named_index().get(_normalize(value))
     return bool(entry and entry.get("loc_id") == str(value or "").strip().upper() and not entry.get("resolvable", True))
