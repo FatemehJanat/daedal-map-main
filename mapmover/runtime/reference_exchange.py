@@ -187,6 +187,22 @@ def list_reference_systems() -> dict[str, Any]:
             "feature_count": family.get("feature_count"),
             "resolver": family.get("resolver"),
         })
+    try:
+        from .reference_graph import reference_graph_families
+
+        for family in reference_graph_families():
+            system = str(family.get("family") or "").strip()
+            if not system:
+                continue
+            systems.setdefault(system, {
+                "system": system,
+                "label": system.replace("_", " ").title(),
+                "role": "reference_graph_family",
+                "identity_count": family.get("identity_count"),
+                "shape_count": family.get("shape_count"),
+            })
+    except Exception:
+        pass
 
     bridges = []
     for artifact in catalog.get("bridge_artifacts") or []:
@@ -333,6 +349,14 @@ def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit:
 def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> dict[str, Any]:
     """Return an agent-oriented view of the live geometry catalog."""
     catalog = load_geometry_catalog()
+    try:
+        from .reference_graph import reference_graph_families, where_is_geography_data
+
+        data_source = where_is_geography_data()
+        graph_families = reference_graph_families()
+    except Exception as exc:
+        data_source = {"ok": False, "error": str(exc)}
+        graph_families = []
     selected_view = str(view or "summary").strip().lower().replace("-", "_")
     row_limit = max(1, min(int(limit or 50), 500))
     base = {
@@ -343,6 +367,8 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
         "download_url": "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
         "app_summary_endpoint": "https://app.daedalmap.com/api/v1/geometry/catalog",
         "counts": _geometry_catalog_counts(catalog),
+        "runtime_data_source": data_source,
+        "runtime_reference_families": graph_families,
         "usage": {
             "start_here": "Use summary or admin_coverage to discover coverage, then use loc_id-keyed tools for lookups and exports.",
             "loc_id_rule": "Shape and data tools are keyed to DaedalMap loc_id. If an input is not a loc_id, call resolve_reference first.",
@@ -461,6 +487,25 @@ def resolve_reference(
         bridge_vintage=bridge_vintage,
     )
     if not artifact:
+        try:
+            from .reference_graph import identity as graph_identity, resolve_alias
+
+            graph_matches = resolve_alias(system, text, limit=limit or 10)
+        except Exception:
+            graph_matches = []
+        if graph_matches:
+            primary = graph_matches[0]
+            graph_node = graph_identity(str(primary.get("loc_id") or "")) or {}
+            return _clean_json({
+                "ok": True,
+                "from_system": system,
+                "input": value,
+                "resolved_loc_id": primary.get("loc_id"),
+                "resolved_family": graph_node.get("family") or classify_loc_id_family(primary.get("loc_id")),
+                "match_type": "reference_graph_alias",
+                "matches": graph_matches,
+                "match_count": len(graph_matches),
+            })
         return {
             "ok": False,
             "from_system": system,
@@ -510,6 +555,12 @@ def loc_id_references(
     """Return known references that point at a ``loc_id``."""
     canonical = canonicalize_loc_id(loc_id)
     family = classify_loc_id_family(canonical)
+    try:
+        from .reference_graph import identity as graph_identity
+
+        family = (graph_identity(canonical) or {}).get("family") or family
+    except Exception:
+        pass
     requested = {_normalize_system(system) for system in systems or [] if str(system or "").strip()}
     references: list[dict[str, Any]] = [
         {"system": LOC_ID_SYSTEM, "value": canonical, "role": "reserve", "family": family},
@@ -552,6 +603,45 @@ def loc_id_references(
                     "match_rank": overlap.get("match_rank"),
                     "is_primary": overlap.get("is_primary"),
                 })
+    try:
+        from .reference_graph import aliases_for_loc_id, relationships_for_loc_id
+
+        for alias in aliases_for_loc_id(canonical, limit=limit_per_system or 10):
+            system = str(alias.get("reference_system") or "").strip()
+            if requested and system not in requested:
+                continue
+            references.append({
+                "system": system,
+                "value": alias.get("external_id"),
+                "role": alias.get("alias_type") or "reference_graph_alias",
+                "source_system": alias.get("source_system"),
+                "source_vintage": alias.get("source_vintage"),
+            })
+        graph_limit = max(1, min(int(limit_per_system or 10) * 10, 100))
+        for edge in relationships_for_loc_id(canonical, limit=graph_limit):
+            outgoing = str(edge.get("source_loc_id") or "") == canonical
+            system = str(edge.get("target_family") if outgoing else edge.get("source_family") or "").strip()
+            if requested and system not in requested:
+                continue
+            references.append({
+                "system": system,
+                "value": edge.get("target_loc_id") if outgoing else edge.get("source_loc_id"),
+                "name": edge.get("target_name") if outgoing else edge.get("source_name"),
+                "role": edge.get("relationship_type"),
+                "relationship_id": edge.get("relationship_id"),
+                "direction": "outgoing" if outgoing else "incoming",
+                "relationship_subtype": edge.get("relationship_subtype"),
+                "relationship_vintage": edge.get("relationship_vintage"),
+                "valid_from": edge.get("valid_from"),
+                "valid_to": edge.get("valid_to"),
+                "source_area_share": edge.get("source_area_share"),
+                "target_area_share": edge.get("target_area_share"),
+                "is_primary": edge.get("is_primary"),
+                "method": edge.get("method"),
+                "authority": edge.get("authority"),
+            })
+    except Exception:
+        pass
     if requested:
         references = [ref for ref in references if ref.get("system") in requested or ref.get("system") == LOC_ID_SYSTEM]
     return _clean_json({"ok": bool(canonical), "loc_id": canonical, "family": family, "references": references, "reference_count": len(references)})

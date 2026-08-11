@@ -78,6 +78,29 @@ application-data folder. On Windows this is normally:
 The public source checkout does not include a full data tree, so a useful local
 run needs data at that default location or an explicit `DATA_ROOT`.
 
+### Local geography candidate
+
+A server operator can test an unpublished geographic-reference graph through
+the normal MCP surface without publishing or uploading it:
+
+```text
+DEPLOYMENT=local
+STORAGE_MODE=local
+DATA_ROOT=C:/path/to/data
+GEOGRAPHY_REFERENCE_GRAPH_ROOT=countries/CAN/geometry/crosswalks/canada_reference_graph_candidate
+```
+
+Run the normal local server and connect the MCP client to its
+`/mcp/geography` endpoint. No alternate geography server or tool contract is
+used. Call `read_geometry_catalog`; its `runtime_data_source` field identifies
+the selected graph and release, and `runtime_reference_families` lists the
+families available through the graph.
+
+`GEOGRAPHY_REFERENCE_GRAPH_ROOT` is a process-launch setting, not an MCP tool
+argument. A remote caller therefore cannot make a hosted server read an
+arbitrary local path. The same pattern can support user-maintained compatible
+bundles in a self-hosted runtime.
+
 For the step-by-step data install flow, including the local Pack Store and
 researcher artifact tokens, see [DATA_INSTALLATION.md](DATA_INSTALLATION.md).
 

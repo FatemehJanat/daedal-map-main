@@ -1848,6 +1848,38 @@ def _location_row_has_polygon(row) -> bool:
     return geometry is not None and str(geometry).strip() not in {"", "null", "None"}
 
 
+def _reference_graph_location_info(loc_id: str) -> dict | None:
+    """Return the active integrated-graph identity when geometry banks miss."""
+    try:
+        from .runtime.reference_graph import identity, where_is_geography_data
+
+        row = identity(loc_id)
+        if not row:
+            return None
+        source = where_is_geography_data()
+        return {
+            "loc_id": row.get("loc_id") or loc_id,
+            "name": row.get("name"),
+            "admin_level": row.get("admin_level"),
+            "parent_id": row.get("parent_loc_id"),
+            "family": row.get("family"),
+            "iso3": str(row.get("loc_id") or loc_id).split("-", 1)[0],
+            "has_polygon": bool(row.get("has_shape")),
+            "valid_from": row.get("valid_from"),
+            "valid_to": row.get("valid_to"),
+            "source_vintage": row.get("source_vintage"),
+            "source_id": row.get("native_id"),
+            "source_system": row.get("source_system"),
+            "geometry_source": row.get("geometry_bank"),
+            "release_id": source.get("release_id"),
+            "reference_graph_status": source.get("status"),
+            "children_count": 0,
+            "descendants_count": 0,
+        }
+    except Exception:
+        return None
+
+
 def get_location_info(loc_id: str):
     """
     Get detailed information about a specific location for popup display.
@@ -1953,6 +1985,9 @@ def get_location_info(loc_id: str):
         feature = _get_selection_feature_for_loc_id(loc_id)
         if feature:
             return _build_feature_based_location_info(loc_id, feature)
+        graph_info = _reference_graph_location_info(loc_id)
+        if graph_info:
+            return graph_info
         return {"error": f"No data for {iso3}"}
 
     location = df[df["loc_id"] == loc_id]
@@ -1960,6 +1995,9 @@ def get_location_info(loc_id: str):
         feature = _get_selection_feature_for_loc_id(loc_id)
         if feature:
             return _build_feature_based_location_info(loc_id, feature)
+        graph_info = _reference_graph_location_info(loc_id)
+        if graph_info:
+            return graph_info
         return {"error": f"Location not found: {loc_id}"}
 
     row = location.iloc[0]
