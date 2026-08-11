@@ -2179,7 +2179,9 @@ def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
         "dataset_counts": {},
         "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
         "bbox": _bbox_from_feature_props(props),
-        "has_polygon": bool(props.get("has_polygon")),
+        # A successfully materialized selection feature is authoritative even
+        # when its legacy metadata row omitted ``has_polygon``.
+        "has_polygon": bool(feature.get("geometry")) or bool(props.get("has_polygon")),
         "iso3": props.get("iso_a3"),
         "land_area": props.get("land_area"),
         "water_area": props.get("water_area"),

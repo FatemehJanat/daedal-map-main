@@ -192,7 +192,7 @@ from .disaster_filters import (
     get_all_disaster_metadata,
 )
 
-__version__ = "2.0.0"
+__version__ = "0.3.0"
 __all__ = [
     # Paths
     "APP_ROOT",

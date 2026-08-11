@@ -322,7 +322,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="County Map API",
     description="Geographic data exploration API",
-    version="2.0.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
