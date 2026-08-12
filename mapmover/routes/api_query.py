@@ -1087,6 +1087,10 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
                         # identity; a weak one is a throttle key, not authority.
                         "caller_kind": caller_identity.kind,
                         "caller_confidence": caller_identity.confidence,
+                        # Explicit spend authority. A verified API key still
+                        # cannot move money without the credits:spend scope, so
+                        # the verifier must not re-derive this from confidence.
+                        "can_spend_credits": caller_identity.can_spend_credits,
                     },
                 },
             )
