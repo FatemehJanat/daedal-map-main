@@ -134,6 +134,12 @@ DaedalMap has two download surfaces:
 The Pack Store is the visual form of the manifest install path. Text-based
 assistants and scripts use the same manifests.
 
+The first Pack Store contract installs complete curated packs. It is not a
+geography/time/metric custom-extract builder. Future custom dataset exports may
+reuse the same metadata, provenance, checksum, and artifact-install primitives,
+but they remain derived user artifacts rather than a second pack registry or a
+replacement for complete pack downloads.
+
 The cloud artifact gateway reads specific objects. Protected `published` and
 `staging` pack channels need their own pack index, current/version manifests,
 and verified archives before they behave like the anonymous Pack Store.
