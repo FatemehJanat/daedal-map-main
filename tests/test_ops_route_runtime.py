@@ -25,6 +25,36 @@ class DummyRouteContext:
 
 
 class OpsRouteRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        with ops_orchestrator_runtime._LIVE_STATE_CACHE_LOCK:
+            ops_orchestrator_runtime._LIVE_STATE_CACHE.clear()
+
+    def test_nws_current_state_prefers_railway_hot_surface(self):
+        hot = {
+            "collector": "usa_nws_alerts",
+            "payload_summary": {"alerts": []},
+            "payload_hash": "hot",
+        }
+        with patch.object(
+            ops_orchestrator_runtime, "_fetch_live_state_via_site", return_value=hot
+        ) as site, patch.object(
+            ops_orchestrator_runtime, "_read_json_object", return_value={"collector": "stale"}
+        ) as cloud:
+            result = ops_orchestrator_runtime.load_current_state_snapshot("usa_nws_alerts")
+        self.assertEqual("hot", result["payload_hash"])
+        site.assert_called_once_with("usa_nws_alerts", "snapshot")
+        cloud.assert_not_called()
+
+    def test_nws_history_prefers_railway_hot_surface(self):
+        hot = [{"collector": "usa_nws_alerts", "payload_hash": "hot-history"}]
+        with patch.object(
+            ops_orchestrator_runtime, "_fetch_live_state_via_site", return_value=hot
+        ) as site, patch.object(ops_orchestrator_runtime, "_read_jsonl_object") as cloud:
+            result = ops_orchestrator_runtime.load_current_state_history("usa_nws_alerts")
+        self.assertEqual(hot, result)
+        site.assert_called_once_with("usa_nws_alerts", "history")
+        cloud.assert_not_called()
+
     def test_timeline_feed_filter_uses_effective_ops_feed_scope(self):
         route_context = DummyRouteContext(
             allowed_feeds=[],

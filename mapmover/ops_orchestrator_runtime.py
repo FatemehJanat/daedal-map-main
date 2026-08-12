@@ -712,16 +712,22 @@ def _cloud_live_state_expected() -> bool:
     return bool(_object_store_bucket())
 
 
-def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | None:
+def _fetch_live_state_via_site(
+    collector_name: str,
+    kind: str,
+    *,
+    frame_hash: str | None = None,
+) -> dict | list | None:
     if requests is None:
         return None
     base_url = _site_live_state_base_url()
     collector = str(collector_name or "").strip()
-    if not base_url or not collector or kind not in {"snapshot", "history"}:
+    if not base_url or not collector or kind not in {"snapshot", "history", "timeline-index", "frame"}:
         return None
+    suffix = f"/{frame_hash}" if kind == "frame" and frame_hash else ""
     try:
         response = requests.get(
-            f"{base_url}/api/internal/live-state/{collector}/{kind}",
+            f"{base_url}/api/internal/live-state/{collector}/{kind}{suffix}",
             headers=_live_state_site_headers(),
             timeout=4,
         )
@@ -730,7 +736,7 @@ def _fetch_live_state_via_site(collector_name: str, kind: str) -> dict | list | 
         payload = response.json()
     except Exception:
         return None
-    if kind == "snapshot":
+    if kind in {"snapshot", "timeline-index", "frame"}:
         return payload if isinstance(payload, dict) else None
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -942,12 +948,24 @@ def load_current_state_snapshot(
     if _is_live_state_snapshot(cached):
         _set_live_state_status(collector, "snapshot", "cache")
         return cached
-    snapshot = _read_json_object(f"{collector}/snapshot.json")
+    snapshot = (
+        _fetch_live_state_via_site(collector, "snapshot")
+        if collector == "usa_nws_alerts"
+        else _read_json_object(f"{collector}/snapshot.json")
+    )
     if _is_live_state_snapshot(snapshot):
         _set_live_state_cache(collector, "snapshot", snapshot)
-        _set_live_state_status(collector, "snapshot", "cloud")
+        _set_live_state_status(
+            collector,
+            "snapshot",
+            "railway_hot" if collector == "usa_nws_alerts" else "cloud",
+        )
         return snapshot
-    snapshot = _fetch_live_state_via_site(collector, "snapshot")
+    snapshot = (
+        _read_json_object(f"{collector}/snapshot.json")
+        if collector == "usa_nws_alerts"
+        else _fetch_live_state_via_site(collector, "snapshot")
+    )
     if _is_live_state_snapshot(snapshot):
         _set_live_state_cache(collector, "snapshot", snapshot)
         _set_live_state_status(collector, "snapshot", "site_fallback")
@@ -1049,11 +1067,23 @@ def load_current_state_history(collector_name: str, limit: int | None = None) ->
         _set_live_state_status(collector, "history", "cache")
         entries = cached
     else:
-        entries = _read_jsonl_object(f"{collector}/history.jsonl")
+        entries = (
+            _fetch_live_state_via_site(collector, "history")
+            if collector == "usa_nws_alerts"
+            else _read_jsonl_object(f"{collector}/history.jsonl")
+        )
         if isinstance(entries, list) and entries:
-            _set_live_state_status(collector, "history", "cloud")
+            _set_live_state_status(
+                collector,
+                "history",
+                "railway_hot" if collector == "usa_nws_alerts" else "cloud",
+            )
         else:
-            entries = _fetch_live_state_via_site(collector, "history")
+            entries = (
+                _read_jsonl_object(f"{collector}/history.jsonl")
+                if collector == "usa_nws_alerts"
+                else _fetch_live_state_via_site(collector, "history")
+            )
             if isinstance(entries, list) and entries:
                 _set_live_state_status(collector, "history", "site_fallback")
     if not isinstance(entries, list):
@@ -1076,7 +1106,13 @@ def load_current_state_timeline_index(collector_name: str) -> dict | None:
     collector = _normalize_ops_feed_id(collector_name)
     if not collector or not re.fullmatch(r"[A-Za-z0-9_-]+", collector):
         return None
-    payload = _read_json_object(f"{collector}/timeline_index.json")
+    payload = (
+        _fetch_live_state_via_site(collector, "timeline-index")
+        if collector == "usa_nws_alerts"
+        else _read_json_object(f"{collector}/timeline_index.json")
+    )
+    if collector == "usa_nws_alerts" and not isinstance(payload, dict):
+        payload = _read_json_object(f"{collector}/timeline_index.json")
     if not isinstance(payload, dict) or not isinstance(payload.get("frames"), list):
         return None
     return payload
@@ -1092,6 +1128,11 @@ def load_current_state_timeline_frame(collector_name: str, frame_key: object) ->
         or not re.fullmatch(r"timeline_frames/[a-f0-9]{64}\.json", key)
     ):
         return None
+    if collector == "usa_nws_alerts":
+        payload_hash = key.removeprefix("timeline_frames/").removesuffix(".json")
+        payload = _fetch_live_state_via_site(collector, "frame", frame_hash=payload_hash)
+        if isinstance(payload, dict):
+            return payload
     return _read_json_object(f"{collector}/{key}")
 
 
