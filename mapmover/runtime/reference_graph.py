@@ -35,6 +35,7 @@ def _connection():
     connection = build_guarded_connection()
     if connection is None:
         raise RuntimeError("DuckDB is required for reference-graph queries")
+    connection.execute("SET enable_progress_bar=false")
     return connection
 
 
@@ -289,23 +290,33 @@ def relationships_for_loc_id(
     if not reference_graph_available():
         return []
     direction = str(direction).strip().lower()
-    if direction == "outgoing":
-        predicate, values = "source_loc_id = ?", [str(loc_id)]
-    elif direction == "incoming":
-        predicate, values = "target_loc_id = ?", [str(loc_id)]
-    else:
-        predicate, values = "source_loc_id = ? OR target_loc_id = ?", [str(loc_id), str(loc_id)]
     root = active_reference_graph_root()
     connection = _connection()
     try:
-        cursor = connection.execute(
-            f"""SELECT * FROM read_parquet('{_sql_path(root / 'relationships.parquet')}')
-                WHERE {predicate}
-                ORDER BY relationship_type, relationship_vintage, relationship_id
-                LIMIT ?""",
-            [*values, max(1, int(limit))],
-        )
-        columns = [item[0] for item in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        requested_limit = max(1, int(limit))
+        path = _sql_path(root / "relationships.parquet")
+
+        def selected_rows(column: str) -> list[dict[str, Any]]:
+            cursor = connection.execute(
+                f"SELECT * FROM read_parquet('{path}') WHERE {column} = ? LIMIT ?",
+                [str(loc_id), requested_limit],
+            )
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        if direction == "outgoing":
+            rows = selected_rows("source_loc_id")
+        elif direction == "incoming":
+            rows = selected_rows("target_loc_id")
+        else:
+            rows = selected_rows("source_loc_id") + selected_rows("target_loc_id")
+            rows = list({str(row.get("relationship_id")): row for row in rows}.values())
+
+        rows.sort(key=lambda row: (
+            str(row.get("relationship_type") or ""),
+            str(row.get("relationship_vintage") or ""),
+            str(row.get("relationship_id") or ""),
+        ))
+        return rows[:requested_limit]
     finally:
         connection.close()

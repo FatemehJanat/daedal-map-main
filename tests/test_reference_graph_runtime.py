@@ -91,6 +91,29 @@ class ReferenceGraphRuntimeTests(unittest.TestCase):
         self.assertEqual(aliases_for_loc_id("TST-A-001")[0]["external_id"], "001")
         self.assertEqual(relationships_for_loc_id("TST-A-001")[0]["target_loc_id"], "TST-B-002")
 
+    def test_relationship_query_avoids_global_order_by(self) -> None:
+        statements: list[str] = []
+        real_connection = reference_graph._connection
+
+        class RecordingConnection:
+            def __init__(self):
+                self.connection = real_connection()
+
+            def execute(self, statement, parameters=None):
+                statements.append(statement)
+                return self.connection.execute(statement, parameters or [])
+
+            def close(self):
+                self.connection.close()
+
+        with mock.patch.object(reference_graph, "_connection", side_effect=RecordingConnection):
+            rows = relationships_for_loc_id("TST-A-001")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(statements), 2)
+        self.assertTrue(all("ORDER BY" not in statement.upper() for statement in statements))
+        self.assertTrue(all("LIMIT ?" in statement.upper() for statement in statements))
+
     def test_existing_reference_tools_use_graph_without_new_contract(self) -> None:
         resolved = resolve_reference(from_system="test.code", value="001", iso3="TST")
         self.assertTrue(resolved["ok"])
