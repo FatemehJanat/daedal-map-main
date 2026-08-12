@@ -20,6 +20,8 @@ import json
 import sys
 
 from mcp_surface_shared import build_mcp_instructions, build_tool_definitions
+from mcp_tool_help_shared import tool_help_payload
+from pack_registry_shared import pack_tool_allowlists
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {
@@ -35,6 +37,8 @@ INSTRUCTIONS = build_mcp_instructions(
 )
 HOSTED_URL = "https://app.daedalmap.com/mcp"
 TOOLS = build_tool_definitions()
+TOOL_BY_NAME = {str(tool.get("name") or ""): tool for tool in TOOLS}
+TOOL_FACADES = pack_tool_allowlists()
 
 PROMPTS = [
     {
@@ -147,6 +151,38 @@ def _handle(message):
         }]})
     elif method == "tools/call":
         name = (message.get("params") or {}).get("name") or "unknown"
+        arguments = (message.get("params") or {}).get("arguments") or {}
+        if name == "get_tool_help":
+            target_name = str(arguments.get("tool_name") or "").strip()
+            definition = TOOL_BY_NAME.get(target_name)
+            if not definition:
+                payload = {
+                    "ok": False,
+                    "tool_name": target_name,
+                    "error": {"code": "tool_not_found", "message": f"Tool '{target_name}' is not published"},
+                }
+                _result(request_id, {
+                    "content": [{"type": "text", "text": json.dumps(payload)}],
+                    "structuredContent": payload,
+                    "isError": True,
+                })
+                return
+            facades = ["/mcp"] + [
+                f"/mcp/{pack_id}"
+                for pack_id, tools in sorted(TOOL_FACADES.items())
+                if target_name in tools
+            ]
+            payload = tool_help_payload(
+                target_name,
+                tool_definition=definition,
+                available_on_facades=facades,
+            )
+            _result(request_id, {
+                "content": [{"type": "text", "text": json.dumps(payload)}],
+                "structuredContent": payload,
+                "isError": False,
+            })
+            return
         text = (
             f"Tool '{name}' executes against DaedalMap data. This local stdio entrypoint "
             "exposes the catalog for discovery and registry checks; it does not run queries. "

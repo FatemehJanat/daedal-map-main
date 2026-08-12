@@ -45,6 +45,12 @@ FAMILY_DATASET = "dataset"
 
 
 TOOL_ACCESS_REGISTRY: dict[str, dict] = {
+    "get_tool_help": {
+        "family": FAMILY_DISCOVERY,
+        "capability_id": "tool_help_discovery",
+        "pricing": PRICING_FREE,
+        "notes": "Blind-caller help must stay free on every facade.",
+    },
     # ---- geography: bulk-capable, licence-eligible for paid throughput ----
     "resolve_point": {
         "family": FAMILY_GEOGRAPHY,

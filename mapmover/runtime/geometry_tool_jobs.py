@@ -9,6 +9,7 @@ without changing public tool shapes.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import time
 import uuid
@@ -22,6 +23,7 @@ from .reference_exchange import convert_reference, get_geometry_availability, ge
 
 
 _JOB_REGISTRY: dict[str, dict[str, Any]] = {}
+_JOB_IDEMPOTENCY: dict[tuple[str, str], tuple[str, str]] = {}
 
 
 def _clean_json(value: Any) -> Any:
@@ -302,6 +304,23 @@ def estimate_geometry_package(payload: dict[str, Any], *, scope_limit: int = 100
 
 
 def _new_job(kind: str, request_payload: dict[str, Any], *, status: str = "queued", result: dict[str, Any] | None = None) -> dict[str, Any]:
+    request_id = str(request_payload.get("request_id") or "").strip()
+    fingerprint = hashlib.sha256(
+        json.dumps(request_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    idempotency_key = (kind, request_id)
+    if request_id and idempotency_key in _JOB_IDEMPOTENCY:
+        prior_fingerprint, prior_job_id = _JOB_IDEMPOTENCY[idempotency_key]
+        if prior_fingerprint != fingerprint:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "idempotency_conflict",
+                    "message": "request_id was already used with a different job payload",
+                },
+            }
+        return _clean_json(_JOB_REGISTRY[prior_job_id])
+
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     job_id = f"{kind}_{uuid.uuid4().hex[:16]}"
     job = {
@@ -316,8 +335,14 @@ def _new_job(kind: str, request_payload: dict[str, Any], *, status: str = "queue
         "result": result,
         "artifact": None,
         "callback_state": "not_configured",
+        "next_call": {
+            "tool": "get_job_status",
+            "arguments": {"job_id": job_id},
+        },
     }
     _JOB_REGISTRY[job_id] = job
+    if request_id:
+        _JOB_IDEMPOTENCY[idempotency_key] = (fingerprint, job_id)
     return _clean_json(job)
 
 

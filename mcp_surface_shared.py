@@ -57,6 +57,18 @@ def build_mcp_instructions(*, safety_notice: str | None = None) -> str:
 def build_tool_definitions() -> list[dict]:
     return [
         {
+            "name": "get_tool_help",
+            "title": "Get Tool Help",
+            "description": "Free blind-caller guidance for one tool visible on this MCP facade. Returns when to use it, what it refuses, a working example, effective access limits, important outputs, provenance fields, and recommended next calls. Use tools/list to discover names, then call this before an unfamiliar tool.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"tool_name": {"type": "string", "description": "Exact tool name from tools/list."}},
+                "required": ["tool_name"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "get_catalog",
             "title": "Get Catalog",
             "description": "Free discovery. Returns the list of live agent-ready data packs available on DaedalMap.",

@@ -22,6 +22,7 @@ from mapmover.routes.mcp import (
     ACCESS_LANE_PAID,
     ACCESS_LANE_TRUSTED_ARTIFACT,
     DATA_HELPER_CAPABILITIES,
+    _provenance_summary,
     _access_lane,
     router as mcp_router,
 )
@@ -64,6 +65,26 @@ class AccessLaneEnumTests(unittest.TestCase):
         # A trusted token always wins, so QA traffic never looks like paid usage.
         self.assertEqual(_access_lane("token", paid=True), ACCESS_LANE_TRUSTED_ARTIFACT)
 
+    def test_provenance_summary_normalizes_existing_fields_without_invention(self) -> None:
+        summary = _provenance_summary({
+            "matches": [{"source_system": "Statistics Canada", "source_vintage": "2021"}],
+            "geometry_sources": {"left": {"geometry_bank": "countries/CAN/geometry.parquet"}},
+            "license": None,
+            "geometry": {"coordinates": [[1, 2]]},
+        })
+        self.assertEqual(summary["schema_version"], "daedalmap.tool_provenance.v1")
+        self.assertEqual(summary["status"], "reported")
+        self.assertEqual(summary["source_systems"], ["Statistics Canada"])
+        self.assertEqual(summary["source_vintages"], ["2021"])
+        self.assertEqual(summary["bank_ids"], ["countries/CAN/geometry.parquet"])
+        self.assertNotIn("licenses", summary)
+
+    def test_provenance_summary_reports_missing_instead_of_guessing(self) -> None:
+        self.assertEqual(_provenance_summary({"loc_id": "CAN-BC"}), {
+            "schema_version": "daedalmap.tool_provenance.v1",
+            "status": "not_reported",
+        })
+
     def test_no_legacy_free_preview_lane_remains(self) -> None:
         """Scan the whole runtime package, not just one module.
 
@@ -96,6 +117,7 @@ class DataHelperTelemetryTests(unittest.TestCase):
 
     def test_every_free_data_helper_has_a_capability_id(self) -> None:
         expected = {
+            "get_tool_help",
             "get_catalog",
             "get_pack",
             "get_live_earthquake_events",
@@ -147,6 +169,64 @@ class DataHelperTelemetryTests(unittest.TestCase):
         self.assertEqual(analytics["capability_id"], "pack_detail_discovery")
         self.assertEqual(analytics["decision"], "deny")
         self.assertEqual(analytics["error_code"], "pack_not_found")
+
+
+class BlindCallerHelpTests(unittest.TestCase):
+    def setUp(self) -> None:
+        app = FastAPI()
+        app.include_router(mcp_router)
+        self.client = TestClient(app)
+
+    def test_every_published_tool_has_complete_guidance_and_valid_example_keys(self) -> None:
+        from mcp_surface_shared import build_tool_definitions
+        from mcp_tool_help_shared import validate_guidance_examples, validate_tool_guidance
+
+        definitions = build_tool_definitions()
+        names = {str(tool.get("name") or "") for tool in definitions}
+        self.assertEqual(validate_tool_guidance(names), [])
+        self.assertEqual(validate_guidance_examples(definitions), [])
+
+    def test_every_narrow_facade_exposes_the_free_help_tool(self) -> None:
+        from pack_registry_shared import pack_tool_allowlists
+
+        for facade, tools in pack_tool_allowlists().items():
+            with self.subTest(facade=facade):
+                self.assertIn("get_tool_help", tools)
+
+    def test_help_reports_enforced_point_limits_and_paid_throughput(self) -> None:
+        envelope = _tool_call_envelope(
+            self.client,
+            "get_tool_help",
+            {"tool_name": "resolve_point"},
+            path="/mcp/geography",
+        )
+        payload = envelope["result"]["structuredContent"]
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["access"]["pricing"], "paid_bulk_x402_base_usdc")
+        self.assertEqual(payload["access"]["limits"]["free_item_limit"], 25)
+        self.assertEqual(payload["access"]["limits"]["paid_item_limit"], 10000)
+        self.assertTrue(payload["examples"])
+        self.assertIn("loc_id_info", payload["recommended_next_calls"])
+        self.assertIn("/mcp/reverse-geocoding", payload["available_on_facades"])
+        self.assertEqual(payload["provenance"]["schema_version"], "daedalmap.tool_provenance.v1")
+
+    def test_help_cannot_leak_tools_hidden_from_a_narrow_facade(self) -> None:
+        envelope = _tool_call_envelope(
+            self.client,
+            "get_tool_help",
+            {"tool_name": "resolve_point"},
+            path="/mcp/currency",
+        )
+        payload = envelope["result"]["structuredContent"]
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "tool_not_found")
+
+    def test_help_call_has_stable_free_analytics(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
+            _tool_call_envelope(self.client, "get_tool_help", {"tool_name": "get_catalog"})
+        analytics = analytics_mock.call_args.kwargs
+        self.assertEqual(analytics["capability_id"], "tool_help_discovery")
+        self.assertEqual(analytics["payment_rail"], ACCESS_LANE_FREE)
 
 
 class TrustedArtifactBypassTests(unittest.TestCase):
@@ -212,6 +292,24 @@ class TrustedArtifactBypassTests(unittest.TestCase):
                     {"too_many_items", "too_many_loc_ids", "too_many_loc_ids_for_references"},
                     f"{tool} still enforced its item cap against a trusted artifact token",
                 )
+
+    def test_trusted_token_bypasses_per_tool_call_rate_limit(self) -> None:
+        env = {"ARTIFACT_ACCESS_TOKENS": f"qa={self.token}"}
+        with (
+            mock.patch.dict("os.environ", env, clear=False),
+            mock.patch("mapmover.routes.mcp.rate_limiter.check", return_value=(False, 60)) as limiter_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            envelope = _tool_call_envelope(
+                self.client,
+                "get_tool_help",
+                {"tool_name": "get_catalog"},
+                headers=self._headers(),
+            )
+        self.assertTrue(envelope["result"]["structuredContent"]["ok"])
+        limiter_mock.assert_not_called()
+        self.assertEqual(analytics_mock.call_args.kwargs["payment_rail"], ACCESS_LANE_TRUSTED_ARTIFACT)
+        self.assertTrue(analytics_mock.call_args.kwargs["metadata"]["rate_limit_bypassed"])
 
 
 if __name__ == "__main__":

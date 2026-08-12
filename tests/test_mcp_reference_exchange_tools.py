@@ -402,6 +402,21 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["name"], "Los Angeles County")
         self.assertNotIn("geometry", payload["results"][0])
 
+    def test_get_geometry_single_normalizes_legacy_string_error(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.reference_exchange.get_geometry_reference",
+                return_value={"ok": False, "loc_id": "USA-NOPE", "has_shape": False, "error": "no geometry found"},
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
+        ):
+            payload = _tool_call(self.client, "get_geometry", {"loc_id": "USA-NOPE"})
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "not_found")
+        self.assertEqual(payload["error"]["message"], "no geometry found")
+        self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
+
     def test_check_geometry_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_CHECK_GEOMETRY": "2"}):
             with mock.patch("mapmover.routes.mcp.log_api_query_event"):
@@ -1076,8 +1091,37 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(created["status"], "completed")
         self.assertEqual(created["result"]["delivery_mode"], "inline")
+        self.assertEqual(created["next_call"]["tool"], "get_job_status")
+        self.assertEqual(created["next_call"]["arguments"]["job_id"], created["job_id"])
         self.assertEqual(status["job_id"], created["job_id"])
         self.assertEqual(status["status"], "completed")
+
+    def test_geometry_export_retry_is_idempotent_by_request_id(self) -> None:
+        with (
+            mock.patch(
+                "mapmover.runtime.geometry_tool_jobs.get_geometry_references",
+                return_value={"ok": True, "requested": 1, "available": 1, "missing": 0, "results": []},
+            ),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            arguments = {
+                "request_id": "geometry-export-idempotency-test",
+                "loc_ids": ["USA-CA-037"],
+                "include_polygon": False,
+            }
+            first = _tool_call(self.client, "create_geometry_export", arguments)
+            retry = _tool_call(self.client, "create_geometry_export", arguments)
+            conflict = _tool_call(
+                self.client,
+                "create_geometry_export",
+                {**arguments, "loc_ids": ["USA-NY-061"]},
+            )
+
+        self.assertEqual(retry["job_id"], first["job_id"])
+        self.assertEqual(retry["created_at"], first["created_at"])
+        self.assertEqual(retry["next_call"], first["next_call"])
+        self.assertFalse(conflict["ok"])
+        self.assertEqual(conflict["error"]["code"], "idempotency_conflict")
 
     def test_conversion_estimate_and_inline_create(self) -> None:
         with mock.patch("mapmover.routes.mcp.log_api_query_event"):
@@ -1097,6 +1141,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(estimate["create_call"]["tool"], "create_conversion_job")
         self.assertTrue(created["ok"])
         self.assertEqual(created["status"], "completed")
+        self.assertEqual(created["next_call"]["arguments"]["job_id"], created["job_id"])
         self.assertEqual(created["result"]["row_count"], 1)
         self.assertEqual(created["result"]["converted_count"], 1)
 

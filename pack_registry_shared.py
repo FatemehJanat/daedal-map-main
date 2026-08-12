@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from tool_access_shared import (
+    tool_free_item_limit,
+    tool_inline_item_limit,
+    tool_is_paid_bulk,
+    tool_paid_item_limit,
+    tool_pricing,
+)
+
 # Shared structured registry for the live agent/API/MCP pack set.
 # This is the intended single authored source for:
 # - published pack order
@@ -337,7 +345,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "geography": {
         "display_name": "Geography Tools",
         "kind": "tool_family",
-        "pricing": "free",
+        "pricing": "mixed",
         "mcp_tool_allowlist": (
             "get_catalog",
             "get_pack",
@@ -394,7 +402,7 @@ PACK_REGISTRY: dict[str, dict] = {
     "reverse-geocoding": {
         "display_name": "Reverse Geocoding",
         "kind": "tool_family_alias",
-        "pricing": "free",
+        "pricing": "mixed",
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point"),
         "mcp_name": "com.daedalmap/reverse-geocoding",
         "mcp_title": "DaedalMap Reverse Geocoding (coordinates to loc_id)",
@@ -405,7 +413,7 @@ PACK_REGISTRY: dict[str, dict] = {
                 "Latitude/longitude to the complete latest-available administrative chain",
                 "Small point batches in one MCP call for table cleanup",
                 "Small chain rows with loc_id, name, level, and available vintage",
-                "Free; maps coordinates onto the shared loc_id spine",
+                "The first 25 points per call are free; larger hosted batches use paid throughput",
             ],
         },
         "routing": {"preferred_tool": "resolve_point"},
@@ -481,6 +489,21 @@ def tool_family_catalog_entry(pack_id: str | None) -> dict:
     normalized = str(pack_id or "").strip()
     profile = PACK_REGISTRY.get(normalized) or {}
     pricing = str(profile.get("pricing") or "free")
+    tools = []
+    for raw_tool in profile.get("tool_summaries") or ():
+        tool = dict(raw_tool)
+        name = str(tool.get("name") or "")
+        limits = {
+            "free_item_limit": tool_free_item_limit(name),
+            "paid_item_limit": tool_paid_item_limit(name),
+            "inline_item_limit": tool_inline_item_limit(name),
+        }
+        tool["access"] = {
+            "pricing": tool_pricing(name),
+            "limits": {key: value for key, value in limits.items() if value is not None},
+        }
+        tools.append(tool)
+    paid_tools = [tool["name"] for tool in tools if tool_is_paid_bulk(str(tool.get("name") or ""))]
     return {
         "pack_id": normalized,
         "kind": "tool_family",
@@ -489,7 +512,17 @@ def tool_family_catalog_entry(pack_id: str | None) -> dict:
         "description": profile.get("mcp_description"),
         "pricing": pricing,
         "paid_data_calls": pricing != "free",
-        "tools": [dict(tool) for tool in (profile.get("tool_summaries") or ())],
+        "tools": tools,
+        "access_summary": {
+            "model": "mixed" if paid_tools else "free",
+            "free_discovery_tool": "get_tool_help",
+            "paid_bulk_tools": paid_tools,
+            "rule": "Paying raises throughput; it does not unlock different geography data.",
+            "trusted_artifact_qa": "Bypasses route/tool call limits, item caps, and payment challenges with a separately labeled analytics lane.",
+        },
+        "shared_discovery_tools": [
+            {"name": "get_tool_help", "pricing": "free", "summary": "usage contract and working example for any tool visible on this facade"}
+        ],
     }
 
 
@@ -497,7 +530,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
     normalized = str(pack_id or "").strip()
     profile = PACK_REGISTRY.get(normalized) or {}
     entry = tool_family_catalog_entry(normalized)
-    tools = [dict(tool) for tool in (profile.get("tool_summaries") or ())]
+    tools = [dict(tool) for tool in entry.get("tools") or ()]
     preferred_tool = str((profile.get("routing") or {}).get("preferred_tool") or "").strip()
     first_arguments: dict[str, object]
     start_here: list[str]
@@ -511,7 +544,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Use convert_reference when the caller wants one external geography system expressed in another.",
         ]
         important_rules = [
-            "These are free utility tools, not a query_dataset pack.",
+            "These are direct utility tools, not a query_dataset pack; discovery and small calls are free, while resolve_point batches above 25 use paid hosted throughput.",
             "loc_id is the reserve identifier: generic conversions should flow X -> loc_id -> Y.",
             "Use read_geometry_catalog for live catalog-backed coverage and package discovery instead of assuming a fixed list of countries or admin depths.",
             "Use list_reference_systems for live catalog-backed availability instead of assuming a fixed list of systems.",
@@ -528,7 +561,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Only when more detail is requested, pass all stack loc_ids to loc_id_info; call get_geometry separately for shapes.",
         ]
         important_rules = [
-            "These are free utility tools, not a query_dataset pack.",
+            "These are direct utility tools, not a query_dataset pack; the first 25 resolve_point items per call are free and larger hosted batches use paid throughput.",
             "Coordinates must be WGS84 decimal degrees.",
             "resolve_point defaults to the complete latest-available chain through the country's deepest served tier; target_admin_level only stops earlier.",
             "A mixed-vintage point chain is context. loc_id_info hierarchy and resolve_loc_id_scope follow strict stored parentage within a coherent release.",
@@ -623,11 +656,21 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
 
 
 def free_pack_ids() -> tuple[str, ...]:
-    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if not str(profile.get("pricing") or "free").startswith("paid"))
+    return tuple(
+        pack_id
+        for pack_id, profile in PACK_REGISTRY.items()
+        if str(profile.get("kind") or "data_pack") == "data_pack"
+        and not str(profile.get("pricing") or "free").startswith("paid")
+    )
 
 
 def paid_pack_ids() -> tuple[str, ...]:
-    return tuple(pack_id for pack_id, profile in PACK_REGISTRY.items() if str(profile.get("pricing") or "free").startswith("paid"))
+    return tuple(
+        pack_id
+        for pack_id, profile in PACK_REGISTRY.items()
+        if str(profile.get("kind") or "data_pack") == "data_pack"
+        and str(profile.get("pricing") or "free").startswith("paid")
+    )
 
 
 def pack_profile(pack_id: str | None) -> dict:
@@ -673,7 +716,7 @@ def pack_tool_allowlists() -> dict[str, set[str]]:
     allowlists: dict[str, set[str]] = {}
     for pack_id, profile in PACK_REGISTRY.items():
         raw = profile.get("mcp_tool_allowlist") or ()
-        allowlists[pack_id] = {str(tool) for tool in raw if str(tool).strip()}
+        allowlists[pack_id] = {str(tool) for tool in raw if str(tool).strip()} | {"get_tool_help"}
     return allowlists
 
 

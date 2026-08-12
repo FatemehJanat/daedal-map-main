@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from mcp_surface_shared import build_mcp_instructions, build_tool_definitions
+from mcp_tool_help_shared import tool_help_payload
 from pack_registry_shared import (
     pack_mcp_server_profile,
     pack_prompt_allowlists,
@@ -85,6 +86,7 @@ ANALYTICS_PACK_DISCOVERY = "agent_api_discovery"
 # Free data helpers dispatched inline here. Each maps to a stable capability_id
 # so it produces an api_usage_events row like every other tool in the universe.
 DATA_HELPER_CAPABILITIES: dict[str, str] = {
+    "get_tool_help": "tool_help_discovery",
     "get_catalog": "catalog_discovery",
     "get_pack": "pack_detail_discovery",
     "get_live_earthquake_events": "live_earthquake_lookup",
@@ -147,6 +149,21 @@ def _facade_tools(pack_id: str | None) -> list[dict[str, Any]]:
     if allowed is None:
         return tools
     return [tool for tool in tools if str(tool.get("name") or "") in allowed]
+
+
+def _tool_facade_urls(tool_name: str) -> list[str]:
+    urls = ["/mcp"]
+    for pack_id in sorted(PACK_TOOL_ALLOWLIST):
+        if tool_name in PACK_TOOL_ALLOWLIST[pack_id]:
+            urls.append(f"/mcp/{pack_id}")
+    return urls
+
+
+def _tool_definition(tool_name: str) -> dict[str, Any] | None:
+    return next(
+        (tool for tool in _tool_definitions() if str(tool.get("name") or "") == tool_name),
+        None,
+    )
 
 
 def _facade_prompts(pack_id: str | None) -> list[dict[str, Any]]:
@@ -520,6 +537,14 @@ def _tool_rate_limit_for_tier(tool_name: str, tier: str) -> tuple[int, int]:
 
 
 def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id: Any) -> JSONResponse | None:
+    trusted_token, _trusted_token_id = _trusted_artifact_access(request)
+    if trusted_token is not None:
+        request.state.analytics_metadata = {
+            **getattr(request.state, "analytics_metadata", {}),
+            "rate_limit_bypassed": True,
+            "access_lane": ACCESS_LANE_TRUSTED_ARTIFACT,
+        }
+        return None
     tier = _resolve_caller_rate_tier(request)
     limit, window_seconds = _tool_rate_limit_for_tier(tool_name, tier)
     caller = get_client_ip(request) or "unknown"
@@ -920,7 +945,52 @@ def _jsonrpc_error(request_id: Any, code: int, message: str, *, data: dict[str, 
     return response
 
 
+def _provenance_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize provenance already present in a result without inventing it."""
+    aliases = {
+        "source_system": "source_systems",
+        "geometry_source": "source_systems",
+        "source_vintage": "source_vintages",
+        "geometry_vintage": "source_vintages",
+        "vintage": "source_vintages",
+        "namespace_release": "source_vintages",
+        "bank_id": "bank_ids",
+        "geometry_bank": "bank_ids",
+        "release_id": "release_ids",
+        "license": "licenses",
+        "license_id": "licenses",
+        "source_license": "licenses",
+        "bridge_artifact": "artifacts",
+        "artifact_id": "artifacts",
+        "artifact_path": "artifacts",
+    }
+    found: dict[str, set[str]] = {target: set() for target in set(aliases.values())}
+    stack: list[Any] = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"geometry", "coordinates", "_agent_safety", "provenance"}:
+                    continue
+                target = aliases.get(str(key))
+                if target and item not in (None, "", [], {}):
+                    values = item if isinstance(item, (list, tuple, set)) else [item]
+                    found[target].update(str(entry) for entry in values if entry not in (None, ""))
+                if isinstance(item, (dict, list, tuple)):
+                    stack.append(item)
+        elif isinstance(value, (list, tuple)):
+            stack.extend(value)
+    normalized = {key: sorted(values) for key, values in found.items() if values}
+    return {
+        "schema_version": "daedalmap.tool_provenance.v1",
+        "status": "reported" if normalized else "not_reported",
+        **normalized,
+    }
+
+
 def _tool_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
+    if isinstance(payload, dict) and not is_error and "provenance" not in payload:
+        payload = {**payload, "provenance": _provenance_summary(payload)}
     payload = _with_agent_safety(payload, surface="tool_result") if not is_error else payload
     if isinstance(payload, (dict, list)):
         payload_bytes = _json_size_bytes(payload) or 0
@@ -3004,7 +3074,11 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
         )
     result = {"request_id": request_id, **result}
     if not result.get("ok"):
-        result.setdefault("error", {"code": "not_found", "message": f"no geometry found for loc_id '{loc_id}'"})
+        result["error"] = _normalize_tool_error(
+            result.get("error"),
+            default_code="not_found",
+            default_message=f"no geometry found for loc_id '{loc_id}'",
+        )
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id,
@@ -3711,6 +3785,52 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         return _jsonrpc_error(request_id, -32601, f"Tool '{tool_name}' is not available on this MCP facade")
 
     helper_started_at = time.perf_counter()
+
+    if tool_name == "get_tool_help":
+        rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
+        if rate_limit_response:
+            return rate_limit_response
+        target_name = str(arguments.get("tool_name") or "").strip()
+        if not target_name:
+            return _jsonrpc_error(request_id, -32602, "tool_name is required")
+        target_definition = _tool_definition(target_name)
+        if target_definition is None or not _tool_allowed_for_facade(target_name, normalized_pack_id):
+            return _finish_data_helper(
+                request,
+                tool_name=tool_name,
+                started_at=helper_started_at,
+                payload={
+                    "ok": False,
+                    "tool_name": target_name,
+                    "error": {
+                        "code": "tool_not_found",
+                        "message": f"Tool '{target_name}' is not available on this MCP facade",
+                    },
+                },
+                rpc_request_id=request_id,
+                is_error=True,
+                error_code="tool_not_found",
+            )
+        effective_limits: dict[str, Any] = {}
+        profile = tool_profile(target_name)
+        if profile.get("free_item_limit") is not None or profile.get("inline_item_limit") is not None:
+            free_limit = _tool_batch_item_limit(target_name)
+            effective_limits["free_item_limit"] = free_limit
+            if tool_is_paid_bulk(target_name):
+                effective_limits["paid_item_limit"] = _tool_paid_batch_limit(target_name, free_limit)
+        payload = tool_help_payload(
+            target_name,
+            tool_definition=target_definition,
+            available_on_facades=_tool_facade_urls(target_name),
+            effective_limits=effective_limits,
+        )
+        return _finish_data_helper(
+            request,
+            tool_name=tool_name,
+            started_at=helper_started_at,
+            payload=payload,
+            rpc_request_id=request_id,
+        )
 
     if tool_name == "get_catalog":
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)

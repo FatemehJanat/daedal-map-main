@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from agent_surface_shared import render_app_llms_txt
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
+from mapmover.artifact_access import get_artifact_token_record
 from mapmover.caller_identity import (
     ANON_SESSION_COOKIE,
     ANON_SESSION_MAX_AGE_SECONDS,
@@ -412,6 +413,15 @@ async def static_no_cache(request: Request, call_next):
         **(getattr(request.state, "analytics_metadata", {}) or {}),
         **caller_identity.as_analytics_fields(),
     }
+    artifact_token_record = get_artifact_token_record(request)
+    if artifact_token_record is not None:
+        request.state.trusted_artifact_token_id = artifact_token_record.token_id
+        request.state.analytics_metadata = {
+            **request.state.analytics_metadata,
+            "access_lane": "trusted_artifact",
+            "artifact_token_id": artifact_token_record.token_id,
+            "rate_limit_bypassed": True,
+        }
 
     def finalize_identity(response):
         if new_anon_cookie:
@@ -429,7 +439,7 @@ async def static_no_cache(request: Request, call_next):
     rate_limit_config = _rate_limit_config_for_surface(surface)
     if rate_limit_config is None and not auth_user_id and surface == "shared_runtime":
         rate_limit_config = _shared_runtime_rate_limit_for_path(path)
-    if rate_limit_config is not None and request.method != "OPTIONS":
+    if rate_limit_config is not None and request.method != "OPTIONS" and artifact_token_record is None:
         limit, window_seconds = rate_limit_config
         limiter_keys = [caller_identity.binding]
         if caller_identity.is_anonymous and ip_hash:

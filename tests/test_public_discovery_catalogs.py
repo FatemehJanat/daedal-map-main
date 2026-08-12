@@ -74,6 +74,20 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(_rate_limit_config_for_surface("point_lookup"), (25, 60))
 
+    def test_artifact_token_bypasses_shared_mcp_surface_rate_limit(self) -> None:
+        token = "qa-surface-rate-token"
+        with (
+            mock.patch.dict(os.environ, {"ARTIFACT_ACCESS_TOKENS": f"qa={token}"}, clear=False),
+            mock.patch("app.rate_limiter.check", return_value=(False, 60)) as limiter_mock,
+        ):
+            response = self.client.post(
+                "/mcp/geography",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"jsonrpc": "2.0", "id": "qa-rate", "method": "tools/list", "params": {}},
+            )
+        self.assertEqual(response.status_code, 200)
+        limiter_mock.assert_not_called()
+
     def test_point_lookup_batch_endpoint_returns_one_bulk_payload(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):
             return [
