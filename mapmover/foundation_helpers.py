@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from .runtime.result_cap import (
     apply_runtime_result_cap,
     merge_cap_info,
 )
+from .runtime.published_artifacts import read_artifact_bytes, read_artifact_json
 
 logger = logging.getLogger("mapmover")
 
@@ -83,12 +83,6 @@ _COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str, str], Any] = {}
 _GLOBAL_COUNTRIES_CACHE = None
 _WORLD_FACTBOOK_STATIC_CACHE = None
 
-try:
-    import boto3
-except ImportError:
-    boto3 = None
-
-
 def _parquet_accessible(path: Path) -> bool:
     """Returns True if a parquet file exists locally or is accessible via S3/DuckDB."""
     if not is_cloud_mode():
@@ -98,38 +92,6 @@ def _parquet_accessible(path: Path) -> bool:
         return bool(cols)
     except Exception:
         return False
-
-
-def _object_store_client():
-    if boto3 is None:
-        return None
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "").strip() or None
-    region = (
-        os.environ.get("AWS_DEFAULT_REGION", "").strip()
-        or os.environ.get("AWS_REGION", "").strip()
-        or "auto"
-    )
-    return boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-
-
-def _object_store_bucket_and_key(relative_path: str) -> tuple[str, str] | None:
-    cloud_cfg = {}
-    try:
-        from .runtime_config import get_runtime_config
-        cloud_cfg = get_runtime_config().get("cloud", {}) or {}
-    except Exception:
-        cloud_cfg = {}
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    if not bucket:
-        return None
-    prefix = (
-        os.environ.get("S3_PUBLISHED_PREFIX", "").strip()
-        or os.environ.get("S3_PREFIX", "").strip()
-        or str(cloud_cfg.get("prefix", "")).strip()
-        or "published"
-    ).strip("/")
-    key = f"{prefix}/{relative_path}".strip("/")
-    return bucket, key
 
 
 def load_reference_json(relative_path: str | Path) -> Any:
@@ -325,9 +287,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     if not crosswalk_path.exists():
         if is_cloud_mode():
             try:
-                from .data_loading import _fetch_json_from_s3
-
-                data = _fetch_json_from_s3(f"countries/{iso3}/crosswalk.json")
+                data = read_artifact_json(f"countries/{iso3}/crosswalk.json", lane="published")
                 _COUNTRY_CROSSWALK_CACHE[cache_key] = data
                 return data
             except Exception as e:
@@ -369,9 +329,7 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
     if not asset_path.exists():
         if is_cloud_mode():
             try:
-                from .data_loading import _fetch_json_from_s3
-
-                data = _fetch_json_from_s3(f"countries/{iso3}/{filename}")
+                data = read_artifact_json(f"countries/{iso3}/{filename}", lane="published")
                 _COUNTRY_JSON_ASSET_CACHE[cache_key] = data
                 return data
             except Exception as e:
@@ -406,23 +364,13 @@ def load_global_countries_frame():
             return None
 
     if is_cloud_mode():
-        bucket_key = _object_store_bucket_and_key("geometry/global.csv")
-        client = _object_store_client()
-        if bucket_key and client is not None:
-            bucket, key = bucket_key
-            try:
-                response = client.get_object(Bucket=bucket, Key=key)
-                raw = response["Body"].read().decode("utf-8-sig")
-                _GLOBAL_COUNTRIES_CACHE = pd.read_csv(StringIO(raw))
-                logger.info(
-                    "Loaded %d countries from s3://%s/%s",
-                    len(_GLOBAL_COUNTRIES_CACHE),
-                    bucket,
-                    key,
-                )
-                return _GLOBAL_COUNTRIES_CACHE
-            except Exception as e:
-                logger.warning("Failed to load global.csv from object storage: %s", e)
+        try:
+            raw = read_artifact_bytes("geometry/global.csv", lane="published").decode("utf-8-sig")
+            _GLOBAL_COUNTRIES_CACHE = pd.read_csv(StringIO(raw))
+            logger.info("Loaded %d countries from published geometry/global.csv", len(_GLOBAL_COUNTRIES_CACHE))
+            return _GLOBAL_COUNTRIES_CACHE
+        except Exception as e:
+            logger.warning("Failed to load global.csv from object storage: %s", e)
 
     logger.warning(f"global.csv not found at {global_file}")
     return None

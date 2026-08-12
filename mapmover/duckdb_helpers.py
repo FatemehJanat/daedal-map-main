@@ -22,6 +22,7 @@ import pandas as pd
 
 from .runtime_config import get_runtime_config
 from .catalog_surface import get_catalog_surface_override
+from .runtime.published_artifacts import data_artifact_ref
 
 try:
     import duckdb
@@ -104,15 +105,10 @@ def path_to_uri(local_path: Path) -> str:
     if _allow_local_source_fallback() and local_path.exists():
         return str(local_path)
 
-    cloud_cfg = get_runtime_config().get("cloud", {})
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    prefix = (os.environ.get("S3_PREFIX", "").strip() or str(cloud_cfg.get("prefix", "")).strip()).strip("/")
-    prefix = f"{prefix}/" if prefix else ""
     data_root = _get_data_root()
 
     try:
-        rel = local_path.relative_to(data_root)
-        return f"s3://{bucket}/{prefix}{rel.as_posix()}"
+        return data_artifact_ref(local_path, data_root=data_root, lane="active").uri
     except ValueError:
         pass
 

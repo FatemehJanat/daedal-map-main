@@ -8,7 +8,6 @@ API, and MCP path the same name -> canonical ``loc_id`` lookup.
 from __future__ import annotations
 
 import json
-import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any
 
 from ..paths import GEOMETRY_DIR
 from ..runtime_config import get_runtime_config
+from .published_artifacts import read_artifact_json
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
@@ -30,22 +30,7 @@ def _is_cloud_mode() -> bool:
 
 
 def _fetch_geometry_catalog_from_s3() -> dict[str, Any] | None:
-    import boto3
-
-    cloud_cfg = get_runtime_config().get("cloud", {})
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    if not bucket:
-        return None
-    prefix = (
-        os.environ.get("S3_PREFIX", "").strip()
-        or str(cloud_cfg.get("prefix", "")).strip()
-    ).strip("/")
-    key = f"{prefix}/geometry/geometry_catalog.json" if prefix else "geometry/geometry_catalog.json"
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
-    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
-    client = boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-    obj = client.get_object(Bucket=bucket, Key=key)
-    payload = json.loads(obj["Body"].read())
+    payload = read_artifact_json("geometry/geometry_catalog.json", lane="published")
     return payload if isinstance(payload, dict) else None
 
 

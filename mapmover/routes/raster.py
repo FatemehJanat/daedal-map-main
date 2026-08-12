@@ -13,6 +13,7 @@ from mapmover.logging_analytics import logger
 from mapmover.paths import COUNTRIES_DIR, GEOMETRY_DIR, GLOBAL_DIR
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime_config import get_runtime_config
+from mapmover.runtime.published_artifacts import read_artifact_bytes
 
 router = APIRouter()
 
@@ -69,30 +70,13 @@ def _require_tifffile():
 
 def _cloud_object_bytes(relative_path: str, *, published: bool = False) -> bytes | None:
     """Fetch one raster object from the active or explicitly published R2 lane."""
-    import boto3
-
-    cloud_cfg = get_runtime_config().get("cloud", {})
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    prefix_value = (
-        os.environ.get("S3_PUBLISHED_PREFIX", "")
-        if published
-        else (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", "")))
-    )
-    prefix = (prefix_value or ("published" if published else "")).strip().strip("/")
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
-    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
-    key = f"{prefix}/{relative_path}" if prefix else relative_path
-
-    if not bucket:
-        logger.warning("Raster cloud read requested without S3 bucket configured")
-        return None
-
     try:
-        client = boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-        obj = client.get_object(Bucket=bucket, Key=key)
-        return obj["Body"].read()
+        return read_artifact_bytes(
+            relative_path,
+            lane="published" if published else "active",
+        )
     except Exception as exc:
-        logger.warning(f"Raster cloud read failed for {key}: {exc}")
+        logger.warning("Raster cloud read failed for %s: %s", relative_path, exc)
         return None
 
 

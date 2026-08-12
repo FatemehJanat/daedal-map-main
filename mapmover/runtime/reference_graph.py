@@ -17,6 +17,7 @@ from typing import Any
 from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, parquet_columns, path_to_uri
 from ..paths import DATA_ROOT
 from ..runtime_config import get_runtime_config
+from .published_artifacts import read_artifact_json, relative_data_path
 
 
 ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
@@ -40,7 +41,7 @@ def _connection():
 
 
 def _relative_data_path(path: Path) -> str:
-    return path.resolve().relative_to(DATA_ROOT.resolve()).as_posix()
+    return relative_data_path(path, data_root=DATA_ROOT)
 
 
 @lru_cache(maxsize=16)
@@ -53,24 +54,8 @@ def _load_graph_json(path_text: str, cloud_mode: bool) -> dict[str, Any] | None:
         except (OSError, json.JSONDecodeError):
             return None
 
-    import boto3
-
-    cloud_cfg = get_runtime_config().get("cloud", {}) or {}
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    if not bucket:
-        return None
-    prefix = (
-        os.environ.get("S3_PUBLISHED_PREFIX", "").strip()
-        or os.environ.get("S3_PREFIX", "").strip()
-        or str(cloud_cfg.get("prefix", "")).strip()
-        or "published"
-    ).strip("/")
-    key = f"{prefix}/{_relative_data_path(path)}" if prefix else _relative_data_path(path)
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
-    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
     try:
-        client = boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-        payload = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+        payload = read_artifact_json(_relative_data_path(path), lane="published")
         return payload if isinstance(payload, dict) else None
     except Exception:
         return None

@@ -200,16 +200,10 @@ def _allow_local_source_fallback() -> bool:
 
 def _fetch_json_from_s3(relative_path: str) -> dict:
     """Fetch a JSON file directly from S3 into memory. Cloud mode only."""
-    import boto3 as _boto3
-    cloud_cfg = get_runtime_config().get("cloud", {})
-    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
-    prefix = (os.environ.get("S3_PREFIX", "") or str(cloud_cfg.get("prefix", ""))).strip().strip("/")
-    key = f"{prefix}/{relative_path}" if prefix else relative_path
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
-    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
-    client = _boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
-    obj = client.get_object(Bucket=bucket, Key=key)
-    return json.loads(obj["Body"].read())
+    from .runtime.published_artifacts import read_artifact_json
+
+    payload = read_artifact_json(relative_path, lane="active")
+    return payload if isinstance(payload, dict) else {}
 
 
 def _agent_catalog_output_root() -> Path:
