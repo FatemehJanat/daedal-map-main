@@ -293,6 +293,37 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
         self.assertEqual(results[1]["matched"]["loc_id"], "USA-CA-037")
 
+    def test_bulk_resolution_reuses_complete_prewarmed_admin_frames(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame([{
+            "loc_id": "USA", "name": "United States", "admin_level": 0,
+            "geometry": '{"type":"Polygon","coordinates":[[[-125,24],[-125,50],[-66,50],[-66,24],[-125,24]]]}',
+        }])
+        admin1_df = pd.DataFrame([{
+            "loc_id": "USA-CA", "parent_id": "USA", "name": "California", "admin_level": 1,
+            "geometry": '{"type":"Polygon","coordinates":[[[-125,32],[-125,42],[-113,42],[-113,32],[-125,32]]]}',
+        }])
+        admin2_df = pd.DataFrame([{
+            "loc_id": "USA-CA-037", "parent_id": "USA-CA", "name": "Los Angeles", "admin_level": 2,
+            "geometry": '{"type":"Polygon","coordinates":[[[-119,33],[-119,35],[-117,35],[-117,33],[-119,33]]]}',
+        }])
+
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch("mapmover.geometry_handlers._cached_country_admin_frame", side_effect=lambda _iso3, level: admin1_df if level == 1 else admin2_df),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport") as viewport_mock,
+            patch("mapmover.geometry_handlers.get_country_supported_deep_admin_levels", return_value=[]),
+        ):
+            results = resolve_points_to_locations(
+                [{"lon": -118.25, "lat": 34.05}],
+                country_scope="USA",
+                target_admin_level=2,
+            )
+
+        viewport_mock.assert_not_called()
+        self.assertEqual(results[0]["matched"]["loc_id"], "USA-CA-037")
+
     def test_resolve_points_to_locations_skips_county_load_for_state_target(self):
         import pandas as pd
 

@@ -26,7 +26,7 @@ from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.api_query_commercial import get_trusted_artifact_token
-from mapmover.caller_identity import resolve_caller_identity
+from mapmover.caller_identity import request_caller_identity
 from mapmover.routes.disasters.related import (
     get_disaster_link_chain_for_exact_event,
     get_disaster_links_for_exact_event,
@@ -333,10 +333,9 @@ async def _commercial_access_decision(
         post_commercial_access,
     )
 
-    auth_user_id = getattr(request.state, "auth_user_id", None)
     ip_hash = hash_ip_for_analytics(get_client_ip(request))
-    auth_user = {"id": auth_user_id} if auth_user_id else None
-    caller_identity = resolve_caller_identity(request, auth_user=auth_user, ip_hash=ip_hash)
+    caller_identity = request_caller_identity(request, ip_hash=ip_hash)
+    auth_user_id = caller_identity.auth_user_id
     caller_binding = caller_identity.binding
     # A generic app session is not authority to spend through MCP. The future
     # OAuth/API-key middleware must set this only after audience + scope checks.
@@ -434,6 +433,20 @@ def _tool_paid_batch_limit(tool_name: str, free_limit: int) -> int:
 
 def _point_lookup_paid_batch_limit(free_limit: int) -> int:
     return _tool_paid_batch_limit("resolve_point", free_limit)
+
+
+def _point_bulk_shape_error(
+    *, point_count: int, country_scope: str | None, target_admin_level: int | None,
+    bulk_preset: str | None = None, threshold: int
+) -> dict[str, Any] | None:
+    """Require a predictable one-country/one-level plan for non-preview work."""
+    from mapmover.point_bulk_policy import point_bulk_shape_error
+
+    return point_bulk_shape_error(
+        point_count=point_count, country_scope=country_scope,
+        target_admin_level=target_admin_level, bulk_preset=bulk_preset,
+        threshold=threshold,
+    )
 
 
 def _point_lookup_quote_payload(
@@ -1605,30 +1618,41 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         limit = _tool_batch_item_limit("resolve_point")
         paid_bulk = _tool_paid_bulk_enforced("resolve_point")
-        # When the tool is not sold as paid bulk, the free limit IS the ceiling:
-        # a caller gets a plain cap error rather than a quote they cannot settle.
-        paid_limit = _point_lookup_paid_batch_limit(limit) if paid_bulk else limit
+        # The authored interactive ceiling also defines the verified-account
+        # allowance. Licensing decides whether anonymous overage may be sold;
+        # it must not silently collapse an account's included entitlement.
+        paid_limit = _point_lookup_paid_batch_limit(limit)
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
-        if len(points) > paid_limit and trusted_token is None:
-            _stamp_mcp_tool_analytics(
-                request,
-                event="mcp_tool",
-                tool_mode="bulk",
-                batch_id=batch_id,
-                decision="reject",
-                error_code="too_many_points",
-                point_count=len(points),
-                batch_limit=limit,
-                paid_batch_limit=paid_limit,
-            )
-            error_payload = _batch_error_payload(
-                request_id=request_id,
-                batch_id=batch_id,
-                code="too_many_points",
-                message=f"points must contain at most {paid_limit} items",
-                limit=paid_limit,
-                point_count=len(points),
-            )
+        caller_identity = request_caller_identity(
+            request, ip_hash=hash_ip_for_analytics(get_client_ip(request))
+        )
+        included_limit = paid_limit if caller_identity.can_use_included_bulk else limit
+        target_admin_level = _point_lookup_target_admin_level(payload)
+        country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
+        from mapmover.point_bulk_policy import apply_global_bulk_preset
+
+        bulk_preset, country_scope, target_admin_level, preset_error = apply_global_bulk_preset(
+            payload.get("bulk_preset"), country_scope=country_scope,
+            target_admin_level=target_admin_level,
+        )
+        if preset_error is not None:
+            error_payload = {"request_id": request_id, "batch_id": batch_id, "error": preset_error}
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        shape_error = _point_bulk_shape_error(
+            point_count=len(points), country_scope=country_scope,
+            target_admin_level=target_admin_level, bulk_preset=bulk_preset, threshold=limit,
+        )
+        if shape_error is not None:
+            error_payload = {
+                "request_id": request_id,
+                "batch_id": batch_id,
+                "point_count": len(points),
+                "limits": {
+                    "anonymous_free_batch_limit": limit,
+                    "account_included_batch_limit": paid_limit,
+                },
+                "error": shape_error,
+            }
             _log_mcp_tool_usage_event(
                 request,
                 request_id=request_id or batch_id or "",
@@ -1639,12 +1663,71 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 row_count=len(points),
                 query_granularity=f"bulk_{len(points)}",
                 response_payload=error_payload,
-                error_code="too_many_points",
+                error_code="bulk_scope_required",
+                metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id},
+            )
+            return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        if len(points) > paid_limit and trusted_token is None:
+            _stamp_mcp_tool_analytics(
+                request,
+                event="mcp_tool",
+                tool_mode="bulk",
+                batch_id=batch_id,
+                decision="reject",
+                error_code="paid_export_required",
+                point_count=len(points),
+                batch_limit=limit,
+                paid_batch_limit=paid_limit,
+            )
+            error_payload = _point_lookup_quote_payload(
+                request_id=request_id,
+                batch_id=batch_id,
+                point_count=len(points),
+                free_limit=limit,
+                paid_limit=paid_limit,
+            )
+            error_payload["error"] = {
+                "code": "paid_export_required",
+                "message": (
+                    f"Interactive point batches stop at {paid_limit} items. Use the paid "
+                    "bulk export/dashboard workflow for larger inputs."
+                ),
+            }
+            error_payload["delivery"] = {
+                "required_mode": "async_export",
+                "dashboard_path": "/account",
+                "recommended_tools": ["estimate_conversion_job", "create_conversion_job", "get_job_status"],
+            }
+            _log_mcp_tool_usage_event(
+                request,
+                request_id=request_id or batch_id or "",
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                decision="deny",
+                started_at=started_at,
+                row_count=len(points),
+                query_granularity=f"bulk_{len(points)}",
+                response_payload=error_payload,
+                error_code="paid_export_required",
                 metadata={"event": "point_lookup", "tool_mode": "bulk", "quantity": len(points), "batch_id": batch_id, "point_count": len(points), "batch_limit": limit, "paid_batch_limit": paid_limit},
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         settlement_id = None
-        if len(points) > limit and trusted_token is None:
+        if len(points) > included_limit and trusted_token is None:
+            if not paid_bulk:
+                error_payload = _batch_error_payload(
+                    request_id=request_id,
+                    batch_id=batch_id,
+                    code="paid_bulk_unavailable",
+                    message=(
+                        "This batch exceeds the anonymous preview, but paid hosted bulk "
+                        "access is not currently licensed. Sign in for included account bulk "
+                        "or reduce the request."
+                    ),
+                    limit=limit,
+                    point_count=len(points),
+                )
+                return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
             # Above the free allowance this is a real commercial decision, not
             # an advisory notice: ask the shared verifier, which prices from the
             # same compute+egress model as the dataset lane and settles through
@@ -1725,8 +1808,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         # resolve_point is the compact chain call; shapes are fetched by
         # get_geometry after the caller chooses which chain levels it needs.
         include_geometry = False
-        target_admin_level = _point_lookup_target_admin_level(payload)
-        country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         results: list[dict[str, Any]] = []
         resolved_count = 0
         unresolved_count = 0
@@ -1841,6 +1922,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "unresolved_count": unresolved_count,
             "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
             "country_scope": country_scope,
+            "bulk_preset": bulk_preset,
             "results": results,
         }
         _log_mcp_tool_usage_event(
@@ -1863,6 +1945,8 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 "unresolved_count": unresolved_count,
                 "batch_limit": limit,
                 "paid_batch_limit": paid_limit,
+                "included_batch_limit": included_limit,
+                "included_account_bulk": caller_identity.can_use_included_bulk,
                 "access_lane": _access_lane(trusted_token),
                 "artifact_token_id": trusted_token_id,
                 "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",

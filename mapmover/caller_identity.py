@@ -95,6 +95,21 @@ class CallerIdentity:
         return self.kind == KIND_ACCOUNT
 
     @property
+    def can_use_included_bulk(self) -> bool:
+        """Whether this verified account may use the included bulk allowance.
+
+        Included throughput is an entitlement, not a debit. Ordinary verified
+        account sessions may therefore use it without ``credits:spend``. A
+        purpose-issued API key must still carry ``geometry:bulk`` so possession
+        of a narrow read key cannot silently become bulk-compute authority.
+        """
+        if not self.auth_user_id or not self.is_verified:
+            return False
+        if self.kind == KIND_API_KEY:
+            return "geometry:bulk" in self.scopes
+        return self.kind == KIND_ACCOUNT
+
+    @property
     def is_anonymous(self) -> bool:
         return self.kind in {KIND_ANON_SESSION, KIND_IP, KIND_UNKNOWN}
 
@@ -248,4 +263,22 @@ def resolve_caller_identity(
         confidence=CONFIDENCE_WEAK,
         auth_user_id=None,
         ip_hash=None,
+    )
+
+
+def request_caller_identity(request: Request, *, ip_hash: str | None = None) -> CallerIdentity:
+    """Return middleware-verified caller identity without reinterpreting input.
+
+    The app middleware resolves authentication once and stores both the user
+    context and the resulting identity. Routes use this helper so account ids
+    never come from caller-controlled JSON fields.
+    """
+    existing = getattr(request.state, "caller_identity", None)
+    if isinstance(existing, CallerIdentity):
+        return existing
+    user = getattr(request.state, "authenticated_user_context", None)
+    return resolve_caller_identity(
+        request,
+        auth_user=user if isinstance(user, dict) else None,
+        ip_hash=ip_hash,
     )

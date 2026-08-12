@@ -144,7 +144,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "resolve_point",
             "title": "Resolve Point to loc_id",
-            "description": "Compact reverse geocoding. Converts one WGS84 point, or a bounded point list, into the complete latest-available administrative loc_id chain through the deepest served country tier. Each chain row is intentionally small: loc_id, name, admin level, and vintage when available. This tool does not return polygons, hierarchy analysis, references, overlap percentages, lifecycle, provenance, or release-conversion detail. Pass the returned stack loc_ids to loc_id_info for chain details; use get_geometry for shapes, compare_geographies for spatial/temporal relationships, and conversion tools for another reference system. Set target_admin_level only to stop at a shallower tier. A mixed-vintage point chain is context, not a strict parent assertion. The free preview executes small batches; larger valid batches return a payment-required quote.",
+            "description": "Compact reverse geocoding. Converts one WGS84 point, or a bounded point list, into the latest-available administrative loc_id chain. Each chain row is intentionally small: loc_id, name, admin level, and vintage when available. This tool does not return polygons, hierarchy analysis, references, overlap percentages, lifecycle, provenance, or release-conversion detail. Pass the returned stack loc_ids to loc_id_info for details; use get_geometry for shapes and compare_geographies for relationships. Small exploratory calls may omit scope and resolve through the deepest served tier. Batches above the 25-point preview must declare exactly one country_scope and one target_admin_level; split multi-country input into one call per country. Cross-country admin-0/admin-1 batches may instead use bulk_preset. Anonymous callers pay above 25, while verified accounts receive included bulk throughput through 10,000 points.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -164,14 +164,15 @@ def build_tool_definitions() -> list[dict]:
                             "required": ["lat", "lon"],
                             "additionalProperties": False,
                         },
-                        "description": "Points to resolve. Hosted default free preview is 25 points; larger valid batches return a payment-required quote instead of executing for free.",
+                        "description": "Points to resolve. Up to 25 may be exploratory. Above 25, country_scope and target_admin_level are required. Anonymous callers receive a payment challenge; verified accounts have included throughput through 10,000 points.",
                     },
                     "target_admin_level": {
                         "anyOf": [{"type": "string"}, {"type": "integer"}],
-                        "description": "Optional stopping level such as admin_0 through admin_5. Omit for the normal complete chain through the deepest currently served tier.",
+                        "description": "Stopping level such as admin_0 through admin_5. Optional for up to 25 exploratory points and required for larger batches.",
                     },
-                    "country_scope": {"type": "string", "description": "Optional ISO3/admin_0 loc_id scope such as USA or CAN. Use only when every point in the request should be resolved inside that one country; this lets the runtime skip global country detection and use one country geometry bank."},
+                    "country_scope": {"type": "string", "description": "ISO3/admin_0 loc_id scope such as USA or CAN. Optional for up to 25 exploratory points and required for larger batches; every point must belong to this one country."},
                     "country_hint": {"type": "string", "description": "Alias for country_scope for clients that already use hint terminology."},
+                    "bulk_preset": {"type": "string", "enum": ["global_admin_0", "global_admin_1"], "description": "Cross-country fast path that fixes the result level to admin_0 or admin_1. Use instead of country_scope; target_admin_level may be omitted."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id echoed in the result."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },

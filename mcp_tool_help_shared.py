@@ -51,8 +51,8 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
     ),
     "resolve_point": _g(
         ["You have WGS84 latitude/longitude and need the latest available administrative loc_id chain."],
-        ["Resolving names or outside codes", "Returning polygons", "Proving strict parentage across mixed vintages"],
-        {"lat": 49.2827, "lon": -123.1207, "country_scope": "CAN"},
+        ["Resolving names or outside codes", "Returning polygons", "Sending multiple countries above admin_1 in one bulk call", "Omitting both a bounded country/level plan and bulk_preset above 25 points"],
+        {"points": [{"id": "row-1", "lat": 49.2827, "lon": -123.1207}], "country_scope": "CAN", "target_admin_level": "admin_2"},
         ["deepest_resolved_loc_id", "stack", "resolution_mode", "available_deeper_admin_levels"],
         ["loc_id_info", "check_geometry", "get_geometry", "compare_geographies"]
     ),
@@ -256,6 +256,18 @@ def tool_help_payload(
             "payment_challenge",
         ],
     }
+    if name == "resolve_point":
+        access["caller_tiers"] = {
+            "anonymous": {"included_items": limits.get("free_item_limit"), "above_limit": "payment_required"},
+            "verified_account": {"included_items": limits.get("paid_item_limit"), "above_limit": "paid_export_or_dashboard"},
+        }
+        access["bulk_shape"] = {
+            "threshold": limits.get("free_item_limit"),
+            "required_above_threshold": ["country_scope", "target_admin_level"],
+            "multi_country_rule": "split_into_one_call_per_country",
+            "cross_country_presets": ["global_admin_0", "global_admin_1"],
+            "preset_field": "bulk_preset",
+        }
     return {
         "ok": True,
         "tool_name": name,

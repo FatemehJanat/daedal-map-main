@@ -154,6 +154,28 @@ def _cache_country_frame(cache_key, df) -> None:
         total -= _frame_bytes(evicted)
 
 
+def _cached_country_admin_frame(iso3: str, admin_level: int):
+    """Return an already-warmed complete admin-level frame when available.
+
+    Bulk point resolution previously bypassed the DataFrame cache by always
+    issuing a viewport query.  That meant the startup-warmed USA county bank
+    could help map/NWS calls but not MCP or REST reverse geocoding.  Only known
+    complete-frame keys are eligible here; viewport fragments are never stored
+    under these keys and therefore cannot poison later requests.
+    """
+    normalized = str(iso3 or "").strip().upper()
+    keys = [(normalized, int(admin_level))]
+    if normalized == "USA" and int(admin_level) == 2:
+        keys.insert(0, ("exact_county", "USA"))
+    with _country_parquet_cache_lock:
+        for key in keys:
+            cached = _country_parquet_cache.get(key)
+            if cached is not None:
+                _country_parquet_cache.move_to_end(key)
+                return cached
+    return None
+
+
 def _geometry_read_mode() -> str:
     return geometry_read_mode()
 
@@ -1353,14 +1375,18 @@ def resolve_points_to_locations(
         admin2_df = pd.DataFrame()
         if target_admin_level is None or target_admin_level >= 1:
             stage_started = time.perf_counter()
-            admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
+            admin1_df = _cached_country_admin_frame(iso3, 1)
+            if admin1_df is None:
+                admin1_df = load_country_parquet_viewport(iso3, 1, bbox)
             if admin1_df is None or admin1_df.empty:
                 admin1_df = load_country_parquet(iso3, admin_level=1)
             _add_timing_ms(timing_ms, f"{iso3}_admin1_load_ms", stage_started)
 
         if target_admin_level is None or target_admin_level >= 2:
             stage_started = time.perf_counter()
-            admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
+            admin2_df = _cached_country_admin_frame(iso3, 2)
+            if admin2_df is None:
+                admin2_df = load_country_parquet_viewport(iso3, 2, bbox)
             if admin2_df is None or admin2_df.empty:
                 admin2_df = load_country_parquet(iso3, admin_level=2)
             _add_timing_ms(timing_ms, f"{iso3}_admin2_load_ms", stage_started)

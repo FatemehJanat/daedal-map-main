@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from mapmover import logger
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.api_query_commercial import get_trusted_artifact_token
+from mapmover.caller_identity import request_caller_identity
 from mapmover.routes.mcp import _access_lane
 from mapmover.security import get_client_ip
 from mapmover.routes.system import _require_local_or_admin
@@ -51,6 +52,16 @@ def _point_lookup_paid_batch_limit() -> int:
         return max(_point_lookup_batch_limit(), int(str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "10000")).strip() or "10000"))
     except ValueError:
         return 10000
+
+
+def _point_bulk_shape_error(*, point_count: int, country_scope: str | None, target_admin_level: int | None, bulk_preset: str | None = None, threshold: int) -> dict | None:
+    from mapmover.point_bulk_policy import point_bulk_shape_error
+
+    return point_bulk_shape_error(
+        point_count=point_count, country_scope=country_scope,
+        target_admin_level=target_admin_level, bulk_preset=bulk_preset,
+        threshold=threshold,
+    )
 
 
 def _onboarding_context(body: dict) -> dict:
@@ -330,17 +341,56 @@ async def resolve_points_json_endpoint(req: Request):
     limit = _point_lookup_batch_limit()
     paid_limit = _point_lookup_paid_batch_limit()
     trusted_token, trusted_token_id = _trusted_artifact_access(req)
-    if len(points) > paid_limit and trusted_token is None:
+    caller_identity = request_caller_identity(req, ip_hash=hash_ip_for_analytics(get_client_ip(req)))
+    included_limit = paid_limit if caller_identity.can_use_included_bulk else limit
+    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
+    country_scope = str(body.get("country_scope") or body.get("country_hint") or "").strip().upper() or None
+    from mapmover.point_bulk_policy import apply_global_bulk_preset
+
+    bulk_preset, country_scope, target_admin_level, preset_error = apply_global_bulk_preset(
+        body.get("bulk_preset"), country_scope=country_scope,
+        target_admin_level=target_admin_level,
+    )
+    if preset_error is not None:
+        return JSONResponse({"error": preset_error}, status_code=400)
+    shape_error = _point_bulk_shape_error(
+        point_count=len(points), country_scope=country_scope,
+        target_admin_level=target_admin_level, bulk_preset=bulk_preset, threshold=limit,
+    )
+    if shape_error is not None:
         return JSONResponse(
             {
-                "error": f"points must contain at most {paid_limit} items",
-                "free_limit": limit,
-                "paid_limit": paid_limit,
-                "retry_hint": "Split this request into smaller paid batches or use an async conversion/export job.",
+                "error": shape_error,
+                "point_count": len(points),
+                "limits": {
+                    "anonymous_free_batch_limit": limit,
+                    "account_included_batch_limit": paid_limit,
+                },
             },
-            status_code=413,
+            status_code=400,
         )
-    if len(points) > limit and trusted_token is None:
+    if len(points) > paid_limit and trusted_token is None:
+        payload = _point_lookup_quote_payload(
+            request_id=str(body.get("request_id") or body.get("batch_id") or ""),
+            batch_id=str(body.get("batch_id") or "").strip() or None,
+            point_count=len(points),
+            free_limit=limit,
+            paid_limit=paid_limit,
+        )
+        payload["error"] = {
+            "code": "paid_export_required",
+            "message": (
+                f"Interactive point batches stop at {paid_limit} items. Use the paid "
+                "bulk export/dashboard workflow for larger inputs."
+            ),
+        }
+        payload["delivery"] = {
+            "required_mode": "async_export",
+            "dashboard_path": "/account",
+            "recommended_tools": ["estimate_conversion_job", "create_conversion_job", "get_job_status"],
+        }
+        return JSONResponse(payload, status_code=402)
+    if len(points) > included_limit and trusted_token is None:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
         batch_id = str(body.get("batch_id") or "").strip()[:120] or None
         quote_payload = _point_lookup_quote_payload(
@@ -371,7 +421,7 @@ async def resolve_points_json_endpoint(req: Request):
                 source_id="resolve_points",
                 decision="challenge",
                 payment_rail="commercial_access",
-                auth_user_id=None,
+                auth_user_id=caller_identity.auth_user_id,
                 ip_hash=hash_ip_for_analytics(get_client_ip(req)),
                 user_agent=req.headers.get("user-agent", "").strip() or None,
                 execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
@@ -386,8 +436,6 @@ async def resolve_points_json_endpoint(req: Request):
         return JSONResponse(quote_payload, status_code=402)
 
     include_geometry = False
-    target_admin_level = _point_lookup_target_admin_level(body.get("target_admin_level", body.get("max_admin_level")))
-    country_scope = str(body.get("country_scope") or body.get("country_hint") or "").strip().upper() or None
     source = str(body.get("source") or "").strip()[:80] or "unknown"
     batch_id = str(body.get("batch_id") or "").strip()[:120] or None
     valid_points = []
@@ -447,6 +495,7 @@ async def resolve_points_json_endpoint(req: Request):
         "unresolved_count": unresolved_count,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "country_scope": country_scope,
+        "bulk_preset": bulk_preset,
         "results": results,
     }
 
@@ -462,6 +511,8 @@ async def resolve_points_json_endpoint(req: Request):
         "unresolved_count": unresolved_count,
         "limit": limit,
         "paid_batch_limit": paid_limit,
+        "included_batch_limit": included_limit,
+        "included_account_bulk": caller_identity.can_use_included_bulk,
         "access_lane": _access_lane(trusted_token),
         "artifact_token_id": trusted_token_id,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
@@ -479,7 +530,7 @@ async def resolve_points_json_endpoint(req: Request):
             decision="allow",
             payment_rail=_access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
-            auth_user_id=None,
+            auth_user_id=caller_identity.auth_user_id,
             ip_hash=hash_ip_for_analytics(get_client_ip(req)),
             user_agent=req.headers.get("user-agent", "").strip() or None,
             execution_latency_ms=int((time.perf_counter() - started_at) * 1000),

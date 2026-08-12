@@ -180,7 +180,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
             response = self.client.post(
                 "/api/v1/resolve/points",
-                json={"source": "try_dataset", "batch_id": "too-many", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+                json={"source": "try_dataset", "batch_id": "too-many", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
             )
 
         self.assertEqual(response.status_code, 402)
@@ -195,6 +195,65 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(analytics["error_code"], "payment_required")
         self.assertEqual(analytics["row_count"], 26)
         self.assertEqual(analytics["metadata"]["surface"], "test_data")
+
+    def test_point_lookup_verified_account_gets_included_bulk(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": "USA-CA-037", "admin_level": 2}} for _ in points]
+
+        with (
+            mock.patch("app.get_authenticated_user_async", return_value={"id": "user-1"}),
+            mock.patch("mapmover.routes.geometry.resolve_points_to_locations", side_effect=fake_resolve),
+            mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock,
+        ):
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                headers={"Authorization": "Bearer account-session-test"},
+                json={"source": "try_dataset", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(analytics_mock.call_args.kwargs["metadata"]["included_account_bulk"])
+        self.assertEqual(analytics_mock.call_args.kwargs["auth_user_id"], "user-1")
+
+    def test_mcp_verified_account_gets_same_included_bulk(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": "USA-CA-037", "admin_level": 2, "iso3": "USA"}, "stack": [{"loc_id": "USA"}, {"loc_id": "USA-CA-037"}]} for _ in points]
+
+        with (
+            mock.patch("app.get_authenticated_user_async", return_value={"id": "user-mcp"}),
+            mock.patch("mapmover.routes.mcp.rate_limiter.check", return_value=(True, 0)),
+            mock.patch("mapmover.routes.mcp._commercial_access_decision") as verifier_mock,
+            mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            response = self.client.post(
+                "/mcp/geography",
+                headers={"Authorization": "Bearer account-mcp-test"},
+                json={"jsonrpc": "2.0", "id": "account-bulk", "method": "tools/call", "params": {"name": "resolve_point", "arguments": {"country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]}}},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["result"]["structuredContent"]
+        self.assertEqual(payload["resolved_count"], 26)
+        verifier_mock.assert_not_called()
+
+    def test_rest_global_admin_0_preset_sets_bounded_resolver_plan(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": "USA", "admin_level": 0}} for _ in points]
+
+        with (
+            mock.patch("app.get_authenticated_user_async", return_value={"id": "user-global"}),
+            mock.patch("mapmover.routes.geometry.resolve_points_to_locations", side_effect=fake_resolve) as resolver_mock,
+            mock.patch("mapmover.routes.geometry.log_api_query_event"),
+        ):
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                headers={"Authorization": "Bearer account-global-test"},
+                json={"source": "try_dataset", "bulk_preset": "global_admin_0", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["bulk_preset"], "global_admin_0")
+        self.assertEqual(resolver_mock.call_args.kwargs["target_admin_level"], 0)
+        self.assertIsNone(resolver_mock.call_args.kwargs["country_scope"])
 
     def test_point_lookup_batch_endpoint_trusted_token_executes_over_free_limit(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):
@@ -214,7 +273,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                     response = self.client.post(
                         "/api/v1/resolve/points",
                         headers={"Authorization": "Bearer tok_test_bypass"},
-                        json={"source": "try_dataset", "batch_id": "trusted-50", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
+                        json={"source": "try_dataset", "batch_id": "trusted-50", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
                     )
 
         self.assertEqual(response.status_code, 200)

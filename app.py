@@ -402,6 +402,7 @@ async def static_no_cache(request: Request, call_next):
 
     auth_user = await get_authenticated_user_async(request)
     auth_user_id = str((auth_user or {}).get("id") or "").strip() or None
+    request.state.auth_user_id = auth_user_id
     client_ip = get_client_ip(request)
     ip_hash = hash_ip_for_analytics(client_ip)
     new_anon_cookie = None

@@ -100,6 +100,24 @@ class IdentityResolutionTests(unittest.TestCase):
         )
         self.assertFalse(identity.can_spend_credits)
 
+    def test_verified_account_has_included_bulk_without_spend_debit(self) -> None:
+        identity = resolve_caller_identity(_request(), auth_user={"id": "user-1"}, ip_hash="iphash")
+        self.assertTrue(identity.can_use_included_bulk)
+
+    def test_api_key_needs_geometry_bulk_scope_for_included_bulk(self) -> None:
+        without_scope = resolve_caller_identity(
+            _request(state={"api_key_account_id": "owner-9", "api_key_id": "key-3"}),
+            auth_user=None,
+            ip_hash="iphash",
+        )
+        with_scope = resolve_caller_identity(
+            _request(state={"api_key_account_id": "owner-9", "api_key_id": "key-3", "api_key_scopes": ["geometry:bulk"]}),
+            auth_user=None,
+            ip_hash="iphash",
+        )
+        self.assertFalse(without_scope.can_use_included_bulk)
+        self.assertTrue(with_scope.can_use_included_bulk)
+
     def test_signed_anon_session_beats_ip(self) -> None:
         with mock.patch.dict("os.environ", {"ANON_SESSION_SECRET": "s3cret"}, clear=False):
             session = issue_anon_session_id()
