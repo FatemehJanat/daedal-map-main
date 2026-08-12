@@ -89,6 +89,12 @@ GEOMETRY_INDEX_COLUMNS = [
 
 GEOMETRY_METADATA_COLUMNS = list(GEOMETRY_INDEX_COLUMNS)
 GEOMETRY_METADATA_COLUMNS.extend([
+    "children_count",
+    "children_by_level",
+    "descendants_count",
+    "descendants_by_level",
+    "land_area",
+    "water_area",
     "valid_from",
     "valid_to",
     "valid_from_date",
@@ -1935,9 +1941,9 @@ def get_location_info(loc_id: str):
     if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"} or (
         inferred_admin_level is not None and inferred_admin_level >= 3
     ):
-        feature = _get_selection_feature_for_loc_id(loc_id)
-        if feature:
-            return _build_feature_based_location_info(loc_id, feature)
+        metadata = _get_selection_metadata_for_loc_id(loc_id)
+        if metadata:
+            return _build_metadata_based_location_info(loc_id, metadata)
 
     result = {
         "loc_id": loc_id,
@@ -2013,9 +2019,9 @@ def get_location_info(loc_id: str):
     # For sub-national, check country parquet
     df = load_country_parquet(iso3)
     if df is None:
-        feature = _get_selection_feature_for_loc_id(loc_id)
-        if feature:
-            return _build_feature_based_location_info(loc_id, feature)
+        metadata = _get_selection_metadata_for_loc_id(loc_id)
+        if metadata:
+            return _build_metadata_based_location_info(loc_id, metadata)
         graph_info = _reference_graph_location_info(loc_id)
         if graph_info:
             return graph_info
@@ -2023,9 +2029,9 @@ def get_location_info(loc_id: str):
 
     location = df[df["loc_id"] == loc_id]
     if len(location) == 0:
-        feature = _get_selection_feature_for_loc_id(loc_id)
-        if feature:
-            return _build_feature_based_location_info(loc_id, feature)
+        metadata = _get_selection_metadata_for_loc_id(loc_id)
+        if metadata:
+            return _build_metadata_based_location_info(loc_id, metadata)
         graph_info = _reference_graph_location_info(loc_id)
         if graph_info:
             return graph_info
@@ -2160,6 +2166,60 @@ def _get_selection_feature_for_loc_id(loc_id: str) -> dict | None:
     payload = get_selection_geometries([loc_id])
     features = (payload or {}).get("features") or []
     return features[0] if features else None
+
+
+def _get_selection_metadata_for_loc_id(loc_id: str) -> dict | None:
+    rows = get_selection_geometry_metadata([loc_id])
+    return rows[0] if rows else None
+
+
+def _build_metadata_based_location_info(loc_id: str, props: dict) -> dict:
+    """Build loc_id_info without reading or materializing polygon payloads."""
+    family = _geometry_family_for_loc_id(loc_id)
+    ancestor_ids = []
+    current_id = str(props.get("parent_id") or "").strip()
+    while current_id:
+        ancestor_ids.append(current_id)
+        if "-" not in current_id:
+            break
+        current_id = current_id.rsplit("-", 1)[0]
+    ancestor_rows = get_selection_geometry_metadata(ancestor_ids) if ancestor_ids else []
+    ancestor_names = {
+        str(item.get("loc_id") or ""): item.get("name")
+        for item in ancestor_rows
+    }
+    for parent_id in ancestor_ids:
+        if ancestor_names.get(parent_id):
+            continue
+        parent_info = get_location_info(parent_id)
+        if isinstance(parent_info, dict) and parent_info.get("name"):
+            ancestor_names[parent_id] = parent_info["name"]
+    memberships = [
+        f"Part of: {', '.join(str(ancestor_names.get(parent_id) or parent_id) for parent_id in ancestor_ids)}"
+    ] if ancestor_ids else []
+    result = {
+        "loc_id": props.get("loc_id") or loc_id,
+        "name": props.get("name"),
+        "admin_level": props.get("admin_level"),
+        "parent_id": props.get("parent_id"),
+        "family": family,
+        "children_count": props.get("children_count") or 0,
+        "children_by_level": props.get("children_by_level", "{}"),
+        "descendants_count": props.get("descendants_count") or 0,
+        "descendants_by_level": props.get("descendants_by_level", "{}"),
+        "has_children": bool(props.get("children_count")),
+        "memberships": memberships,
+        "dataset_count": 0,
+        "dataset_counts": {},
+        "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
+        "bbox": _bbox_from_feature_props(props),
+        "has_polygon": bool(props.get("has_polygon")),
+        "iso3": props.get("iso_a3"),
+        "land_area": props.get("land_area"),
+        "water_area": props.get("water_area"),
+        "geometry_source": props.get("geometry_source"),
+    }
+    return _append_location_version_metadata(result, props)
 
 
 def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
@@ -3075,6 +3135,7 @@ def _geometry_metadata_value(row, *keys):
 
 def _geometry_metadata_row(row) -> dict:
     """Return loc_id geometry metadata without polygon payload."""
+    declared_has_polygon = _geometry_metadata_value(row, "has_polygon", "has_shape")
     return {
         "loc_id": row.get("local_loc_id") or row.get("loc_id"),
         "source_loc_id": row.get("source_loc_id"),
@@ -3087,7 +3148,11 @@ def _geometry_metadata_row(row) -> dict:
         "bbox_min_lat": row.get("bbox_min_lat"),
         "bbox_max_lon": row.get("bbox_max_lon"),
         "bbox_max_lat": row.get("bbox_max_lat"),
-        "has_polygon": row.get("has_polygon"),
+        # Reaching this function means an exact row was returned by a geometry
+        # bank. Older banks may omit the availability boolean even though the
+        # shape column is present; do not force a polygon read just to rediscover
+        # that attachment.
+        "has_polygon": bool(declared_has_polygon) if declared_has_polygon is not None else True,
         "iso_a3": row.get("iso_a3"),
         "valid_from": _geometry_metadata_value(row, "valid_from", "valid_from_date"),
         "valid_to": _geometry_metadata_value(row, "valid_to", "valid_to_date"),
@@ -3098,6 +3163,12 @@ def _geometry_metadata_row(row) -> dict:
         "geometry_source": row.get("geometry_source"),
         "bank_id": row.get("bank_id"),
         "release_id": _geometry_metadata_value(row, "geography_release_id", "release_id"),
+        "children_count": row.get("children_count"),
+        "children_by_level": row.get("children_by_level"),
+        "descendants_count": row.get("descendants_count"),
+        "descendants_by_level": row.get("descendants_by_level"),
+        "land_area": row.get("land_area"),
+        "water_area": row.get("water_area"),
     }
 
 

@@ -90,7 +90,7 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(result["deepest_resolved_admin_level"], "admin_6")
         self.assertEqual(
             result["deepest_resolved_loc_id"],
-            "AUS-SA-406-40602-406021141-40602114107-40215189900",
+            "AUS-SA-406-02-1141-07-0215189900",
         )
         self.assertEqual(result["matches"]["admin_2"]["loc_id"], "AUS-SA-406")
         self.assertEqual(result["matches"]["admin_6"]["name"], "40215189900")
