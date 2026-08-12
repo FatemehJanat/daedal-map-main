@@ -37,6 +37,17 @@ The four public catalog families are:
 | Feeds | `published/ops_feed_registry.json` | Public/runtime live feeds and Ops overlays |
 | Agent | `published/agent_catalog/api_catalog.json` | Agent/API/MCP-ready packs and tool families |
 
+The complete public data and geometry catalogs also have stable anonymous JSON
+URLs for direct human, script, and agent reads:
+
+- `https://downloads.daedalmap.com/downloadable/catalog.json`
+- `https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json`
+
+Use these raw files when the complete inventory is wanted in one request. Use
+the API catalog endpoints or MCP `get_catalog` / `read_geometry_catalog` when a
+smaller guided discovery response is preferable. `wip_catalog.json` remains an
+internal inventory and is never mirrored to the downloadable lane.
+
 ## API/MCP Versus Downloads
 
 API and MCP surfaces are for small, hosted operations: probing availability,

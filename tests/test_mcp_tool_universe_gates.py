@@ -113,7 +113,17 @@ class DataHelperTelemetryTests(unittest.TestCase):
 
     def test_get_catalog_writes_a_usage_row(self) -> None:
         with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
-            _tool_call_envelope(self.client, "get_catalog")
+            envelope = _tool_call_envelope(self.client, "get_catalog")
+
+        result = envelope["result"]["structuredContent"]
+        self.assertEqual(
+            result["public_catalogs"]["data"]["download_url"],
+            "https://downloads.daedalmap.com/downloadable/catalog.json",
+        )
+        self.assertEqual(
+            result["public_catalogs"]["geometry"]["download_url"],
+            "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
+        )
 
         analytics_mock.assert_called_once()
         analytics = analytics_mock.call_args.kwargs

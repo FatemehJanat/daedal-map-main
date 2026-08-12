@@ -1294,6 +1294,7 @@ def _build_historical_catalog_payload() -> dict:
         "catalog_family": "historical_packs",
         "catalog_path": "catalog.json",
         "endpoint": "/api/v1/historical/catalog",
+        "download_url": "https://downloads.daedalmap.com/downloadable/catalog.json",
         "pack_count": len(packs),
         "packs": packs,
     }

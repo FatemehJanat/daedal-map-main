@@ -219,6 +219,16 @@ def _augment_catalog_with_tool_families(payload: Any, pack_id: str | None) -> An
     augmented = dict(payload)
     augmented["tool_families"] = entries
     augmented["tool_family_count"] = len(entries)
+    augmented["public_catalogs"] = {
+        "data": {
+            "download_url": "https://downloads.daedalmap.com/downloadable/catalog.json",
+            "summary_endpoint": "https://app.daedalmap.com/api/v1/historical/catalog",
+        },
+        "geometry": {
+            "download_url": "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
+            "summary_endpoint": "https://app.daedalmap.com/api/v1/geometry/catalog",
+        },
+    }
     return augmented
 
 

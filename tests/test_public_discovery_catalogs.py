@@ -42,6 +42,10 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(historical.status_code, 200)
         self.assertEqual(historical.json()["catalog_family"], "historical_packs")
         self.assertEqual(historical.json()["pack_count"], 1)
+        self.assertEqual(
+            historical.json()["download_url"],
+            "https://downloads.daedalmap.com/downloadable/catalog.json",
+        )
 
         self.assertEqual(geometry.status_code, 200)
         self.assertEqual(geometry.json()["catalog_family"], "geometry")
