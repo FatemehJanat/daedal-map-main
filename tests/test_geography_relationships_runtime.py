@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from shapely.geometry import Polygon, mapping
 
@@ -106,6 +107,27 @@ class GeographyRelationshipRuntimeTests(unittest.TestCase):
             as_of="2025",
             geometry_fetcher=lambda loc_id, **_kwargs: polygons[loc_id],
         )
+
+        self.assertEqual(result["temporal_relation"], "one_or_more_not_valid")
+        self.assertFalse(result["left"]["valid_at_requested_time"])
+        self.assertTrue(result["right"]["valid_at_requested_time"])
+        self.assertEqual(result["spatial_relation"], "not_evaluated")
+
+    def test_reference_graph_validity_controls_temporal_comparison(self) -> None:
+        graph_rows = {
+            "OLD": {"loc_id": "OLD", "family": "test", "valid_from": "1996-01-01", "valid_to": "2004-01-01"},
+            "NEW": {"loc_id": "NEW", "family": "test", "valid_from": "2023-01-01", "valid_to": ""},
+        }
+        with mock.patch(
+            "mapmover.runtime.reference_graph.identity_at",
+            side_effect=lambda loc_id, _when: graph_rows.get(loc_id),
+        ):
+            result = compare_geographies(
+                "OLD",
+                "NEW",
+                as_of="2025",
+                geometry_fetcher=lambda loc_id, **_kwargs: {"ok": False, "loc_id": loc_id, "has_shape": False},
+            )
 
         self.assertEqual(result["temporal_relation"], "one_or_more_not_valid")
         self.assertFalse(result["left"]["valid_at_requested_time"])

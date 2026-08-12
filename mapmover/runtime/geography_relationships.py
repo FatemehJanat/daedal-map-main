@@ -231,6 +231,24 @@ def _identity_state(loc_id: str, when: date | None) -> dict[str, Any]:
     if historical:
         return historical
     canonical = canonicalize_loc_id(loc_id)
+    try:
+        from .reference_graph import identity_at
+
+        graph_identity = identity_at(canonical, when)
+    except Exception:
+        graph_identity = None
+    if graph_identity:
+        valid_at = _valid_on(graph_identity, when)
+        return {
+            **graph_identity,
+            "loc_id": canonical,
+            "as_of": when.isoformat() if when else None,
+            "valid_at_requested_time": valid_at,
+            "lifecycle_status": "reference_graph_versioned",
+            "temporal_confidence": "authority_release_window",
+            "direct_successors": [],
+            "present_day_descendants": [],
+        }
     return {
         "loc_id": canonical,
         "family": classify_loc_id_family(canonical),

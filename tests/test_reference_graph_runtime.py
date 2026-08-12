@@ -17,6 +17,7 @@ from mapmover.runtime.reference_graph import (
     relationships_for_loc_id,
     where_is_geography_data,
 )
+from mapmover.runtime import reference_graph
 
 
 class ReferenceGraphRuntimeTests(unittest.TestCase):
@@ -104,6 +105,13 @@ class ReferenceGraphRuntimeTests(unittest.TestCase):
         self.assertEqual(info["name"], "Test Area")
         self.assertEqual(info["family"], "test_sidechain")
         self.assertEqual(info["release_id"], "test_candidate")
+
+    def test_graph_sql_path_uses_cloud_path_translation(self) -> None:
+        with mock.patch.object(reference_graph, "path_to_uri", return_value="s3://bucket/published/graph.parquet"):
+            self.assertEqual(
+                reference_graph._sql_path(self.root / "identities.parquet"),
+                "s3://bucket/published/graph.parquet",
+            )
 
 
 if __name__ == "__main__":

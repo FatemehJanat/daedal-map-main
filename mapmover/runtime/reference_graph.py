@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import duckdb
-
+from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, parquet_columns, path_to_uri
 from ..paths import DATA_ROOT
+from ..runtime_config import get_runtime_config
 
 
 ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
@@ -26,7 +28,75 @@ REQUIRED_FILES = (
 
 
 def _sql_path(path: Path) -> str:
-    return path.resolve().as_posix().replace("'", "''")
+    return path_to_uri(path).replace("'", "''")
+
+
+def _connection():
+    connection = build_guarded_connection()
+    if connection is None:
+        raise RuntimeError("DuckDB is required for reference-graph queries")
+    return connection
+
+
+def _relative_data_path(path: Path) -> str:
+    return path.resolve().relative_to(DATA_ROOT.resolve()).as_posix()
+
+
+@lru_cache(maxsize=16)
+def _load_graph_json(path_text: str, cloud_mode: bool) -> dict[str, Any] | None:
+    path = Path(path_text)
+    if not cloud_mode:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    import boto3
+
+    cloud_cfg = get_runtime_config().get("cloud", {}) or {}
+    bucket = os.environ.get("S3_BUCKET", "").strip() or str(cloud_cfg.get("bucket", "")).strip()
+    if not bucket:
+        return None
+    prefix = (
+        os.environ.get("S3_PUBLISHED_PREFIX", "").strip()
+        or os.environ.get("S3_PREFIX", "").strip()
+        or str(cloud_cfg.get("prefix", "")).strip()
+        or "published"
+    ).strip("/")
+    key = f"{prefix}/{_relative_data_path(path)}" if prefix else _relative_data_path(path)
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or cloud_cfg.get("endpoint_url")
+    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "auto"
+    try:
+        client = boto3.client("s3", endpoint_url=endpoint_url, region_name=region)
+        payload = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _graph_json(path: Path) -> dict[str, Any] | None:
+    return _load_graph_json(str(path.resolve()), is_cloud_mode())
+
+
+@lru_cache(maxsize=8)
+def _missing_graph_files(root_text: str, cloud_mode: bool) -> tuple[str, ...]:
+    root = Path(root_text)
+    missing: list[str] = []
+    for filename in REQUIRED_FILES:
+        path = root / filename
+        if filename.endswith(".json"):
+            available = _load_graph_json(str(path.resolve()), cloud_mode) is not None
+        elif cloud_mode:
+            try:
+                available = bool(parquet_columns(path))
+            except Exception:
+                available = False
+        else:
+            available = path.is_file()
+        if not available:
+            missing.append(filename)
+    return tuple(missing)
 
 
 def active_reference_graph_root() -> Path:
@@ -39,7 +109,7 @@ def active_reference_graph_root() -> Path:
 
 def reference_graph_available() -> bool:
     root = active_reference_graph_root()
-    return all((root / filename).exists() for filename in REQUIRED_FILES)
+    return not _missing_graph_files(str(root), is_cloud_mode())
 
 
 def where_is_geography_data() -> dict[str, Any]:
@@ -53,11 +123,11 @@ def where_is_geography_data() -> dict[str, Any]:
         "graph_root": str(root),
         "selection_variable": ENV_NAME,
         "local_data_uploaded": False,
-        "missing_files": [name for name in REQUIRED_FILES if not (root / name).exists()],
+        "missing_files": list(_missing_graph_files(str(root), is_cloud_mode())),
     }
     if available:
-        metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
-        completion = json.loads((root / "completion_report.json").read_text(encoding="utf-8"))
+        metadata = _graph_json(root / "metadata.json") or {}
+        completion = _graph_json(root / "completion_report.json") or {}
         result.update({
             "release_id": metadata.get("release_id"),
             "status": completion.get("status"),
@@ -78,7 +148,7 @@ def reference_graph_families() -> list[dict[str, Any]]:
     if not reference_graph_available():
         return []
     root = active_reference_graph_root()
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         rows = connection.execute(
             f"""SELECT family, count(*) AS identity_count,
@@ -98,13 +168,58 @@ def identity(loc_id: str) -> dict[str, Any] | None:
     if not reference_graph_available():
         return None
     root = active_reference_graph_root()
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         cursor = connection.execute(
             f"SELECT * FROM read_parquet('{_sql_path(root / 'identities.parquet')}') WHERE loc_id = ? LIMIT 1",
             [str(loc_id)],
         )
         row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(zip([item[0] for item in cursor.description], row))
+    finally:
+        connection.close()
+
+
+def identity_at(loc_id: str, as_of: date | None = None) -> dict[str, Any] | None:
+    """Return the graph identity state selected for a requested date.
+
+    ``identity_versions`` may contain several releases for a durable loc_id.
+    A dated lookup selects the row whose half-open validity window contains
+    the date; an undated lookup retains the canonical ``identities`` behavior.
+    """
+    if as_of is None:
+        return identity(loc_id)
+    if not reference_graph_available():
+        return None
+    root = active_reference_graph_root()
+    connection = _connection()
+    try:
+        cursor = connection.execute(
+            f"""SELECT *
+                FROM read_parquet('{_sql_path(root / 'identity_versions.parquet')}')
+                WHERE loc_id = ?
+                  AND (valid_from IS NULL OR valid_from = '' OR CAST(valid_from AS DATE) <= ?)
+                  AND (valid_to IS NULL OR valid_to = '' OR CAST(valid_to AS DATE) > ?)
+                ORDER BY valid_from DESC NULLS LAST, namespace_release DESC
+                LIMIT 1""",
+            [str(loc_id), as_of, as_of],
+        )
+        row = cursor.fetchone()
+        if row is None:
+            # Preserve the identity and its declared window even when the
+            # requested date falls outside it, so callers can report a typed
+            # temporal mismatch instead of treating the loc_id as unknown.
+            cursor = connection.execute(
+                f"""SELECT *
+                    FROM read_parquet('{_sql_path(root / 'identity_versions.parquet')}')
+                    WHERE loc_id = ?
+                    ORDER BY valid_from DESC NULLS LAST, namespace_release DESC
+                    LIMIT 1""",
+                [str(loc_id)],
+            )
+            row = cursor.fetchone()
         if row is None:
             return None
         return dict(zip([item[0] for item in cursor.description], row))
@@ -119,7 +234,7 @@ def identities(loc_ids: list[str]) -> list[dict[str, Any]]:
         return []
     root = active_reference_graph_root()
     placeholders = ", ".join("?" for _ in requested)
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         cursor = connection.execute(
             f"SELECT * FROM read_parquet('{_sql_path(root / 'identities.parquet')}') "
@@ -137,7 +252,7 @@ def aliases_for_loc_id(loc_id: str, *, limit: int = 100) -> list[dict[str, Any]]
     if not reference_graph_available():
         return []
     root = active_reference_graph_root()
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         cursor = connection.execute(
             f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
@@ -154,7 +269,7 @@ def resolve_alias(reference_system: str, external_id: str, *, limit: int = 25) -
     if not reference_graph_available():
         return []
     root = active_reference_graph_root()
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         cursor = connection.execute(
             f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
@@ -181,7 +296,7 @@ def relationships_for_loc_id(
     else:
         predicate, values = "source_loc_id = ? OR target_loc_id = ?", [str(loc_id), str(loc_id)]
     root = active_reference_graph_root()
-    connection = duckdb.connect()
+    connection = _connection()
     try:
         cursor = connection.execute(
             f"""SELECT * FROM read_parquet('{_sql_path(root / 'relationships.parquet')}')
