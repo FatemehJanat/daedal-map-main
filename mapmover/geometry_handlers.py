@@ -531,16 +531,16 @@ def _is_marine_family(family: str | None) -> bool:
 
 
 def _geometry_family_for_loc_id(loc_id: str) -> str | None:
-    """Classify legacy prefixes first, then consult the reference graph."""
-    family = classify_loc_id_family(loc_id)
-    if family:
-        return family
+    """Prefer an explicit graph family, then fall back to legacy prefixes."""
     try:
         from .runtime.reference_graph import identity as graph_identity
 
-        return str((graph_identity(loc_id) or {}).get("family") or "").strip() or None
+        family = str((graph_identity(loc_id) or {}).get("family") or "").strip()
+        if family:
+            return family
     except Exception:
-        return None
+        pass
+    return classify_loc_id_family(loc_id)
 
 
 _UNSET_GEOMETRY_COLUMNS = object()
@@ -626,6 +626,14 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
 
     if _is_marine_family(direct_family):
         return _load_marine_or_reference_geometry(requested_ids, columns=columns)
+
+    # Any graph identity may own a partitioned reference-family bank. Consult
+    # that explicit identity -> bank -> partition contract before falling back
+    # to the country's administrative geometry. This keeps new semantic
+    # families data-driven instead of extending a country/family allowlist.
+    reference = load_reference_graph_geometry(requested_ids, columns=columns)
+    if reference is not None and not reference.empty:
+        return reference
 
     county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
     crosswalk_data = load_country_crosswalk(iso3) or {}
@@ -1964,6 +1972,12 @@ def get_location_info(loc_id: str):
     iso3 = parts[0]
     family = _geometry_family_for_loc_id(loc_id)
     inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
+    graph_info = _reference_graph_location_info(loc_id)
+    if graph_info and not str(family or "").startswith("admin"):
+        # Reference-sidechain metadata already lives in the graph identity row.
+        # Avoid opening a potentially huge geometry partition merely to answer
+        # name/family/parent/source questions.
+        return graph_info
     if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"} or (
         inferred_admin_level is not None and inferred_admin_level >= 3
     ):
@@ -3075,11 +3089,22 @@ def get_selection_geometries(loc_ids: list):
     features = []
     requested_ids = [str(loc_id).strip() for loc_id in loc_ids if str(loc_id).strip()]
 
+    # Graph-owned semantic-family partitions are authoritative regardless of
+    # loc_id prefix depth. Resolve them before legacy admin-depth routing.
+    reference_df = load_reference_graph_geometry(requested_ids)
+    reference_ids: set[str] = set()
+    if reference_df is not None and not reference_df.empty:
+        reference_ids = set(reference_df["loc_id"].astype(str))
+        reference_geojson = df_to_geojson(reference_df, polygon_only=False)
+        features.extend(reference_geojson.get("features", []))
+
     marine_ids = [
         loc_id for loc_id in requested_ids
+        if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
-    remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
+    claimed_ids = reference_ids | set(marine_ids)
+    remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in claimed_ids]
 
     if marine_ids:
         marine_df = _load_marine_or_reference_geometry(marine_ids)
@@ -3214,11 +3239,22 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
     requested_ids = [str(loc_id).strip() for loc_id in loc_ids if str(loc_id).strip()]
     requested_set = set(requested_ids)
 
+    reference_df = load_reference_graph_geometry(requested_ids, columns=GEOMETRY_METADATA_COLUMNS)
+    reference_ids: set[str] = set()
+    if reference_df is not None and not reference_df.empty:
+        reference_ids = set(reference_df["loc_id"].astype(str))
+        for _, row in reference_df.iterrows():
+            item = _geometry_metadata_row(row)
+            if item.get("loc_id"):
+                rows.append(item)
+
     marine_ids = [
         loc_id for loc_id in requested_ids
+        if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
-    remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
+    claimed_ids = reference_ids | set(marine_ids)
+    remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in claimed_ids]
 
     if marine_ids:
         marine_df = _load_marine_or_reference_geometry(marine_ids, columns=GEOMETRY_METADATA_COLUMNS)
