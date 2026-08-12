@@ -52,6 +52,7 @@ from .runtime.country_geography import (
 from .runtime.geometry_loader import resolve_country_geometry_source
 from .runtime.geometry_spine import geometry_spine_index_for_frame, match_point_in_frame
 from .runtime.marine_geometry import load_marine_geometry
+from .runtime.reference_geometry_bank import load_reference_graph_geometry
 from .runtime.read_posture import geometry_read_mode, prefer_local_geometry_reads
 
 logger = logging.getLogger("mapmover")
@@ -501,6 +502,36 @@ def _is_marine_family(family: str | None) -> bool:
     return str(family or "").strip().lower() in {"marine_eez", "water_body"}
 
 
+def _geometry_family_for_loc_id(loc_id: str) -> str | None:
+    """Classify legacy prefixes first, then consult the reference graph."""
+    family = classify_loc_id_family(loc_id)
+    if family:
+        return family
+    try:
+        from .runtime.reference_graph import identity as graph_identity
+
+        return str((graph_identity(loc_id) or {}).get("family") or "").strip() or None
+    except Exception:
+        return None
+
+
+_UNSET_GEOMETRY_COLUMNS = object()
+
+
+def _load_marine_or_reference_geometry(loc_ids: list[str], columns=_UNSET_GEOMETRY_COLUMNS) -> pd.DataFrame:
+    """Load established marine banks, then graph-owned banks for unresolved ids."""
+    marine = (
+        load_marine_geometry(loc_ids, columns=columns)
+        if columns is not _UNSET_GEOMETRY_COLUMNS
+        else load_marine_geometry(loc_ids)
+    )
+    found = set(marine["loc_id"].astype(str)) if marine is not None and not marine.empty and "loc_id" in marine else set()
+    missing = [loc_id for loc_id in loc_ids if loc_id not in found]
+    reference_columns = None if columns is _UNSET_GEOMETRY_COLUMNS else columns
+    reference = load_reference_graph_geometry(missing, columns=reference_columns) if missing else pd.DataFrame()
+    return _concat_geometry_frames([marine, reference], loc_ids)
+
+
 def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[str] | None = None):
     """
     Load exact geometry rows for a country by loc_id list.
@@ -515,20 +546,20 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
     columns = _ensure_loc_id_projection(columns)
     prefer_local = _prefer_local_geometry_reads()
 
-    families = {classify_loc_id_family(loc_id) for loc_id in requested_ids}
+    families = {_geometry_family_for_loc_id(loc_id) for loc_id in requested_ids}
     families.discard(None)
 
     if len(families) > 1:
         family_groups: dict[str | None, list[str]] = {}
         for loc_id in requested_ids:
-            family_groups.setdefault(classify_loc_id_family(loc_id), []).append(loc_id)
+            family_groups.setdefault(_geometry_family_for_loc_id(loc_id), []).append(loc_id)
 
         frames: list[pd.DataFrame] = []
         for family, family_ids in family_groups.items():
             if not family_ids or family == "event_or_entity":
                 continue
             if _is_marine_family(family):
-                frames.append(load_marine_geometry(family_ids, columns=columns))
+                frames.append(_load_marine_or_reference_geometry(family_ids, columns=columns))
                 continue
             frames.append(load_geometry_rows_by_loc_ids(iso3, family_ids, columns=columns))
         return _concat_geometry_frames(frames, requested_ids)
@@ -566,7 +597,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
         return pd.DataFrame()
 
     if _is_marine_family(direct_family):
-        return load_marine_geometry(requested_ids, columns=columns)
+        return _load_marine_or_reference_geometry(requested_ids, columns=columns)
 
     county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
     crosswalk_data = load_country_crosswalk(iso3) or {}
@@ -1899,7 +1930,7 @@ def get_location_info(loc_id: str):
     from .runtime.admin_hierarchy import infer_admin_level_from_loc_id
 
     iso3 = parts[0]
-    family = classify_loc_id_family(loc_id)
+    family = _geometry_family_for_loc_id(loc_id)
     inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
     if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"} or (
         inferred_admin_level is not None and inferred_admin_level >= 3
@@ -2133,7 +2164,7 @@ def _get_selection_feature_for_loc_id(loc_id: str) -> dict | None:
 
 def _build_feature_based_location_info(loc_id: str, feature: dict) -> dict:
     props = feature.get("properties") or {}
-    family = classify_loc_id_family(loc_id)
+    family = _geometry_family_for_loc_id(loc_id)
     # Deep local rows live in state-partitioned files, so the normal
     # country-parquet parent lookup cannot see them.  Resolve this compact
     # exact-ID ancestor chain for the same human-readable "Part of" context
@@ -2960,12 +2991,12 @@ def get_selection_geometries(loc_ids: list):
 
     marine_ids = [
         loc_id for loc_id in requested_ids
-        if classify_loc_id_family(loc_id) in {"marine_eez", "water_body"}
+        if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
     remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
 
     if marine_ids:
-        marine_df = load_marine_geometry(marine_ids)
+        marine_df = _load_marine_or_reference_geometry(marine_ids)
         if marine_df is not None and len(marine_df) > 0:
             marine_geojson = df_to_geojson(marine_df, polygon_only=True)
             features.extend(marine_geojson.get("features", []))
@@ -2989,7 +3020,7 @@ def get_selection_geometries(loc_ids: list):
         if sub_level_ids:
             sub_admin_levels = get_country_sub_admin_levels(iso3)
             for lid in sub_level_ids:
-                family = classify_loc_id_family(lid)
+                family = _geometry_family_for_loc_id(lid)
                 parts = str(lid).split("-")
                 segment_count = len(parts)
                 if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "regional_base"}:
@@ -3088,12 +3119,12 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
 
     marine_ids = [
         loc_id for loc_id in requested_ids
-        if classify_loc_id_family(loc_id) in {"marine_eez", "water_body"}
+        if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
     remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in set(marine_ids)]
 
     if marine_ids:
-        marine_df = load_marine_geometry(marine_ids, columns=GEOMETRY_METADATA_COLUMNS)
+        marine_df = _load_marine_or_reference_geometry(marine_ids, columns=GEOMETRY_METADATA_COLUMNS)
         if marine_df is not None and not marine_df.empty:
             for _, row in marine_df.iterrows():
                 item = _geometry_metadata_row(row)
@@ -3114,7 +3145,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
         if sub_level_ids:
             sub_admin_levels = get_country_sub_admin_levels(iso3)
             for lid in sub_level_ids:
-                family = classify_loc_id_family(lid)
+                family = _geometry_family_for_loc_id(lid)
                 segment_count = len(str(lid).split("-"))
                 if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "regional_base"}:
                     regular_sub_level_ids.append(lid)

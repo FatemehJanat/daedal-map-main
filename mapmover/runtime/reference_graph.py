@@ -112,6 +112,27 @@ def identity(loc_id: str) -> dict[str, Any] | None:
         connection.close()
 
 
+def identities(loc_ids: list[str]) -> list[dict[str, Any]]:
+    """Return graph identities in caller order with one predicate-pushed scan."""
+    requested = list(dict.fromkeys(str(item).strip() for item in loc_ids if str(item).strip()))
+    if not requested or not reference_graph_available():
+        return []
+    root = active_reference_graph_root()
+    placeholders = ", ".join("?" for _ in requested)
+    connection = duckdb.connect()
+    try:
+        cursor = connection.execute(
+            f"SELECT * FROM read_parquet('{_sql_path(root / 'identities.parquet')}') "
+            f"WHERE loc_id IN ({placeholders})",
+            requested,
+        )
+        columns = [item[0] for item in cursor.description]
+        found = {str(row[0]): dict(zip(columns, row)) for row in cursor.fetchall()}
+        return [found[loc_id] for loc_id in requested if loc_id in found]
+    finally:
+        connection.close()
+
+
 def aliases_for_loc_id(loc_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
     if not reference_graph_available():
         return []

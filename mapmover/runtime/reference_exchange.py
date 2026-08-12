@@ -74,6 +74,18 @@ def _normalize_system(system: str | None) -> str:
     return SYSTEM_ALIASES.get(value, value)
 
 
+def _reference_family(loc_id: str) -> str | None:
+    family = classify_loc_id_family(loc_id)
+    if family:
+        return family
+    try:
+        from .reference_graph import identity as graph_identity
+
+        return (graph_identity(loc_id) or {}).get("family")
+    except Exception:
+        return None
+
+
 def _clean_json(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -715,12 +727,13 @@ def _shape_geometry_reference(
     if not feature:
         return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
     props = feature.get("properties") or {}
+    family = _reference_family(canonical)
     payload = {
         "ok": True,
         "has_shape": True,
         "loc_id": props.get("local_loc_id") or canonical,
         "name": props.get("name"),
-        "family": classify_loc_id_family(canonical),
+        "family": family,
         "admin_level": props.get("admin_level"),
         "centroid": {"lon": props.get("centroid_lon"), "lat": props.get("centroid_lat")},
         "bbox": [
@@ -750,12 +763,13 @@ def _metadata_geometry_reference(
     canonical = canonicalize_loc_id(loc_id)
     if not row:
         return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
+    family = _reference_family(canonical)
     payload = {
         "ok": True,
         "has_shape": True,
         "loc_id": row.get("loc_id") or row.get("source_loc_id") or canonical,
         "name": row.get("name"),
-        "family": classify_loc_id_family(canonical),
+        "family": family,
         "admin_level": row.get("admin_level"),
         "centroid": {"lon": row.get("centroid_lon"), "lat": row.get("centroid_lat")},
         "bbox": [
@@ -845,7 +859,7 @@ def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
             "loc_id": loc_id,
             "has_shape": has_shape,
             "name": result.get("name") if result else None,
-            "family": classify_loc_id_family(loc_id) if has_shape else None,
+            "family": _reference_family(loc_id) if has_shape else None,
             "admin_level": result.get("admin_level") if result else None,
             "centroid": {"lon": result.get("centroid_lon"), "lat": result.get("centroid_lat")} if has_shape else None,
             "bbox": [
