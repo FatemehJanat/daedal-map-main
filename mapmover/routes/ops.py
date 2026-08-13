@@ -123,7 +123,7 @@ def _local_nws_timeline_entries() -> list[dict]:
     indexed_frames = index.get("frames") if isinstance(index, dict) else None
     if isinstance(indexed_frames, list) and indexed_frames:
         # The compact index is the normal deployed path.  Do not read the
-        # 30-day archive just to build metadata for the shared 72-hour cursor.
+        # 60-day archive just to build metadata for the shared 72-hour cursor.
         entries = []
         for frame in indexed_frames:
             if not isinstance(frame, dict):

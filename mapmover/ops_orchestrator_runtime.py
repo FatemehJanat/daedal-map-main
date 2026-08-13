@@ -2409,7 +2409,11 @@ def build_ops_timeline_payload(*, effective_feeds: list[str], history_hours: int
     hurricane_replay: dict[str, dict] = {}
     for feed in effective_feeds:
         snapshot = snapshots.get(feed)
-        entries = _ops_timeline_entries(feed, snapshot, load_current_state_history(feed))
+        # NWS has a compact Railway-backed timeline index which the route layer
+        # installs below. Avoid downloading its much longer retained archive
+        # merely to construct entries that will immediately be replaced.
+        history_entries = [] if feed == "usa_nws_alerts" else load_current_state_history(feed)
+        entries = _ops_timeline_entries(feed, snapshot, history_entries)
         frames: list[dict] = []
         if _is_hurricane_live_feed(feed):
             in_window = [

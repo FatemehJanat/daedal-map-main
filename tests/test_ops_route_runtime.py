@@ -396,6 +396,24 @@ class OpsRouteRuntimeTest(unittest.TestCase):
 
         self.assertEqual(72, timeline["history_hours"])
 
+    def test_shared_timeline_does_not_load_long_nws_history(self):
+        snapshot = {
+            "published_at": "2026-08-12T00:00:00+00:00",
+            "ops_history_retention_hours": 1440,
+            "ops_history_display_hours": 1440,
+            "ops_timeline_display_hours": 72,
+            "payload_summary": {"alert_count": 0, "alerts": []},
+        }
+        with patch.object(
+            ops_orchestrator_runtime, "load_current_state_snapshot", return_value=snapshot
+        ), patch.object(ops_orchestrator_runtime, "load_current_state_history") as history:
+            timeline = ops_orchestrator_runtime.build_ops_timeline_payload(
+                effective_feeds=["usa_nws_alerts"]
+            )
+
+        history.assert_not_called()
+        self.assertEqual(72, timeline["history_hours"])
+
     def test_timeline_allows_external_provider_only_request(self):
         timeline = ops_orchestrator_runtime.build_ops_timeline_payload(effective_feeds=[])
         self.assertEqual(72, timeline["history_hours"])
