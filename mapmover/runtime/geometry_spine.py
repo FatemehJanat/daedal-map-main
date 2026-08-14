@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable
 import pandas as pd
 from shapely.geometry import Point, shape
 from shapely.strtree import STRtree
+from shapely.wkb import loads as load_wkb
 
 try:
     import orjson
@@ -64,10 +65,13 @@ class RuntimeGeometrySpineIndex:
             if geom_value is None or (isinstance(geom_value, float) and math.isnan(geom_value)):
                 continue
             try:
-                geometry_payload = _json_loads(geom_value) if isinstance(geom_value, str) else geom_value
-                if not geometry_payload or geometry_payload.get("type") == "Point":
-                    continue
-                geometry = shape(geometry_payload)
+                if isinstance(geom_value, (bytes, bytearray, memoryview)):
+                    geometry = load_wkb(bytes(geom_value))
+                else:
+                    geometry_payload = _json_loads(geom_value) if isinstance(geom_value, str) else geom_value
+                    if not geometry_payload or geometry_payload.get("type") == "Point":
+                        continue
+                    geometry = shape(geometry_payload)
             except Exception:
                 continue
             if geometry.is_empty:

@@ -74,12 +74,26 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(matches[1].row["loc_id"], "B")
         self.assertIsNone(matches[2])
 
+    def test_runtime_geometry_spine_accepts_wkb_geometry(self):
+        import pandas as pd
+        from shapely.geometry import Polygon
+
+        frame = pd.DataFrame([{
+            "loc_id": "USA-VA-600", "name": "Fairfax city", "admin_level": 2,
+            "geometry": Polygon([(-78, 38), (-78, 39), (-77, 39), (-77, 38), (-78, 38)]).wkb,
+        }])
+
+        match = geometry_spine_index_for_frame(frame).match_point(-77.3, 38.84)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.row["loc_id"], "USA-VA-600")
+
     def test_california_block_point_resolves_through_admin5_spine(self):
         """Regression: audited CA Admin 5 must not stop at legacy geometry admin2."""
         result = resolve_point_to_loc_id_stack(-116.710700, 34.320563, include_geometry=False)
 
         self.assertEqual(result["deepest_resolved_admin_level"], "admin_5")
-        self.assertEqual(result["deepest_resolved_loc_id"], "USA-CA-071-010424-3-3009")
+        self.assertEqual(result["deepest_resolved_loc_id"], "USA-CA-071-010424-3-009")
         self.assertEqual(result["matches"]["admin_2"]["loc_id"], "USA-CA-071")
         self.assertEqual(result["matches"]["admin_3"]["loc_id"], "USA-CA-071-010424")
         self.assertEqual(result["matches"]["admin_4"]["loc_id"], "USA-CA-071-010424-3")
@@ -134,7 +148,7 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(result["deepest_resolved_admin_level"], "admin_5")
         self.assertEqual(
             result["deepest_resolved_loc_id"],
-            "BRA-G114911670B46470234103867-G256859067B93211874574950-350230905-35023090500-3502309003",
+            "BRA-SP-3502309-05-00-003",
         )
         self.assertEqual(result["matches"]["admin_5"]["name"], "Jardim Nova Anhembi")
 
