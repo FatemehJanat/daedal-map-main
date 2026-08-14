@@ -349,8 +349,10 @@ PACK_REGISTRY: dict[str, dict] = {
         "mcp_tool_allowlist": (
             "get_catalog",
             "get_pack",
+            "how_geometry_works",
             "read_geometry_catalog",
             "list_reference_systems",
+            "identify_reference_system",
             "resolve_reference",
             "convert_reference",
             "compare_geographies",
@@ -365,7 +367,7 @@ PACK_REGISTRY: dict[str, dict] = {
             "create_conversion_job",
             "get_job_status",
         ),
-        "mcp_name": "com.daedalmap/geocoding",
+        "mcp_name": "com.daedalmap/geography",
         "mcp_title": "DaedalMap Geography Tools (loc_id)",
         "mcp_description": "Geography utilities built on the DaedalMap loc_id spine. Point lookup returns a compact latest-available chain; separate tools provide identity details, strict hierarchy, references, relationships, shapes, and exports. A utility family, not a queryable dataset pack. Interactive discovery and small lookups are free; large batches and exports may be quoted.",
         "registry_meta": {
@@ -382,8 +384,10 @@ PACK_REGISTRY: dict[str, dict] = {
             "preferred_tool": "read_geometry_catalog",
         },
         "tool_summaries": (
+            {"name": "how_geometry_works", "summary": "family workflow, loc_id mental model, strict-call boundary, and clarification rules"},
             {"name": "read_geometry_catalog", "summary": "discover geometry coverage, families, bridges, named geometries, and packages"},
             {"name": "list_reference_systems", "summary": "discover exchangeable geography systems, bridge vintages, counts, and licenses"},
+            {"name": "identify_reference_system", "summary": "unknown or declared identifiers -> ranked reference systems and matching geometry banks"},
             {"name": "resolve_reference", "summary": "one reference or reference batch -> ranked DaedalMap loc_id matches"},
             {"name": "convert_reference", "summary": "one reference or reference batch -> loc_id -> target reference system"},
             {"name": "compare_geographies", "summary": "two loc_ids -> temporal validity, successors, topology, intersection area, and directional overlap shares"},
@@ -393,10 +397,10 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "loc_id_info", "summary": "point-chain loc_ids or other loc_ids -> detailed metadata, strict hierarchy, lifecycle, and references"},
             {"name": "resolve_loc_id_scope", "summary": "strict parent loc_id + admin level -> coherent descendants"},
             {"name": "estimate_geometry_package", "summary": "dry-run selected geometry export count/bytes/price/delivery estimate"},
-            {"name": "create_geometry_export", "summary": "create a selected geometry export, inline when tiny or queued"},
+            {"name": "create_geometry_export", "summary": "create a real synchronous geometry artifact within the effective operational limit"},
             {"name": "estimate_conversion_job", "summary": "dry-run user-data conversion row/error/cost estimate"},
-            {"name": "create_conversion_job", "summary": "accepted loc_id conversion job, inline when small or queued"},
-            {"name": "get_job_status", "summary": "poll queued/running/completed geometry and conversion jobs"},
+            {"name": "create_conversion_job", "summary": "convert and preserve up to 100 user rows as JSON rows, CSV, JSONL, or Parquet"},
+            {"name": "get_job_status", "summary": "retrieve completed bounded geometry and conversion jobs"},
         ),
     },
     "reverse-geocoding": {
@@ -456,8 +460,8 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "loc_id_info", "summary": "loc_id or point-chain loc_ids -> detailed metadata, strict hierarchy, lifecycle, and references"},
             {"name": "resolve_loc_id_scope", "summary": "strict parent loc_id + admin level -> coherent descendants"},
             {"name": "estimate_geometry_package", "summary": "dry-run geometry export count/bytes/price/delivery estimate"},
-            {"name": "create_geometry_export", "summary": "accepted geometry export, inline when tiny or queued as artifact job"},
-            {"name": "get_job_status", "summary": "poll queued/running/completed geometry export jobs"},
+            {"name": "create_geometry_export", "summary": "create a real synchronous geometry artifact within the effective operational limit"},
+            {"name": "get_job_status", "summary": "retrieve completed bounded geometry export jobs"},
         ),
     },
 }
@@ -540,6 +544,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
         start_here = [
             "Call read_geometry_catalog first to see what coverage, geometry families, bridges, named geometries, and packages exist.",
             "Call list_reference_systems next when you need to know which geography systems can be exchanged.",
+            "Use identify_reference_system when the caller has identifier values but needs to discover or verify their system, level, vintage, and shape bank. Translate natural language into the strict schema first and preserve identifiers as strings with leading zeros.",
             "Use resolve_reference for outside identifiers or names that need to become DaedalMap loc_ids.",
             "Use convert_reference when the caller wants one external geography system expressed in another.",
         ]
@@ -548,6 +553,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "loc_id is the reserve identifier: generic conversions should flow X -> loc_id -> Y.",
             "Use read_geometry_catalog for live catalog-backed coverage and package discovery instead of assuming a fixed list of countries or admin depths.",
             "Use list_reference_systems for live catalog-backed availability instead of assuming a fixed list of systems.",
+            "Use identify_reference_system before bulk conversion when geography identifiers are unknown or only informally declared.",
             "Use resolve_reference for ZIP/ZCTA, tribal-area, NWS public forecast-zone, NWS fire weather-zone, admin-name, and named-geometry inputs.",
             "Use loc_id_info with include_references=true for reverse lookup from an existing loc_id to overlapping or equivalent external references.",
             "Use get_geometry only when geometry metadata, bbox, centroid, or polygon is needed.",
@@ -611,6 +617,15 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
                 "question": "What can DaedalMap exchange right now?",
                 "tool": "list_reference_systems",
                 "arguments": {},
+            },
+            {
+                "question": "Do these values match 2020 US Census tract GEOIDs and a shape bank?",
+                "tool": "identify_reference_system",
+                "arguments": {
+                    "identifiers": ["06073000100", "06073000201"],
+                    "expected": {"system": "us_census_geoid", "geo_level": "tract", "vintage": "2020"},
+                    "country_scope": "USA",
+                },
             },
             {
                 "question": "What county does ZIP/ZCTA 00601 resolve to?",

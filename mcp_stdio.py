@@ -27,7 +27,7 @@ PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {
     "name": "com.daedalmap/county-map",
     "title": "DaedalMap Disaster and Geospatial Data",
-    "version": "0.3.0",
+    "version": "0.4.0",
 }
 INSTRUCTIONS = build_mcp_instructions(
     safety_notice=(

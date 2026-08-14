@@ -66,6 +66,10 @@ SYSTEM_ALIASES = {
     "historical_country_name": "historical_country",
     "iso3166_3": "historical_country",
     "iso_3166_3": "historical_country",
+    "geoid": "us_census_geoid",
+    "census_geoid": "us_census_geoid",
+    "census_2020_geoid": "us_census_geoid",
+    "us_census_2020_geoid": "us_census_geoid",
 }
 
 
@@ -184,7 +188,17 @@ def list_reference_systems() -> dict[str, Any]:
             "label": "DaedalMap loc_id",
             "role": "reserve",
             "bidirectional": True,
-        }
+        },
+        "us_census_geoid": {
+            "system": "us_census_geoid",
+            "label": "US Census GEOID",
+            "role": "exact_identifier_system",
+            "country_scope": "USA",
+            "supported_geo_levels": ["admin_1", "admin_2", "admin_3", "admin_4", "admin_5"],
+            "supported_vintages": ["2020"],
+            "resolver": "exact_identifier_crosswalk",
+            "bidirectional": False,
+        },
     }
     for family in catalog.get("geometry_families") or []:
         if not isinstance(family, dict):
@@ -464,6 +478,36 @@ def resolve_reference(
         return {"ok": False, "from_system": system, "input": value, "error": "value is required"}
     if system in {LOC_ID_SYSTEM, "admin_local", "admin_geometry"}:
         return _clean_json(_direct_loc_id_result(text, request_system=system))
+    if system == "us_census_geoid":
+        from .reference_identification import census_geoid_level, census_geoid_to_loc_id
+
+        loc_id = census_geoid_to_loc_id(text)
+        level = census_geoid_level(text)
+        if not loc_id:
+            return {
+                "ok": False,
+                "from_system": system,
+                "input": value,
+                "error": {
+                    "code": "invalid_census_geoid",
+                    "message": "expected a maintained 2, 5, 11, 12, or 15 digit US Census GEOID",
+                },
+            }
+        availability = get_geometry_availability([loc_id])
+        item = (availability.get("items") or [{}])[0]
+        return _clean_json({
+            "ok": True,
+            "from_system": system,
+            "input": value,
+            "normalized_input": text,
+            "resolved_loc_id": loc_id,
+            "resolved_family": "admin_boundary",
+            "admin_level": level,
+            "match_type": "exact_identifier_crosswalk",
+            "geometry_available": bool(item.get("has_shape")),
+            "geometry": item,
+            "source_vintage": "census_2020",
+        })
     if system == ADMIN_SYSTEM:
         return _clean_json(_admin_text_result(text, country_hint=country_hint or iso3, admin_level_hint=admin_level_hint, request_system=system))
     if system == "historical_country":

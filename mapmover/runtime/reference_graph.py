@@ -269,6 +269,27 @@ def resolve_alias(reference_system: str, external_id: str, *, limit: int = 25) -
         connection.close()
 
 
+def identify_aliases(external_ids: list[str], *, limit: int = 500) -> list[dict[str, Any]]:
+    """Return exact alias rows across all reference systems in one scan."""
+    requested = list(dict.fromkeys(str(item).strip() for item in external_ids if str(item).strip()))
+    if not requested or not reference_graph_available():
+        return []
+    root = active_reference_graph_root()
+    placeholders = ", ".join("?" for _ in requested)
+    connection = _connection()
+    try:
+        cursor = connection.execute(
+            f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
+                WHERE external_id IN ({placeholders})
+                ORDER BY reference_system, external_id, loc_id LIMIT ?""",
+            [*requested, max(1, int(limit))],
+        )
+        columns = [item[0] for item in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        connection.close()
+
+
 def relationships_for_loc_id(
     loc_id: str, *, direction: str = "both", limit: int = 100
 ) -> list[dict[str, Any]]:

@@ -15,9 +15,82 @@ from mapmover.runtime.reference_exchange import (
     loc_id_references,
     resolve_reference,
 )
+from mapmover.runtime.reference_identification import identify_reference_system
 
 
 class ReferenceExchangeRuntimeTests(unittest.TestCase):
+    def test_identify_census_tract_geoids_returns_verified_geometry_binding(self) -> None:
+        payload = identify_reference_system(
+            ["06073000100", "06073000201", "06073000100"],
+            expected={"system": "census 2020 geoid", "geo_level": "tract", "vintage": "2020"},
+            country_scope="USA",
+            validation_scope="all_distinct_identifiers",
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "matched")
+        self.assertEqual(payload["distinct_identifier_count"], 2)
+        self.assertEqual(payload["recommended_binding"]["system"], "us_census_geoid")
+        self.assertEqual(payload["recommended_binding"]["geo_level"], "admin_3")
+        candidate = payload["candidates"][0]
+        self.assertEqual(candidate["match_rate"], 1.0)
+        self.assertEqual(candidate["geometry_available_count"], 2)
+        self.assertIn("usa_admin3_census_2020", candidate["geometry_bank_ids"])
+
+    def test_identify_five_digit_codes_reports_census_zcta_ambiguity(self) -> None:
+        payload = identify_reference_system(["06037"], country_scope="USA")
+
+        self.assertEqual(payload["status"], "ambiguous")
+        self.assertIsNone(payload["recommended_binding"])
+        systems = {candidate["system"] for candidate in payload["candidates"]}
+        self.assertEqual(systems, {"us_census_geoid", "overlay_zcta"})
+        self.assertEqual(payload["warnings"][-1]["code"], "ambiguous_identifier_system")
+        question = payload["clarification"]["questions"][0]
+        self.assertEqual(question["id"], "reference_system")
+        self.assertEqual(set(question["answer_schema"]["enum"]), systems)
+        self.assertEqual(payload["clarification"]["retry"]["answer_mapping"]["reference_system"], "expected.system")
+
+    def test_resolve_census_geoid_is_exact_and_shape_backed(self) -> None:
+        payload = resolve_reference(from_system="census_geoid", value="06073000100")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["resolved_loc_id"], "USA-CA-073-000100")
+        self.assertEqual(payload["match_type"], "exact_identifier_crosswalk")
+        self.assertTrue(payload["geometry_available"])
+
+    def test_identifier_check_does_not_confirm_unavailable_census_vintage(self) -> None:
+        payload = identify_reference_system(
+            ["06073000100"],
+            expected={"system": "census_geoid", "geo_level": "tract", "vintage": "2010"},
+            country_scope="USA",
+        )
+
+        self.assertEqual(payload["status"], "partial_match")
+        self.assertIsNone(payload["recommended_binding"])
+        self.assertFalse(payload["candidates"][0]["expected_vintage_supported"])
+        self.assertEqual(payload["warnings"][-1]["code"], "expected_vintage_unavailable")
+        self.assertEqual(payload["clarification"]["questions"][0]["id"], "vintage")
+
+    def test_natural_language_expected_system_gets_contract_correction(self) -> None:
+        payload = identify_reference_system(
+            ["02013000100"],
+            expected={"system": "US Census 2020 tract data"},
+            country_scope="USA",
+        )
+
+        self.assertEqual(payload["status"], "unmatched")
+        self.assertEqual(payload["warnings"][-1]["code"], "unknown_expected_system")
+        self.assertEqual(payload["guidance"]["action"], "inspect_contract_then_retry")
+        self.assertEqual(payload["guidance"]["next_call"]["tool"], "list_reference_systems")
+
+    def test_identifier_values_must_be_strings_to_preserve_leading_zeros(self) -> None:
+        payload = identify_reference_system([1001, 1003], country_scope="USA")
+
+        self.assertEqual(payload["status"], "invalid_request")
+        self.assertEqual(payload["error"]["code"], "identifier_strings_required")
+        self.assertTrue(payload["clarification"]["required"])
+        self.assertEqual(payload["clarification"]["questions"][0]["maps_to"], "identifiers")
+
     def test_list_reference_systems_is_catalog_backed(self) -> None:
         payload = list_reference_systems()
 
@@ -25,6 +98,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["reserve_system"], LOC_ID_SYSTEM)
         systems = {item["system"] for item in payload["systems"]}
         self.assertIn(LOC_ID_SYSTEM, systems)
+        self.assertIn("us_census_geoid", systems)
         self.assertIn("overlay_zcta", systems)
         self.assertIn("overlay_nws_fire_weather_zone", systems)
         self.assertGreaterEqual(len(payload["bridges"]), 1)

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import gzip
+import io
+import json
 import unittest
 from unittest import mock
 
@@ -41,7 +45,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         envelope = _mcp_call(self.client, "tools/list")
         tool_names = {tool["name"] for tool in envelope["result"]["tools"]}
 
+        self.assertIn("how_geometry_works", tool_names)
         self.assertIn("list_reference_systems", tool_names)
+        self.assertIn("identify_reference_system", tool_names)
         self.assertIn("read_geometry_catalog", tool_names)
         self.assertIn("resolve_reference", tool_names)
         self.assertIn("convert_reference", tool_names)
@@ -65,6 +71,16 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertNotIn("sidechain_to_admin", tool_names)
         self.assertNotIn("admin_to_sidechain", tool_names)
 
+    def test_geography_facade_has_pre_one_registry_identity(self) -> None:
+        envelope = _mcp_call(
+            self.client,
+            "initialize",
+            {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "release-test", "version": "0.1.0"}},
+        )
+
+        self.assertEqual(envelope["result"]["serverInfo"]["name"], "com.daedalmap/geography")
+        self.assertEqual(envelope["result"]["serverInfo"]["version"], "0.4.0")
+
     def test_large_structured_tool_result_summarizes_text_copy(self) -> None:
         payload = {
             "request_id": "large-shape-test",
@@ -80,6 +96,22 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("Large structured MCP result", text)
         self.assertIn("structuredContent", text)
         self.assertNotIn("x" * 200, text)
+
+    def test_geometry_family_help_explains_workflows_and_per_tool_help(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
+            payload = _tool_call(
+                self.client,
+                "how_geometry_works",
+                {"question": "How do I match an uploaded Census dataset?"},
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["interaction_contract"]["per_tool_help"]["tool"], "get_tool_help")
+        workflow_names = {workflow["name"] for workflow in payload["workflows"]}
+        self.assertIn("known_or_suspected_dataset_identifiers", workflow_names)
+        self.assertIn("identify_reference_system", payload["available_tools"])
+        self.assertNotIn("query_dataset", payload["available_tools"])
+        self.assertEqual(analytics_mock.call_args.kwargs["capability_id"], "geometry_family_help")
 
     def test_reverse_geocoding_facade_lists_multipurpose_point_tool(self) -> None:
         envelope = _mcp_call(self.client, "tools/list", path="/mcp/reverse-geocoding")
@@ -366,7 +398,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["limits"]["free_batch_limit"], 2)
         self.assertEqual(payload["error"]["code"], "payment_required")
 
-    def test_resolve_point_above_interactive_ceiling_routes_to_paid_export(self) -> None:
+    def test_resolve_point_above_interactive_ceiling_returns_honest_v0_limit(self) -> None:
         with (
             mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2", "MCP_TOOL_PAID_BATCH_LIMIT_RESOLVE_POINT": "3"}),
             mock.patch("mapmover.routes.mcp._tool_paid_bulk_enforced", return_value=True),
@@ -377,9 +409,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 "resolve_point",
                 {"points": [{"lon": 0, "lat": 0} for _ in range(4)], "country_scope": "USA", "target_admin_level": "admin_2"},
             )
-        self.assertTrue(payload["payment_required"])
-        self.assertEqual(payload["error"]["code"], "paid_export_required")
-        self.assertEqual(payload["delivery"]["required_mode"], "async_export")
+        self.assertFalse(payload["payment_required"])
+        self.assertEqual(payload["error"]["code"], "interactive_limit_exceeded")
+        self.assertEqual(payload["delivery"]["required_mode"], "not_available_in_v0")
 
     def test_check_geometry_tool_accepts_loc_id_batch(self) -> None:
         with (
@@ -1181,6 +1213,45 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(status["job_id"], created["job_id"])
         self.assertEqual(status["status"], "completed")
 
+    def test_large_geometry_export_returns_explicit_v0_limit(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "create_geometry_export",
+                {"loc_ids": [f"USA-TEST-{index:03d}" for index in range(251)], "format": "geojson"},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "bounded_inline_limit_exceeded")
+        self.assertEqual(payload["inline_limit"], 250)
+        self.assertEqual(payload["guidance"]["action"], "use_download_or_custom_builder")
+        self.assertFalse(payload["clarification"]["required"])
+
+    def test_geometry_export_format_is_real_geojson_gzip(self) -> None:
+        geometry_result = {
+            "ok": True,
+            "requested": 1,
+            "available": 1,
+            "missing": 0,
+            "results": [{"ok": True, "loc_id": "USA-CA-037", "name": "Los Angeles", "has_shape": True, "geometry": {"type": "Point", "coordinates": [-118.2, 34.0]}}],
+        }
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_references", return_value=geometry_result),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_geometry_export",
+                {"loc_ids": ["USA-CA-037"], "format": "geojson_gzip", "output_name": "la-shape"},
+            )
+
+        artifact = created["artifact"]
+        decoded = gzip.decompress(base64.b64decode(artifact["content_base64"]))
+        feature_collection = json.loads(decoded)
+        self.assertEqual(artifact["filename"], "la-shape.geojson.gz")
+        self.assertEqual(feature_collection["type"], "FeatureCollection")
+        self.assertEqual(feature_collection["features"][0]["properties"]["loc_id"], "USA-CA-037")
+
     def test_geometry_export_retry_is_idempotent_by_request_id(self) -> None:
         with (
             mock.patch(
@@ -1229,6 +1300,198 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(created["next_call"]["arguments"]["job_id"], created["job_id"])
         self.assertEqual(created["result"]["row_count"], 1)
         self.assertEqual(created["result"]["converted_count"], 1)
+
+    def test_large_conversion_returns_explicit_v0_limit(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {"from_system": "zip", "items": [{"row_index": index, "value": "00601"} for index in range(7501)]},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "bounded_inline_limit_exceeded")
+        self.assertEqual(payload["inline_limit"], 7500)
+        self.assertEqual(payload["guidance"]["action"], "use_download_or_custom_builder")
+
+    def test_conversion_csv_preserves_spreadsheet_columns_and_adds_loc_id(self) -> None:
+        fake = {"ok": True, "resolved_loc_id": "USA-CA-073-000100"}
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs._run_conversion_row", return_value=fake),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "from_system": "census_geoid",
+                    "items": [{"row_index": 7, "value": "06073000100", "data": {"population": 1234, "label": "Tract A"}}],
+                    "output_format": "csv",
+                    "output_name": "cleaned-census",
+                },
+            )
+
+        artifact = created["artifact"]
+        self.assertEqual(artifact["filename"], "cleaned-census.csv")
+        self.assertIn("population", artifact["content"])
+        self.assertIn("daedalmap_loc_id", artifact["content"])
+        self.assertIn("USA-CA-073-000100", artifact["content"])
+        self.assertIsNone(created["result"]["output_rows"])
+
+    def test_conversion_json_rows_preserves_spreadsheet_columns(self) -> None:
+        fake = {"ok": True, "resolved_loc_id": "USA-CA-073-000100"}
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs._run_conversion_row", return_value=fake),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "from_system": "census_geoid",
+                    "items": [{"value": "06073000100", "data": {"population": 1234}}],
+                    "output_format": "json_rows",
+                },
+            )
+
+        row = created["result"]["output_rows"][0]
+        self.assertEqual(row["population"], 1234)
+        self.assertEqual(row["daedalmap_loc_id"], "USA-CA-073-000100")
+        self.assertIsNone(created["artifact"])
+
+    def test_conversion_parquet_is_readable(self) -> None:
+        import pyarrow.parquet as pq
+
+        fake = {"ok": True, "resolved_loc_id": "USA-CA-073-000100"}
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs._run_conversion_row", return_value=fake),
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "from_system": "census_geoid",
+                    "items": [{"value": "06073000100", "data": {"population": 1234}}],
+                    "output_format": "parquet",
+                },
+            )
+
+        artifact = created["artifact"]
+        table = pq.read_table(io.BytesIO(base64.b64decode(artifact["content_base64"])))
+        row = table.to_pylist()[0]
+        self.assertEqual(row["population"], 1234)
+        self.assertEqual(row["daedalmap_loc_id"], "USA-CA-073-000100")
+
+    def test_identify_reference_system_and_bound_conversion_deduplicate_geoids(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:
+            identified = _tool_call(
+                self.client,
+                "identify_reference_system",
+                {
+                    "identifiers": ["06073000100", "06073000201"],
+                    "expected": {"system": "census_geoid", "geo_level": "tract", "vintage": "2020"},
+                    "country_scope": "USA",
+                },
+            )
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "geography_binding": identified["recommended_binding"],
+                    "items": [
+                        {"row_index": 1, "value": "06073000100"},
+                        {"row_index": 2, "value": "06073000100"},
+                        {"row_index": 3, "value": "06073000201"},
+                    ],
+                },
+            )
+
+        self.assertEqual(identified["status"], "matched")
+        self.assertEqual(identified["candidates"][0]["geometry_available_count"], 2)
+        self.assertEqual(analytics_mock.call_args_list[0].kwargs["capability_id"], "reference_system_identification")
+        self.assertEqual(created["result"]["distinct_geography_count"], 2)
+        self.assertEqual(created["result"]["converted_count"], 3)
+        self.assertTrue(created["result"]["resolution_plan"]["deduplicate_by_identifier"])
+        self.assertEqual(created["result"]["results"][0]["resolved_loc_id"], "USA-CA-073-000100")
+        self.assertEqual(created["result"]["results"][1]["row_index"], 2)
+
+    def test_bound_conversion_executes_once_per_distinct_geography(self) -> None:
+        fake = {"ok": True, "resolved_loc_id": "USA-CA-073-000100"}
+        with (
+            mock.patch("mapmover.runtime.geometry_tool_jobs._run_conversion_row", return_value=fake) as resolver_mock,
+            mock.patch("mapmover.routes.mcp.log_api_query_event"),
+        ):
+            created = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "geography_binding": {"mode": "reference", "system": "census_geoid", "geo_level": "tract", "vintage": "2020", "country_scope": "USA"},
+                    "items": [{"value": "06073000100"}, {"value": "06073000100"}, {"value": "06073000201"}],
+                },
+            )
+
+        self.assertEqual(resolver_mock.call_count, 2)
+        self.assertEqual(created["result"]["distinct_geography_count"], 2)
+
+    def test_identify_reference_system_enforces_public_identifier_cap(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "identify_reference_system",
+                {"identifiers": [f"{index:011d}" for index in range(101)]},
+            )
+
+        self.assertEqual(payload["error"]["code"], "too_many_items")
+        self.assertEqual(payload["limit"], 100)
+
+    def test_bound_conversion_rejects_unavailable_vintage(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "create_conversion_job",
+                {
+                    "geography_binding": {"mode": "reference", "system": "census_geoid", "geo_level": "tract", "vintage": "2010", "country_scope": "USA"},
+                    "items": [{"value": "06073000100"}],
+                },
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "geography_binding_mismatch")
+        self.assertEqual(payload["identifier_check"]["status"], "partial_match")
+
+    def test_natural_language_tool_arguments_return_translation_guidance(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "identify_reference_system",
+                {"question": "Are these 2020 census tract GEOIDs: 02013000100 and 02016000100?"},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "identifiers_required")
+        self.assertEqual(payload["warnings"][0]["code"], "strict_input_contract")
+        self.assertEqual(payload["guidance"]["action"], "translate_then_retry")
+        self.assertEqual(payload["clarification"]["questions"][0]["maps_to"], "identifiers")
+
+    def test_conversion_contract_rejects_prose_and_unknown_row_fields(self) -> None:
+        with mock.patch("mapmover.routes.mcp.log_api_query_event"):
+            payload = _tool_call(
+                self.client,
+                "estimate_conversion_job",
+                {
+                    "from_system": "census_geoid",
+                    "question": "Please match my Census data",
+                    "items": [{"value": "01001", "population": 58764}],
+                },
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "invalid_conversion_contract")
+        self.assertEqual(payload["error"]["unknown_arguments"], ["question"])
+        self.assertEqual(payload["error"]["item_errors"][0]["unknown_arguments"], ["population"])
+        self.assertEqual(payload["guidance"]["action"], "translate_then_retry")
+        self.assertFalse(payload["clarification"]["required"])
 
 
 if __name__ == "__main__":

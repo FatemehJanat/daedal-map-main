@@ -46,8 +46,7 @@ def build_mcp_instructions(*, safety_notice: str | None = None) -> str:
     paid = ", ".join(sorted(PAID_PACK_IDS))
     base = (
         f"Geospatial data MCP server. Free packs: {free}. Paid packs: {paid} "
-        "(x402 Base USDC). Start with get_catalog, then get_pack before querying "
-        "a new pack."
+        "(x402 Base USDC). The calling LLM translates the user's natural-language request into strict tool JSON; execution tools do not parse prose. Start with get_catalog, then get_pack before querying a new pack. Call get_tool_help before an unfamiliar tool. On a typed error, preserve the user's intent, inspect error/guidance/clarification, correct the arguments from the schema, and ask the user only when clarification.required is true."
     )
     if safety_notice:
         return f"{base} Safety: {safety_notice}"
@@ -59,11 +58,24 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "get_tool_help",
             "title": "Get Tool Help",
-            "description": "Free blind-caller guidance for one tool visible on this MCP facade. Returns when to use it, what it refuses, a working example, effective access limits, important outputs, provenance fields, and recommended next calls. Use tools/list to discover names, then call this before an unfamiliar tool.",
+            "description": "Free blind-caller guidance for one tool visible on this MCP facade. Returns when to use it, what it refuses, a working example, effective access limits, important outputs, provenance fields, recommended next calls, and the shared natural-language-to-strict-JSON interaction contract. Use tools/list to discover names, then call this before an unfamiliar tool.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"tool_name": {"type": "string", "description": "Exact tool name from tools/list."}},
                 "required": ["tool_name"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "how_geometry_works",
+            "title": "How Geometry MCP Works",
+            "description": "Free family-level orientation for the DaedalMap geography/geometry MCP. Explains the loc_id spine, natural-language translation boundary, discovery and resolution workflows, known-identifier bypass, shape/export workflow, and when the client must ask a clarification. Use get_tool_help for one exact tool after reading this overview.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "Optional natural-language question about how to use the geometry tool family."},
+                },
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": True},
@@ -249,13 +261,49 @@ def build_tool_definitions() -> list[dict]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "identify_reference_system",
+            "title": "Identify Geographic Reference System",
+            "description": "Free geography utility. Checks a bounded sample of identifiers against maintained reference indexes and geometry banks. LLM clients must extract identifier values from the user's natural-language request and pass them as strings; do not put the prose question in the arguments, and preserve leading zeros. Use it when a caller has geography keys but is unsure which system, level, or bank they belong to, or wants to verify a declaration such as 2020 US Census tract GEOIDs. Returns ranked candidates, deterministic warnings, machine-readable clarification questions when evidence is incomplete or ambiguous, exact match and shape-availability counts, and a recommended geography_binding for estimate_conversion_job. It does not convert the full dataset or return polygons. No payment required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "identifier": {"type": "string", "description": "One geography identifier to inspect."},
+                    "identifiers": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                        "description": "A bounded representative identifier sample. Duplicate values are checked once. Values must be strings so leading zeros are preserved.",
+                    },
+                    "expected": {
+                        "type": "object",
+                        "properties": {
+                            "system": {"type": "string", "description": "Expected reference system, such as us_census_geoid, loc_id, zcta, or a catalog reference system."},
+                            "geo_level": {"anyOf": [{"type": "string"}, {"type": "integer"}], "description": "Expected geography level, such as tract or admin_3."},
+                            "vintage": {"type": "string", "description": "Expected source/reference vintage, such as 2020."},
+                            "country_scope": {"type": "string", "description": "Expected ISO3 country scope."},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "country_scope": {"type": "string", "description": "Optional ISO3 country hint used to narrow candidate banks."},
+                    "validation_scope": {"type": "string", "enum": ["sample", "all_distinct_identifiers"], "description": "Describes whether the supplied identifiers are a sample or the complete distinct-key set. The tool validates every supplied identifier."},
+                    "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
+                },
+                "anyOf": [
+                    {"required": ["identifier"]},
+                    {"required": ["identifiers"]},
+                ],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "resolve_reference",
             "title": "Resolve Reference to loc_id",
             "description": "Free geography utility. Converts one value, or a bounded list of values, from an external or adjacent geographic reference system into the DaedalMap loc_id universe. Examples: from_system='zip' value='00601'; from_system='nws_fire' value='AKZ317'; from_system='admin_boundary' value='Fairfax County'. Returns ranked loc_id matches with bridge vintage, overlap weights, and provenance where applicable. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "from_system": {"type": "string", "description": "Input reference system, such as loc_id, admin_boundary, zip, zcta, overlay_zcta, nws_zone, nws_fire, overlay_nws_fire_weather_zone, tribal, water_body, marine_eez, nuts, historical_country/iso3166_3, or a catalog family id."},
+                    "from_system": {"type": "string", "description": "Input reference system, such as loc_id, census_geoid/us_census_geoid, admin_boundary, zip, zcta, overlay_zcta, nws_zone, nws_fire, overlay_nws_fire_weather_zone, tribal, water_body, marine_eez, nuts, historical_country/iso3166_3, or a catalog family id."},
                     "value": {"type": "string", "description": "Identifier or name in the input system. Examples: 00601, USA-Z-00601, AKZ317, USA-NWSFZ-AKZ317, Fairfax County, Mediterranean Sea."},
                     "items": {
                         "type": "array",
@@ -487,7 +535,8 @@ def build_tool_definitions() -> list[dict]:
                         },
                         "additionalProperties": False,
                     },
-                    "format": {"type": "string", "description": "Requested delivery format: geojson, geojson_gzip, zip, geoparquet, flatgeobuf, or pmtiles."},
+                    "format": {"type": "string", "enum": ["geojson", "geojson_gzip", "zip"], "description": "Implemented delivery format. Unsupported format names are rejected rather than silently returning another representation."},
+                    "output_name": {"type": "string", "maxLength": 80, "description": "Optional safe base filename for the export."},
                     "include_polygon": {"type": "boolean", "description": "Estimate full shapes when true; metadata-only when false."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -503,13 +552,13 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "create_geometry_export",
             "title": "Create Geometry Export",
-            "description": "Creates a geometry export from exact loc_ids or one strict scope. Tiny selections can complete inline; larger selections return a queued job_id. This does not define or publish a canonical geometry release package.",
+            "description": "Creates a synchronous v0 geometry export from exact loc_ids or one strict scope as real GeoJSON, gzipped GeoJSON, or zipped GeoJSON. Hosted service default: 250 selected loc_ids, sized around a 10-20 second response budget and configurable by deployment. A direct local-runtime loopback caller has no service item cap. Use estimate_geometry_package or get_tool_help for the effective access lane.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "quote_id": {"type": "string", "description": "Quote id returned by estimate_geometry_package, when available."},
                     "loc_id": {"type": "string"},
-                    "loc_ids": {"type": "array", "items": {"type": "string"}},
+                    "loc_ids": {"type": "array", "items": {"type": "string"}, "description": "Selected loc_ids. The default synchronous limit is 250; larger calls return a typed operational-limit response."},
                     "scope": {
                         "type": "object",
                         "properties": {
@@ -519,7 +568,8 @@ def build_tool_definitions() -> list[dict]:
                         },
                         "additionalProperties": False,
                     },
-                    "format": {"type": "string"},
+                    "format": {"type": "string", "enum": ["geojson", "geojson_gzip", "zip"]},
+                    "output_name": {"type": "string", "maxLength": 80},
                     "include_polygon": {"type": "boolean"},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
@@ -540,43 +590,106 @@ def build_tool_definitions() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "from_system": {"type": "string", "description": "Input reference system for rows."},
+                    "geography_binding": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {"type": "string", "enum": ["reference", "loc_id"]},
+                            "system": {"type": "string", "description": "Declared identifier system. Used when from_system is omitted."},
+                            "geo_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                            "vintage": {"type": "string"},
+                            "id_column": {"type": "string", "description": "Identifier-column name for future artifact inputs; inline items continue to use value."},
+                            "country_scope": {"type": "string"},
+                        },
+                        "required": ["system"],
+                        "additionalProperties": False,
+                        "description": "Known dataset-geography declaration. The estimate verifies it against distinct identifiers and avoids point containment.",
+                    },
                     "to_system": {"type": "string", "description": "Optional output reference system. Omit to normalize to loc_id."},
-                    "items": {"type": "array", "items": {"type": "object"}, "description": "Sample or full rows with at least value; row-level systems may override top-level systems."},
+                    "items": {"type": "array", "items": {"type": "object", "properties": {
+                        "value": {"type": "string", "description": "Identifier value; keep as a string to preserve leading zeros."},
+                        "data": {"type": "object", "maxProperties": 200, "additionalProperties": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "integer"}, {"type": "boolean"}, {"type": "null"}]}, "description": "Original spreadsheet columns to preserve. Column names beginning daedalmap_ are reserved for generated output fields."},
+                        "row_index": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                        "id": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                        "from_system": {"type": "string"}, "to_system": {"type": "string"}, "iso3": {"type": "string"},
+                        "target_admin_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                        "bridge_vintage": {"type": "string"}, "min_share": {"type": "number", "minimum": 0, "maximum": 1},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    }, "required": ["value"], "additionalProperties": False}, "description": "Sample or full rows; row-level fields may override top-level defaults."},
                     "row_count": {"type": "integer", "minimum": 0, "description": "Expected total row count when only a sample or artifact pointer is provided."},
                     "target_admin_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                    "iso3": {"type": "string"},
+                    "bridge_vintage": {"type": "string"},
+                    "min_share": {"type": "number", "minimum": 0, "maximum": 1},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "output_format": {"type": "string", "enum": ["json_rows", "csv", "jsonl", "parquet"], "description": "Enriched-row output format. CSV is spreadsheet-friendly; Parquet is compact and typed; JSON Lines is stream-friendly."},
+                    "output_name": {"type": "string", "maxLength": 80, "description": "Optional safe base filename."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
                 "anyOf": [
                     {"required": ["from_system", "items"]},
                     {"required": ["from_system", "row_count"]},
+                    {"required": ["geography_binding", "items"]},
+                    {"required": ["geography_binding", "row_count"]},
                 ],
-                "additionalProperties": True,
+                "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": True},
         },
         {
             "name": "create_conversion_job",
             "title": "Create loc_id Conversion Job",
-            "description": "Creates an accepted user-data conversion job. Small item batches can complete inline; larger batches return a queued job_id for artifact processing and status polling.",
+            "description": "Creates a synchronous v0 user-data conversion job with preserved scalar fields and JSON rows, CSV, JSON Lines, or Parquet output. Hosted service default: 7,500 rows, tuned around a 10-20 second response budget. A direct local-runtime loopback caller has no service item cap; local machine resources are the boundary. Identifier deduplication keeps repeated geography keys efficient.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "quote_id": {"type": "string", "description": "Quote id returned by estimate_conversion_job, when available."},
                     "from_system": {"type": "string"},
+                    "geography_binding": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {"type": "string", "enum": ["reference", "loc_id"]},
+                            "system": {"type": "string"},
+                            "geo_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                            "vintage": {"type": "string"},
+                            "id_column": {"type": "string"},
+                            "country_scope": {"type": "string"},
+                        },
+                        "required": ["system"],
+                        "additionalProperties": False,
+                    },
                     "to_system": {"type": "string", "description": "Optional output reference system. Omit to normalize to loc_id."},
-                    "items": {"type": "array", "items": {"type": "object"}, "description": "Rows to convert; each row needs value and may include row_index."},
+                    "items": {"type": "array", "items": {"type": "object", "properties": {
+                        "value": {"type": "string", "description": "Identifier value; keep as a string to preserve leading zeros."},
+                        "data": {"type": "object", "maxProperties": 200, "additionalProperties": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "integer"}, {"type": "boolean"}, {"type": "null"}]}, "description": "Original spreadsheet columns to preserve. Column names beginning daedalmap_ are reserved for generated output fields."},
+                        "row_index": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                        "id": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                        "from_system": {"type": "string"}, "to_system": {"type": "string"}, "iso3": {"type": "string"},
+                        "target_admin_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                        "bridge_vintage": {"type": "string"}, "min_share": {"type": "number", "minimum": 0, "maximum": 1},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    }, "required": ["value"], "additionalProperties": False}, "description": "Rows to convert; row-level fields may override top-level defaults."},
                     "target_admin_level": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                    "iso3": {"type": "string"},
+                    "bridge_vintage": {"type": "string"},
+                    "min_share": {"type": "number", "minimum": 0, "maximum": 1},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "output_format": {"type": "string", "enum": ["json_rows", "csv", "jsonl", "parquet"]},
+                    "output_name": {"type": "string", "maxLength": 80},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
-                "required": ["from_system", "items"],
-                "additionalProperties": True,
+                "required": ["items"],
+                "anyOf": [
+                    {"required": ["from_system"]},
+                    {"required": ["geography_binding"]},
+                ],
+                "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": False},
         },
         {
             "name": "get_job_status",
             "title": "Get Geometry Job Status",
-            "description": "Checks queued/running/completed async geometry export and conversion jobs. Returns progress, errors, callback state, and artifact links when available.",
+            "description": "Retrieves a completed bounded v0 geometry export or conversion job by job_id. The current public contract creates completed inline jobs only; durable queued jobs and downloadable artifact links remain a future Custom Data Builder capability.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

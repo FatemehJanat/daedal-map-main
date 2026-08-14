@@ -35,7 +35,15 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
         ["You found a tool through MCP discovery and need its usage contract or a working example."],
         ["Executing the target tool", "Replacing tools/list discovery"],
         {"tool_name": "resolve_point"},
-        ["purpose", "examples", "access", "recommended_next_calls", "available_on_facades"],
+        ["purpose", "input_schema", "interaction_contract", "examples", "access", "recommended_next_calls", "available_on_facades"],
+    ),
+    "how_geometry_works": _g(
+        ["You are new to the geometry MCP or need to choose the correct workflow before inspecting one tool."],
+        ["Executing a geometry operation", "Replacing get_tool_help for one exact tool"],
+        {"question": "How do I match an uploaded Census dataset to geometry?"},
+        ["core_rule", "interaction_contract", "workflows", "available_tools", "notes"],
+        ["get_tool_help", "read_geometry_catalog", "identify_reference_system"],
+        ["geometry catalog", "reference systems", "bank vintages", "loc_id doctrine"],
     ),
     "get_catalog": _g(
         ["You need to discover currently published data packs and tool families."],
@@ -76,7 +84,15 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
         ["You need to discover which external geography systems and vintages are exchangeable."],
         ["Converting a value", "Resolving coordinates"],
         {}, ["systems", "reserve_system", "bridge artifacts", "vintages"],
-        ["resolve_reference", "convert_reference"], ["source authority", "license", "bridge vintage"]
+        ["identify_reference_system", "resolve_reference", "convert_reference"], ["source authority", "license", "bridge vintage"]
+    ),
+    "identify_reference_system": _g(
+        ["You have unknown geography identifiers or want to verify a declared system, level, vintage, and matching shape bank."],
+        ["Passing the user's prose question as arguments", "Converting every dataset row", "Returning polygons", "Claiming full-dataset validation from a sample"],
+        {"identifiers": ["06073000100", "06073000201"], "expected": {"system": "us_census_geoid", "geo_level": "tract", "vintage": "2020"}, "country_scope": "USA"},
+        ["status", "candidates", "match_rate", "geometry_available_count", "geometry_bank_ids", "recommended_binding"],
+        ["estimate_conversion_job", "resolve_reference", "check_geometry"],
+        ["reference system", "source vintage", "geometry bank ids", "validation scope"],
     ),
     "resolve_reference": _g(
         ["You have a name or external geography code and need ranked DaedalMap loc_id matches."],
@@ -133,7 +149,7 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
         ["create_geometry_export"], ["contributing banks", "license/citation requirements", "vintages"]
     ),
     "create_geometry_export": _g(
-        ["You accepted a geometry export plan and want inline output or a queued artifact handle."],
+        ["You accepted a synchronous geometry export plan within the advertised effective limit and want a real artifact."],
         ["Publishing or mutating official geometry", "Skipping estimate for large selections"],
         {"loc_ids": ["CAN-BC"], "format": "geojson", "include_polygon": False},
         ["job_id", "status", "result", "artifact", "next_call"],
@@ -142,15 +158,15 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
     "estimate_conversion_job": _g(
         ["You need a free sample-based estimate before converting user-supplied reference rows."],
         ["Resolving coordinate rows", "Executing the conversion"],
-        {"from_system": "admin.native_id", "items": [{"row_index": 1, "value": "10", "iso3": "CAN"}]},
-        ["quote_id", "row_count", "sample_resolved", "estimated_output_bytes", "create_call"],
+        {"from_system": "admin.native_id", "items": [{"row_index": 1, "value": "10", "iso3": "CAN", "data": {"population": 1000}}], "output_format": "csv"},
+        ["quote_id", "row_count", "sample_resolved", "estimated_output_bytes", "output_format", "create_call"],
         ["create_conversion_job"], ["input system", "bridge vintages", "sample evidence"]
     ),
     "create_conversion_job": _g(
-        ["You accepted a reference-conversion plan and want inline results or a queued artifact handle."],
+        ["You accepted a synchronous reference-conversion plan within the advertised effective limit and want real output."],
         ["Resolving coordinate CSVs", "Modifying official identities"],
-        {"from_system": "admin.native_id", "items": [{"row_index": 1, "value": "10", "iso3": "CAN"}]},
-        ["job_id", "status", "result", "artifact", "next_call"],
+        {"from_system": "admin.native_id", "items": [{"row_index": 1, "value": "10", "iso3": "CAN", "data": {"population": 1000}}], "output_format": "csv", "output_name": "cleaned-population"},
+        ["job_id", "status", "result", "output_rows", "artifact", "next_call"],
         ["get_job_status"], ["source systems", "bridge vintages", "row-level relationship evidence"]
     ),
     "get_job_status": _g(
@@ -222,12 +238,68 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
 }
 
 
+def geometry_family_help_payload(question: str | None = None) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "tool_name": "how_geometry_works",
+        "summary": "DaedalMap Geometry MCP deterministically resolves geography onto the shared loc_id spine, inspects identities and relationships, returns shapes, and prepares bounded exports.",
+        "core_rule": "Translate the user's intent into a strict geometry tool call, normalize onto loc_id, then request only the identity, relationship, or shape detail the user actually needs.",
+        "interaction_contract": {
+            "natural_language_owner": "calling_client_llm",
+            "execution_input": "strict_json_schema",
+            "per_tool_help": {"tool": "get_tool_help", "arguments": {"tool_name": "<exact tool name from tools/list>"}},
+            "rules": [
+                "The calling LLM interprets ordinary user language; deterministic geometry tools do not parse prose unless their schema explicitly accepts a question field.",
+                "Use tools/list, then get_tool_help for the exact tool before an unfamiliar call.",
+                "Preserve external identifiers as strings, especially when they have leading zeros.",
+                "Inspect error.code, warnings, guidance, and clarification after a failed or ambiguous call.",
+                "Ask the person only when clarification.required is true; otherwise repair the call directly.",
+            ],
+        },
+        "workflows": [
+            {
+                "name": "coordinates_to_geography",
+                "steps": ["resolve_point", "loc_id_info only when details are requested", "check_geometry then get_geometry only when shapes are requested"],
+            },
+            {
+                "name": "known_or_suspected_dataset_identifiers",
+                "steps": ["identify_reference_system on representative or all distinct string keys", "use the unambiguous geography_binding", "estimate_conversion_job", "create_conversion_job within the 100-row v0 limit", "get_job_status to retrieve the completed result"],
+            },
+            {
+                "name": "one_external_reference",
+                "steps": ["list_reference_systems when support is unknown", "resolve_reference to loc_id", "convert_reference only when another external system is requested"],
+            },
+            {
+                "name": "shapes_and_exports",
+                "steps": ["check_geometry", "get_geometry for bounded metadata/polygons", "resolve_loc_id_scope", "estimate_geometry_package", "create_geometry_export", "get_job_status"],
+            },
+            {
+                "name": "relationships_and_time",
+                "steps": ["loc_id_info for identity/hierarchy/lifecycle", "compare_geographies for spatial overlap, validity, or successors"],
+            },
+        ],
+        "available_tools": sorted(
+            name for name in TOOL_GUIDANCE
+            if name == "get_tool_help" or tool_profile(name).get("family") == "geography"
+        ),
+        "notes": [
+            "loc_id is the reserve geography identifier used by data packs and geometry tools.",
+            "Known identifier crosswalks bypass point and polygon rediscovery.",
+            "A mixed-vintage point chain is context, not strict stored parentage.",
+            "Use bbox/centroid by default; full polygons and exports are opt-in and bounded.",
+            "Paying raises hosted throughput; it does not unlock a different geometry truth set.",
+        ],
+        "input_question": str(question or "").strip() or None,
+    }
+
+
 def tool_help_payload(
     tool_name: str,
     *,
     tool_definition: dict[str, Any],
     available_on_facades: list[str],
     effective_limits: dict[str, Any] | None = None,
+    local_unrestricted: bool = False,
 ) -> dict[str, Any]:
     name = str(tool_name or "").strip()
     guidance = deepcopy(TOOL_GUIDANCE.get(name) or {})
@@ -243,10 +315,10 @@ def tool_help_payload(
     pricing = tool_pricing(name)
     access = {
         "pricing": pricing,
-        "free_discovery": name in {"get_tool_help", "get_catalog", "get_pack", "read_geometry_catalog", "list_reference_systems"},
+        "free_discovery": name in {"get_tool_help", "how_geometry_works", "get_catalog", "get_pack", "read_geometry_catalog", "list_reference_systems", "identify_reference_system"},
         "limits": limits,
         "above_free_limit": "payment_required" if pricing.startswith("paid") else (
-            "queued_when_above_inline_limit" if "inline_item_limit" in limits else "typed_cap_error"
+            "bounded_inline_limit_error" if name in {"create_geometry_export", "create_conversion_job"} else "typed_cap_error"
         ),
         "rate_limited_independently": True,
         "trusted_artifact_bypass": [
@@ -256,7 +328,16 @@ def tool_help_payload(
             "payment_challenge",
         ],
     }
-    if name == "resolve_point":
+    if local_unrestricted:
+        access.update({
+            "access_lane": "local_installed",
+            "limits": {},
+            "above_free_limit": "not_applicable",
+            "rate_limited_independently": False,
+            "service_item_caps_enforced": False,
+            "resource_boundary": "local machine memory, disk, and process availability",
+        })
+    if name == "resolve_point" and not local_unrestricted:
         access["caller_tiers"] = {
             "anonymous": {"included_items": limits.get("free_item_limit"), "above_limit": "payment_required"},
             "verified_account": {"included_items": limits.get("paid_item_limit"), "above_limit": "paid_export_or_dashboard"},
@@ -274,6 +355,27 @@ def tool_help_payload(
         "title": tool_definition.get("title"),
         "purpose": tool_definition.get("description"),
         "input_schema": deepcopy(tool_definition.get("inputSchema") or {}),
+        "interaction_contract": {
+            "natural_language_owner": "calling_client_llm",
+            "execution_input": "strict_json_schema",
+            "rules": [
+                "Translate the user's request into this tool's input_schema; do not pass prose unless the schema explicitly defines a natural-language question or query field.",
+                "Preserve identifiers as strings when leading zeros or source formatting may matter.",
+                "Do not invent pack ids, source ids, metric ids, filter fields, reference systems, loc_ids, or vintages; use discovery tools and returned contracts.",
+                "On error, inspect error.code, warnings, guidance, and clarification before retrying.",
+                "Ask the user only when clarification.required is true; otherwise correct the tool call without burdening the user.",
+            ],
+            "clarification_shape": {
+                "required": "boolean",
+                "reason": "stable_machine_code",
+                "questions": [{
+                    "id": "stable_answer_id",
+                    "prompt": "one concise user-facing question",
+                    "answer_schema": "JSON Schema for the answer",
+                    "maps_to": "target argument path when directly mappable",
+                }],
+            },
+        },
         **guidance,
         "access": access,
         "capability_id": profile.get("capability_id"),

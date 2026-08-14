@@ -50,6 +50,7 @@ from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log
 from mapmover.security import (
     get_allowed_origins,
     get_client_ip,
+    is_local_loopback_request,
     is_https_request,
     log_startup_security_warnings,
     rate_limiter,
@@ -323,7 +324,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="County Map API",
     description="Geographic data exploration API",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -381,9 +382,17 @@ async def static_no_cache(request: Request, call_next):
     # JSON/control payloads; larger uploads belong in the offline pipeline,
     # not the request path.  Use the shared parser so a malformed deployment
     # variable cannot turn a request into a middleware 500.
-    max_body_bytes = _parse_env_int("MAX_REQUEST_BODY_BYTES", 1_048_576)
+    local_unrestricted = is_local_loopback_request(request)
+    if local_unrestricted:
+        local_body_limit = str(os.getenv("LOCAL_MAX_REQUEST_BODY_BYTES", "") or "").strip()
+        try:
+            max_body_bytes = max(1, int(local_body_limit)) if local_body_limit else None
+        except ValueError:
+            max_body_bytes = None
+    else:
+        max_body_bytes = _parse_env_int("MAX_REQUEST_BODY_BYTES", 1_048_576)
     content_length = request.headers.get("content-length")
-    if content_length:
+    if content_length and max_body_bytes is not None:
         try:
             if int(content_length) > max_body_bytes:
                 return JSONResponse({"error": "Request body too large"}, status_code=413)
@@ -414,6 +423,13 @@ async def static_no_cache(request: Request, call_next):
         **(getattr(request.state, "analytics_metadata", {}) or {}),
         **caller_identity.as_analytics_fields(),
     }
+    if local_unrestricted:
+        request.state.analytics_metadata = {
+            **request.state.analytics_metadata,
+            "access_lane": "local_installed",
+            "rate_limit_bypassed": True,
+            "item_cap_bypassed": True,
+        }
     artifact_token_record = get_artifact_token_record(request)
     if artifact_token_record is not None:
         request.state.trusted_artifact_token_id = artifact_token_record.token_id
@@ -440,7 +456,7 @@ async def static_no_cache(request: Request, call_next):
     rate_limit_config = _rate_limit_config_for_surface(surface)
     if rate_limit_config is None and not auth_user_id and surface == "shared_runtime":
         rate_limit_config = _shared_runtime_rate_limit_for_path(path)
-    if rate_limit_config is not None and request.method != "OPTIONS" and artifact_token_record is None:
+    if rate_limit_config is not None and request.method != "OPTIONS" and artifact_token_record is None and not local_unrestricted:
         limit, window_seconds = rate_limit_config
         limiter_keys = [caller_identity.binding]
         if caller_identity.is_anonymous and ip_hash:

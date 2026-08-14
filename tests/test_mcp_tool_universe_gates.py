@@ -13,7 +13,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from mapmover.routes.mcp import (
@@ -26,6 +26,7 @@ from mapmover.routes.mcp import (
     _access_lane,
     router as mcp_router,
 )
+from mapmover.security import is_local_loopback_request
 
 
 def _tool_call_envelope(
@@ -48,6 +49,31 @@ def _tool_call_envelope(
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+class LocalRuntimeAccessTests(unittest.TestCase):
+    @staticmethod
+    def _request(client_host: str, *, forwarded_for: str | None = None) -> Request:
+        headers = []
+        if forwarded_for:
+            headers.append((b"x-forwarded-for", forwarded_for.encode("ascii")))
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp/geography",
+            "headers": headers,
+            "client": (client_host, 12345),
+            "server": ("127.0.0.1", 7000),
+            "scheme": "http",
+            "query_string": b"",
+        })
+
+    def test_only_direct_local_loopback_gets_unrestricted_lane(self) -> None:
+        with mock.patch("mapmover.security.get_runtime_config", return_value={"runtime_mode": "local"}):
+            self.assertTrue(is_local_loopback_request(self._request("127.0.0.1")))
+            self.assertFalse(is_local_loopback_request(self._request("10.0.0.8", forwarded_for="127.0.0.1")))
+        with mock.patch("mapmover.security.get_runtime_config", return_value={"runtime_mode": "cloud"}):
+            self.assertFalse(is_local_loopback_request(self._request("127.0.0.1")))
 
 
 class AccessLaneEnumTests(unittest.TestCase):
@@ -118,6 +144,7 @@ class DataHelperTelemetryTests(unittest.TestCase):
     def test_every_free_data_helper_has_a_capability_id(self) -> None:
         expected = {
             "get_tool_help",
+            "how_geometry_works",
             "get_catalog",
             "get_pack",
             "get_live_earthquake_events",
@@ -206,9 +233,24 @@ class BlindCallerHelpTests(unittest.TestCase):
         self.assertEqual(payload["access"]["limits"]["free_item_limit"], 25)
         self.assertEqual(payload["access"]["limits"]["paid_item_limit"], 10000)
         self.assertTrue(payload["examples"])
+        self.assertEqual(payload["interaction_contract"]["natural_language_owner"], "calling_client_llm")
+        self.assertEqual(payload["interaction_contract"]["execution_input"], "strict_json_schema")
+        self.assertIn("clarification_shape", payload["interaction_contract"])
         self.assertIn("loc_id_info", payload["recommended_next_calls"])
         self.assertIn("/mcp/reverse-geocoding", payload["available_on_facades"])
         self.assertEqual(payload["provenance"]["schema_version"], "daedalmap.tool_provenance.v1")
+
+    def test_help_can_explain_geometry_family_helper(self) -> None:
+        envelope = _tool_call_envelope(
+            self.client,
+            "get_tool_help",
+            {"tool_name": "how_geometry_works"},
+            path="/mcp/geography",
+        )
+        payload = envelope["result"]["structuredContent"]
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["tool_name"], "how_geometry_works")
+        self.assertIn("get_tool_help", payload["recommended_next_calls"])
 
     def test_help_cannot_leak_tools_hidden_from_a_narrow_facade(self) -> None:
         envelope = _tool_call_envelope(
@@ -310,6 +352,42 @@ class TrustedArtifactBypassTests(unittest.TestCase):
         limiter_mock.assert_not_called()
         self.assertEqual(analytics_mock.call_args.kwargs["payment_rail"], ACCESS_LANE_TRUSTED_ARTIFACT)
         self.assertTrue(analytics_mock.call_args.kwargs["metadata"]["rate_limit_bypassed"])
+
+    def test_local_runtime_bypasses_rate_and_item_caps(self) -> None:
+        with (
+            mock.patch("mapmover.routes.mcp.is_local_loopback_request", return_value=True),
+            mock.patch("mapmover.routes.mcp.rate_limiter.check", return_value=(False, 60)) as limiter_mock,
+            mock.patch(
+                "mapmover.runtime.geometry_tool_jobs._run_conversion_row",
+                return_value={"ok": True, "resolved_loc_id": "USA-CA-001"},
+            ),
+            mock.patch.dict(
+                "os.environ",
+                {"MCP_TOOL_BATCH_LIMIT_CREATE_CONVERSION_JOB": "2"},
+                clear=False,
+            ),
+        ):
+            help_envelope = _tool_call_envelope(
+                self.client,
+                "get_tool_help",
+                {"tool_name": "create_conversion_job"},
+            )
+            create_envelope = _tool_call_envelope(
+                self.client,
+                "create_conversion_job",
+                {
+                    "from_system": "admin.native_id",
+                    "items": [{"value": str(index)} for index in range(3)],
+                },
+            )
+
+        access = help_envelope["result"]["structuredContent"]["access"]
+        self.assertEqual(access["access_lane"], "local_installed")
+        self.assertEqual(access["limits"], {})
+        self.assertFalse(access["rate_limited_independently"])
+        self.assertFalse(access["service_item_caps_enforced"])
+        self.assertEqual(create_envelope["result"]["structuredContent"]["status"], "completed")
+        limiter_mock.assert_not_called()
 
 
 if __name__ == "__main__":

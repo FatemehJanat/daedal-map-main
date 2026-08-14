@@ -4,6 +4,7 @@ import io
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -71,6 +72,7 @@ class PublishedArtifactTests(unittest.TestCase):
     def test_json_read_uses_canonical_ref(self) -> None:
         response = {"Body": io.BytesIO(b'{"status":"ok"}')}
         client = mock.Mock()
+        client.head_object.side_effect = OSError("cache metadata unavailable")
         client.get_object.return_value = response
         with mock.patch.dict(os.environ, {
             "S3_BUCKET": "bucket", "S3_PUBLISHED_PREFIX": "published"
@@ -86,7 +88,8 @@ class PublishedArtifactTests(unittest.TestCase):
 
     def test_duckdb_path_translation_uses_shared_artifact_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
-            "S3_BUCKET": "bucket", "S3_PREFIX": "active"
+            "S3_BUCKET": "bucket", "S3_PREFIX": "active",
+            "PUBLISHED_ARTIFACT_CACHE_ENABLED": "false",
         }, clear=True), mock.patch.object(
             published_artifacts, "get_runtime_config", return_value=self._config()
         ), mock.patch.object(duckdb_helpers, "is_cloud_mode", return_value=True), mock.patch.object(
@@ -95,6 +98,70 @@ class PublishedArtifactTests(unittest.TestCase):
             uri = duckdb_helpers.path_to_uri(Path(temp_dir) / "global" / "pack" / "data.parquet")
 
         self.assertEqual(uri, "s3://bucket/active/global/pack/data.parquet")
+
+    def test_hydrates_once_then_serves_verified_disk_hit(self) -> None:
+        payload = b"verified artifact"
+        client = mock.Mock()
+        client.head_object.return_value = {
+            "ContentLength": len(payload), "ETag": '"etag-1"',
+            "LastModified": datetime(2026, 8, 12, tzinfo=timezone.utc),
+        }
+        client.get_object.side_effect = lambda **_kwargs: {"Body": io.BytesIO(payload)}
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket", "S3_PUBLISHED_PREFIX": "published",
+            "PUBLISHED_ARTIFACT_CACHE_DIR": temp_dir,
+            "PUBLISHED_ARTIFACT_CACHE_ENABLED": "true",
+        }, clear=True), mock.patch.object(
+            published_artifacts, "get_runtime_config", return_value=self._config()
+        ), mock.patch.object(published_artifacts, "_object_store_client", return_value=client):
+            first = published_artifacts.resolve_artifact_path("geometry/test.parquet")
+            second = published_artifacts.resolve_artifact_path("geometry/test.parquet")
+
+            self.assertIsNotNone(first)
+            self.assertEqual(first, second)
+            self.assertEqual(first.read_bytes(), payload)
+
+        self.assertEqual(client.get_object.call_count, 1)
+        self.assertEqual(client.head_object.call_count, 1)
+
+    def test_corrupt_cached_file_is_rehydrated(self) -> None:
+        payload = b"correct bytes"
+        client = mock.Mock()
+        client.head_object.return_value = {"ContentLength": len(payload), "ETag": '"same"'}
+        client.get_object.side_effect = lambda **_kwargs: {"Body": io.BytesIO(payload)}
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket", "PUBLISHED_ARTIFACT_CACHE_DIR": temp_dir,
+            "PUBLISHED_ARTIFACT_CACHE_ENABLED": "true",
+        }, clear=True), mock.patch.object(
+            published_artifacts, "get_runtime_config", return_value=self._config()
+        ), mock.patch.object(published_artifacts, "_object_store_client", return_value=client):
+            path = published_artifacts.resolve_artifact_path("catalog.json")
+            self.assertIsNotNone(path)
+            path.write_bytes(b"corrupt")
+            restored = published_artifacts.resolve_artifact_path("catalog.json")
+            self.assertEqual(restored.read_bytes(), payload)
+
+        self.assertEqual(client.get_object.call_count, 2)
+
+    def test_large_artifact_keeps_remote_duckdb_uri(self) -> None:
+        client = mock.Mock()
+        client.head_object.return_value = {"ContentLength": 3 * 1024 * 1024, "ETag": '"large"'}
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket", "S3_PREFIX": "published",
+            "PUBLISHED_ARTIFACT_CACHE_DIR": str(Path(temp_dir) / "cache"),
+            "PUBLISHED_ARTIFACT_CACHE_ENABLED": "true",
+            "PUBLISHED_ARTIFACT_CACHE_MAX_FILE_MB": "1",
+        }, clear=True), mock.patch.object(
+            published_artifacts, "get_runtime_config", return_value=self._config()
+        ), mock.patch.object(published_artifacts, "_object_store_client", return_value=client), mock.patch.object(
+            duckdb_helpers, "is_cloud_mode", return_value=True
+        ), mock.patch.object(duckdb_helpers, "_allow_local_source_fallback", return_value=False), mock.patch.object(
+            duckdb_helpers, "_get_data_root", return_value=Path(temp_dir)
+        ):
+            uri = duckdb_helpers.path_to_uri(Path(temp_dir) / "large.parquet")
+
+        self.assertEqual(uri, "s3://bucket/published/large.parquet")
+        client.get_object.assert_not_called()
 
 
 if __name__ == "__main__":

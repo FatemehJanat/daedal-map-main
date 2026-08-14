@@ -14,6 +14,25 @@ from fastapi import Request
 from mapmover.runtime_config import get_runtime_config
 
 
+def is_local_loopback_request(request: Request) -> bool:
+    """Return true only for a direct loopback caller in local runtime mode.
+
+    This deliberately ignores forwarded headers. A hosted proxy must never be
+    able to claim the unrestricted local execution lane by spoofing X-Forwarded-For.
+    """
+    runtime_mode = str(get_runtime_config().get("runtime_mode", "local") or "local").strip().lower()
+    if runtime_mode != "local":
+        return False
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "").strip().split("%", 1)[0]
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _normalize_origin(value: str) -> str:
     value = (value or "").strip()
     if not value:

@@ -22,7 +22,7 @@ import pandas as pd
 
 from .runtime_config import get_runtime_config
 from .catalog_surface import get_catalog_surface_override
-from .runtime.published_artifacts import data_artifact_ref
+from .runtime.published_artifacts import resolve_data_artifact_uri
 
 try:
     import duckdb
@@ -108,7 +108,7 @@ def path_to_uri(local_path: Path) -> str:
     data_root = _get_data_root()
 
     try:
-        return data_artifact_ref(local_path, data_root=data_root, lane="active").uri
+        return resolve_data_artifact_uri(local_path, data_root=data_root, lane="active")
     except ValueError:
         pass
 

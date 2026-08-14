@@ -51,6 +51,12 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "pricing": PRICING_FREE,
         "notes": "Blind-caller help must stay free on every facade.",
     },
+    "how_geometry_works": {
+        "family": FAMILY_GEOGRAPHY,
+        "capability_id": "geometry_family_help",
+        "pricing": PRICING_FREE,
+        "notes": "Family-level geometry orientation must stay free on the full geography facade.",
+    },
     # ---- geography: bulk-capable, licence-eligible for paid throughput ----
     "resolve_point": {
         "family": FAMILY_GEOGRAPHY,
@@ -109,6 +115,15 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "paid_item_limit": 2500,
         "legacy_limit_env": ("REFERENCE_RESOLVE_BATCH_LIMIT",),
     },
+    "identify_reference_system": {
+        "family": FAMILY_GEOGRAPHY,
+        "capability_id": "reference_system_identification",
+        "pricing": PRICING_FREE,
+        "item_field": "identifiers",
+        "free_item_limit": 100,
+        "paid_item_limit": 2500,
+        "legacy_limit_env": ("REFERENCE_IDENTIFY_BATCH_LIMIT",),
+    },
     "convert_reference": {
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "reference_conversion",
@@ -149,7 +164,7 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "geometry_export",
         "pricing": PRICING_FREE,
-        "inline_item_limit": 10,
+        "inline_item_limit": 250,
         "legacy_limit_env": ("GEOMETRY_EXPORT_INLINE_LIMIT",),
     },
     "estimate_conversion_job": {
@@ -162,7 +177,7 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "conversion_job",
         "pricing": PRICING_FREE,
-        "inline_item_limit": 100,
+        "inline_item_limit": 7500,
         "legacy_limit_env": ("CONVERSION_JOB_INLINE_LIMIT",),
     },
     "get_job_status": {
