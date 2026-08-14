@@ -50,6 +50,19 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(set(question["answer_schema"]["enum"]), systems)
         self.assertEqual(payload["clarification"]["retry"]["answer_mapping"]["reference_system"], "expected.system")
 
+    @mock.patch("mapmover.runtime.reference_identification._catalog_bank", return_value=None)
+    def test_identify_ambiguity_survives_temporarily_unavailable_geometry_catalog(
+        self, _catalog_bank: mock.Mock
+    ) -> None:
+        payload = identify_reference_system(["06037"], country_scope="USA")
+
+        self.assertEqual(payload["status"], "ambiguous")
+        self.assertIsNone(payload["recommended_binding"])
+        self.assertEqual(
+            {candidate["system"] for candidate in payload["candidates"]},
+            {"us_census_geoid", "overlay_zcta"},
+        )
+
     def test_resolve_census_geoid_is_exact_and_shape_backed(self) -> None:
         payload = resolve_reference(from_system="census_geoid", value="06073000100")
 

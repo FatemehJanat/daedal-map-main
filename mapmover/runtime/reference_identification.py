@@ -394,9 +394,19 @@ def identify_reference_system(
         str(item.get("system") or ""),
     ))
 
+    # Only a vintage explicitly declared by the caller may disqualify an
+    # otherwise exact identifier-system match. Census adapters use their
+    # maintained vintage while looking up a geometry bank, but a temporarily
+    # unavailable catalog entry must not make a five-digit county/ZCTA value
+    # appear unambiguous and silently select the other system.
+    vintage_is_constrained = expected_vintage is not None
     full_matches = [
         candidate for candidate in candidates
-        if candidate.get("match_rate") == 1.0 and candidate.get("expected_vintage_supported") is not False
+        if candidate.get("match_rate") == 1.0
+        and (
+            not vintage_is_constrained
+            or candidate.get("expected_vintage_supported") is not False
+        )
     ]
     if not candidates:
         status = "unmatched"
