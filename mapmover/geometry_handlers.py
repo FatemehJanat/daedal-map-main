@@ -3064,13 +3064,11 @@ def clear_cache():
 
 
 def prewarm_geometry() -> None:
-    """Pre-warm shared geometry and the primary hosted USA point path.
+    """Pre-warm the global countries CSV into memory.
 
     The global country layer is always warm.  In cloud mode the USA county
     bank is also warmed because live NWS frames repeatedly resolve county ids;
     it remains subject to the same bounded LRU budget as all other geometry.
-    The representative USA point lookup also primes the consolidated authority
-    spine's Admin0-5 parquet metadata and row groups before readiness succeeds.
     """
     import time as _time
 
@@ -3108,28 +3106,6 @@ def prewarm_geometry() -> None:
             logger.info("prewarm geometry USA county bank: reused %d rows", len(cached))
     except Exception as exc:
         logger.warning("prewarm geometry USA county bank failed: %s", exc)
-
-    # The active USA authority spine is a consolidated Admin0-5 parquet. Its
-    # first hosted point lookup otherwise pays several cold R2 metadata/range
-    # reads and can exceed the interactive response-time target. Exercise the
-    # normal resolver so the same caches used by public tool calls are ready.
-    point_t0 = _time.monotonic()
-    try:
-        resolved = resolve_points_to_locations(
-            [{"id": "prewarm-usa", "lat": 34.0522, "lon": -118.2437}],
-            include_geometry=False,
-            country_scope="USA",
-        )
-        if resolved and not resolved[0].get("error"):
-            logger.info(
-                "prewarm geometry USA Admin0-5 point path: %s in %.1fs",
-                resolved[0].get("deepest_resolved_loc_id"),
-                _time.monotonic() - point_t0,
-            )
-        else:
-            logger.warning("prewarm geometry USA Admin0-5 point path returned no match")
-    except Exception as exc:
-        logger.warning("prewarm geometry USA Admin0-5 point path failed: %s", exc)
 
     logger.info("Geometry pre-warmer complete")
 
