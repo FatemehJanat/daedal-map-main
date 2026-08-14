@@ -13,6 +13,10 @@ from mapmover.runtime import published_artifacts
 
 
 class PublishedArtifactTests(unittest.TestCase):
+    def test_default_file_limit_accommodates_large_reference_graph(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(1024 * 1024 * 1024, published_artifacts.artifact_cache_max_file_bytes())
+
     def _config(self) -> dict:
         return {
             "cloud": {

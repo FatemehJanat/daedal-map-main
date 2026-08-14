@@ -183,7 +183,11 @@ def artifact_cache_quota_bytes() -> int:
 
 
 def artifact_cache_max_file_bytes() -> int:
-    return _env_bytes("PUBLISHED_ARTIFACT_CACHE_MAX_FILE_MB", 256)
+    # The Canada reference relationship graph is currently about 669 MB.
+    # Keep the cache bounded by the independent 2 GB total quota, while
+    # allowing reviewed runtime banks of this size to hydrate once instead of
+    # forcing a remote Parquet scan on every MCP call.
+    return _env_bytes("PUBLISHED_ARTIFACT_CACHE_MAX_FILE_MB", 1024)
 
 
 def artifact_cache_revalidate_seconds() -> int:

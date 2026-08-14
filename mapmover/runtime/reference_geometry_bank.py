@@ -21,6 +21,7 @@ from .reference_graph import identities
 
 
 IDENTITY_VERSION_COLUMNS = ["loc_id", "geometry_partition", "shape_storage"]
+DIRECT_ADMIN_PARTITION_BANKS = {"dissemination_area", "dissemination_block"}
 
 
 def _safe_bank_root(value: str | None) -> Path | None:
@@ -82,6 +83,19 @@ def _read_single_file_bank(path: Path, loc_ids: list[str]) -> pd.DataFrame:
         ) if column in available
     ]
     return select_rows(path, columns=columns, in_filters={"loc_id": loc_ids})
+
+
+def _direct_admin_partitions(bank_root: Path, loc_ids: list[str]) -> dict[Path, list[str]]:
+    """Map deep Canada admin ids to their province-sharded Parquet banks."""
+    if bank_root.name not in DIRECT_ADMIN_PARTITION_BANKS:
+        return {}
+    partitions: dict[Path, list[str]] = {}
+    for loc_id in loc_ids:
+        parts = str(loc_id).split("-")
+        if len(parts) < 2 or parts[0] != "CAN" or len(parts[1]) != 2:
+            continue
+        partitions.setdefault(bank_root / f"CAN-{parts[1]}.parquet", []).append(loc_id)
+    return partitions
 
 
 def _normalized_row(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any] | None:
@@ -159,6 +173,16 @@ def load_reference_graph_geometry(
                 item = _normalized_row(row, identity)
                 if item is not None:
                     normalized.append(item)
+            continue
+        direct_partitions = _direct_admin_partitions(bank_root, bank_ids)
+        if direct_partitions:
+            for partition, partition_ids in direct_partitions.items():
+                shape_rows = _read_single_file_bank(partition, partition_ids)
+                for row in shape_rows.to_dict("records"):
+                    identity = by_id.get(str(row.get("loc_id"))) or {}
+                    item = _normalized_row(row, identity)
+                    if item is not None:
+                        normalized.append(item)
             continue
         versions_path = bank_root / "identity_versions.parquet"
         version_rows = select_rows(

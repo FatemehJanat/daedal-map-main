@@ -12,6 +12,7 @@ from mapmover.runtime.reference_geometry_bank import (
 LAKE_SUPERIOR = "CGNDB-666A39DABA2A11D892E2080020A0F4C9"
 CANVEC_BANK = DATA_ROOT / "countries" / "CAN" / "geometry" / "relationships" / "canada_canvec_water_bodies_1m"
 CANADA_ADMIN_BANK = DATA_ROOT / "countries" / "CAN" / "geometry.parquet"
+CANADA_DB_BANK = DATA_ROOT / "countries" / "CAN" / "geometry" / "dissemination_block" / "CAN-BC.parquet"
 
 
 class ReferenceGeometryBankRuntimeTests(unittest.TestCase):
@@ -42,6 +43,16 @@ class ReferenceGeometryBankRuntimeTests(unittest.TestCase):
         row = frame.iloc[0]
         self.assertEqual(row["loc_id"], "CAN-AB")
         self.assertEqual(row["name"], "Alberta")
+        self.assertIn(row["geometry"]["type"], {"Polygon", "MultiPolygon"})
+
+    @unittest.skipUnless(CANADA_DB_BANK.is_file(), "Canada dissemination-block bank is not installed")
+    def test_province_partitioned_admin_bank_does_not_require_identity_versions_sidecar(self):
+        loc_id = "CAN-BC-5931-021-0221-067"
+        frame = load_reference_graph_geometry([loc_id])
+        self.assertEqual(len(frame), 1)
+        row = frame.iloc[0]
+        self.assertEqual(row["loc_id"], loc_id)
+        self.assertEqual(row["admin_level"], 5)
         self.assertIn(row["geometry"]["type"], {"Polygon", "MultiPolygon"})
 
 
