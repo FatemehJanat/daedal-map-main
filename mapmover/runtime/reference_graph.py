@@ -55,7 +55,10 @@ def _load_graph_json(path_text: str, cloud_mode: bool) -> dict[str, Any] | None:
             return None
 
     try:
-        payload = read_artifact_json(_relative_data_path(path), lane="published")
+        # Keep JSON sidecars on the same configured immutable lane as the
+        # Parquet graph files. Production's active lane is ``published``;
+        # isolated operator QA may explicitly select ``staging``.
+        payload = read_artifact_json(_relative_data_path(path), lane="active")
         return payload if isinstance(payload, dict) else None
     except Exception:
         return None
@@ -121,7 +124,7 @@ def where_is_geography_data() -> dict[str, Any]:
             "totals": completion.get("totals"),
         })
         candidate_pointer = DATA_ROOT / "countries" / "CAN" / "geometry" / "releases" / "candidates" / "current.json"
-        if candidate_pointer.exists():
+        if not is_cloud_mode() and candidate_pointer.exists():
             pointer = json.loads(candidate_pointer.read_text(encoding="utf-8"))
             pointer_root = (DATA_ROOT / str(pointer.get("graph_root") or "")).resolve()
             if pointer_root == root:

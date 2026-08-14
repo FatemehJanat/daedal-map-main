@@ -1320,6 +1320,21 @@ def resolve_points_to_locations(
     """
     if target_admin_level is None and max_admin_level is not None:
         target_admin_level = max_admin_level
+    scope_iso3 = str(country_scope or "").strip().upper()
+    if scope_iso3 == "CAN":
+        from .runtime.canada_exact_geometry import (
+            canada_query_exact_enabled,
+            resolve_canada_query_exact_points,
+        )
+
+        if canada_query_exact_enabled():
+            if include_geometry:
+                raise ValueError(
+                    "resolve_point exact mode returns loc_ids only; fetch or export the selected geometry separately"
+                )
+            return resolve_canada_query_exact_points(
+                points, target_admin_level=target_admin_level,
+            )
     normalized_points: list[dict] = []
     for index, point in enumerate(points or []):
         try:
@@ -1338,7 +1353,6 @@ def resolve_points_to_locations(
 
     results: list[dict | None] = [None] * len(normalized_points)
     by_country: dict[str, list[dict]] = {}
-    scope_iso3 = str(country_scope or "").strip().upper()
     stage_started = time.perf_counter()
     if scope_iso3:
         scoped_rows = country_df[country_df["loc_id"].astype(str).str.upper() == scope_iso3] if "loc_id" in country_df.columns else pd.DataFrame()
