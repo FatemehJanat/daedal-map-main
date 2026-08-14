@@ -1122,7 +1122,7 @@ def _find_containing_country_with_fallback(country_df, lon: float, lat: float):
         return None
 
     for _, row in candidates.iterrows():
-        iso3 = str(row.get("loc_id") or "").strip()
+        iso3 = _row_text(row, "loc_id")
         if not iso3:
             continue
         admin0_df = load_country_parquet(iso3, admin_level=0)
@@ -2417,15 +2417,38 @@ def _apply_subcounty_filters(
     return filtered
 
 
+def _row_text(row, field: str) -> str:
+    """Return a row field as text, tolerating pandas missing values.
+
+    ``row.get(field) or ""`` looks safe but raises on pandas ``NA``, because
+    ``bool(pd.NA)`` is deliberately ambiguous rather than falsey. Parquet-backed
+    admin rows carry ``NA`` in optional columns such as ``iso_3166_2``, so the
+    plain ``or`` idiom crashes point resolution for any country where that
+    column is unset. Venice was the reported case.
+    """
+    if row is None:
+        return ""
+    value = row.get(field)
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        # Array-like values are not missing; fall through and stringify.
+        pass
+    return str(value).strip()
+
+
 def _state_code_from_row(row) -> str | None:
     if row is None:
         return None
     for field in ("loc_id", "parent_id"):
-        value = str(row.get(field) or "").strip().upper()
+        value = _row_text(row, field).upper()
         parts = value.split("-")
         if len(parts) >= 2 and parts[0].isalpha() and len(parts[1]) <= 3 and not parts[1].startswith("G"):
             return parts[1]
-    iso_3166_2 = str(row.get("iso_3166_2") or "").strip().upper()
+    iso_3166_2 = _row_text(row, "iso_3166_2").upper()
     if "-" in iso_3166_2:
         return iso_3166_2.rsplit("-", 1)[-1]
     return None
@@ -3315,7 +3338,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
     seen = set()
     deduped = []
     for row in rows:
-        loc_id = str(row.get("loc_id") or "").strip()
+        loc_id = _row_text(row, "loc_id")
         if not loc_id or loc_id in seen:
             continue
         seen.add(loc_id)
