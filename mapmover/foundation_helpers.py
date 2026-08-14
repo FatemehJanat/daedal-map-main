@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -164,14 +164,23 @@ def _reference_country_codes() -> set[str]:
 
 
 def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_ids: set[str]) -> pd.DataFrame:
-    """Load approved supplemental Admin0 geometry rows missing from global.csv."""
+    """Load approved supplemental Admin0 candidates for point containment.
+
+    A supplemental territory may intentionally share a loc_id with the shallow
+    global bank when its reviewed polygon corrects a coastal coverage gap. Keep
+    both candidates; the point matcher selects the smallest covering polygon.
+    """
     path = GEOMETRY_DIR / "supplemental" / "admin0_territories.parquet"
     index_path = GEOMETRY_DIR / "supplemental" / "admin0_territories_index.json"
-    if not path.exists() or not index_path.exists():
+    if not is_cloud_mode() and (not path.exists() or not index_path.exists()):
         return pd.DataFrame(columns=existing_columns)
 
     try:
-        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index = (
+            read_artifact_json("geometry/supplemental/admin0_territories_index.json", lane="published")
+            if is_cloud_mode()
+            else json.loads(index_path.read_text(encoding="utf-8"))
+        )
     except Exception as e:
         logger.warning("Failed to load supplemental Admin0 index: %s", e)
         return pd.DataFrame(columns=existing_columns)
@@ -181,7 +190,11 @@ def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_id
 
     reference_codes = _reference_country_codes()
     try:
-        supplemental = pd.read_parquet(path)
+        supplemental = (
+            pd.read_parquet(BytesIO(read_artifact_bytes("geometry/supplemental/admin0_territories.parquet", lane="published")))
+            if is_cloud_mode()
+            else pd.read_parquet(path)
+        )
     except Exception as e:
         logger.warning("Failed to load supplemental Admin0 geometry: %s", e)
         return pd.DataFrame(columns=existing_columns)
@@ -191,9 +204,17 @@ def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_id
 
     supplemental = supplemental.copy()
     supplemental["loc_id"] = supplemental["loc_id"].astype(str).str.strip().str.upper()
+    overlap_overrides = {
+        str(value).strip().upper()
+        for value in index.get("overlap_override_loc_ids") or []
+        if str(value).strip()
+    }
     supplemental = supplemental[
         supplemental["loc_id"].isin(reference_codes)
-        & ~supplemental["loc_id"].isin(existing_loc_ids)
+        & (
+            ~supplemental["loc_id"].isin(existing_loc_ids)
+            | supplemental["loc_id"].isin(overlap_overrides)
+        )
     ]
     if supplemental.empty:
         return pd.DataFrame(columns=existing_columns)
@@ -366,8 +387,15 @@ def load_global_countries_frame():
     if is_cloud_mode():
         try:
             raw = read_artifact_bytes("geometry/global.csv", lane="published").decode("utf-8-sig")
-            _GLOBAL_COUNTRIES_CACHE = pd.read_csv(StringIO(raw))
-            logger.info("Loaded %d countries from published geometry/global.csv", len(_GLOBAL_COUNTRIES_CACHE))
+            base = pd.read_csv(StringIO(raw))
+            existing_loc_ids = set(base["loc_id"].dropna().astype(str).str.strip().str.upper()) if "loc_id" in base.columns else set()
+            supplemental = _load_supplemental_admin0_frame(list(base.columns), existing_loc_ids)
+            _GLOBAL_COUNTRIES_CACHE = pd.concat([base, supplemental], ignore_index=True) if not supplemental.empty else base
+            logger.info(
+                "Loaded %d countries from published geometry/global.csv plus %d supplemental Admin0 rows",
+                len(_GLOBAL_COUNTRIES_CACHE),
+                len(supplemental),
+            )
             return _GLOBAL_COUNTRIES_CACHE
         except Exception as e:
             logger.warning("Failed to load global.csv from object storage: %s", e)
