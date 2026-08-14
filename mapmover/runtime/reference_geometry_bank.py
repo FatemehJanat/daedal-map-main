@@ -7,11 +7,12 @@ returns the same normalized frame consumed by the existing geometry tools.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
-from shapely.geometry import mapping
+from shapely.geometry import mapping, shape
 from shapely.wkb import loads as load_wkb
 
 from ..duckdb_helpers import parquet_available, parquet_columns, path_to_uri, run_df, select_rows
@@ -67,13 +68,37 @@ def _read_shape_partition(path: Path, loc_ids: list[str]) -> pd.DataFrame:
     return run_df(sql, [path_to_uri(path), *loc_ids])
 
 
+def _read_single_file_bank(path: Path, loc_ids: list[str]) -> pd.DataFrame:
+    """Read a legacy/adopted bank whose polygons live in one Parquet file."""
+    if not loc_ids or not parquet_available(path):
+        return pd.DataFrame()
+    available = parquet_columns(path)
+    if "loc_id" not in available or "geometry" not in available:
+        return pd.DataFrame()
+    columns = [
+        column for column in (
+            "loc_id", "name", "name_en", "name_fr", "family", "subtype",
+            "source_id", "source_release", "area_square_km", "geometry",
+        ) if column in available
+    ]
+    return select_rows(path, columns=columns, in_filters={"loc_id": loc_ids})
+
+
 def _normalized_row(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any] | None:
     raw_wkb = row.get("__geometry_wkb")
-    if not raw_wkb:
-        return None
+    raw_geometry = row.get("geometry")
     try:
-        geometry = load_wkb(bytes(raw_wkb))
-    except Exception:
+        if raw_wkb:
+            geometry = load_wkb(bytes(raw_wkb))
+        elif isinstance(raw_geometry, str):
+            geometry = shape(json.loads(raw_geometry))
+        elif isinstance(raw_geometry, dict):
+            geometry = shape(raw_geometry)
+        elif raw_geometry:
+            geometry = load_wkb(bytes(raw_geometry))
+        else:
+            return None
+    except (TypeError, ValueError, json.JSONDecodeError):
         return None
     if geometry.is_empty:
         return None
@@ -127,6 +152,14 @@ def load_reference_graph_geometry(
 
     normalized: list[dict[str, Any]] = []
     for bank_root, bank_ids in by_bank.items():
+        if bank_root.suffix.lower() == ".parquet":
+            shape_rows = _read_single_file_bank(bank_root, bank_ids)
+            for row in shape_rows.to_dict("records"):
+                identity = by_id.get(str(row.get("loc_id"))) or {}
+                item = _normalized_row(row, identity)
+                if item is not None:
+                    normalized.append(item)
+            continue
         versions_path = bank_root / "identity_versions.parquet"
         version_rows = select_rows(
             versions_path,
