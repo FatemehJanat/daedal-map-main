@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from ..foundation_helpers import load_country_crosswalk, load_country_json_asset, load_reference_json
+from .geometry_compatibility import translate_compatibility_loc_id
 
 _BASE_DIR = Path(__file__).resolve().parent.parent
 _CONVERSIONS_PATH = _BASE_DIR / "conversions.json"
@@ -234,6 +235,10 @@ def translate_loc_id_to_geometry_id(loc_id: str) -> str:
     canonical = canonicalize_loc_id(loc_id)
     if not isinstance(canonical, str) or "-" not in canonical:
         return canonical
+
+    compatibility_target = translate_compatibility_loc_id(canonical)
+    if compatibility_target != canonical:
+        return compatibility_target
 
     iso3 = canonical.split("-", 1)[0]
     crosswalk = load_country_crosswalk(iso3)

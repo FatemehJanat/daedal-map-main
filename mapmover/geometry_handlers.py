@@ -50,6 +50,12 @@ from .runtime.country_geography import (
     get_country_supported_deep_admin_levels,
 )
 from .runtime.geometry_loader import resolve_country_geometry_source
+from .runtime.geometry_compatibility import (
+    load_current_alias_target_rows,
+    load_legacy_geometry_rows,
+    requested_aliases,
+    retained_legacy_loc_ids,
+)
 from .runtime.geometry_spine import geometry_spine_index_for_frame, match_point_in_frame
 from .runtime.marine_geometry import load_marine_geometry
 from .runtime.reference_geometry_bank import load_reference_graph_geometry
@@ -572,6 +578,39 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
     if not requested_ids:
         return pd.DataFrame()
     columns = _ensure_loc_id_projection(columns)
+
+    # Released GeoBoundaries v2 ids remain valid after the exact-2026 bank
+    # promotion. Resolve deterministic aliases through the active bank and
+    # source-only gbOpen features through the small exact compatibility bank.
+    alias_requests = requested_aliases(requested_ids)
+    legacy_ids = retained_legacy_loc_ids()
+    requested_legacy = [loc_id for loc_id in requested_ids if loc_id in legacy_ids]
+    if alias_requests or requested_legacy:
+        compatibility_sources = set(alias_requests) | set(requested_legacy)
+        direct_requests = [loc_id for loc_id in requested_ids if loc_id not in compatibility_sources]
+        frames: list[pd.DataFrame] = []
+        if direct_requests:
+            direct_rows = load_geometry_rows_by_loc_ids(iso3, direct_requests, columns=columns)
+            if direct_rows is not None and not direct_rows.empty:
+                frames.append(direct_rows)
+        if alias_requests:
+            target_rows = load_current_alias_target_rows(alias_requests.values(), columns=columns)
+            if target_rows is not None and not target_rows.empty and "loc_id" in target_rows:
+                for source_loc_id, target_loc_id in alias_requests.items():
+                    matched_target = target_rows[
+                        target_rows["loc_id"].astype(str).eq(target_loc_id)
+                    ].copy()
+                    if matched_target.empty:
+                        continue
+                    matched_target["source_loc_id"] = target_loc_id
+                    matched_target["loc_id"] = source_loc_id
+                    matched_target["compatibility_target_loc_id"] = target_loc_id
+                    frames.append(matched_target)
+        legacy_rows = load_legacy_geometry_rows(requested_legacy, columns=columns)
+        if legacy_rows is not None and not legacy_rows.empty:
+            frames.append(legacy_rows)
+        return _concat_geometry_frames(frames, requested_ids)
+
     prefer_local = _prefer_local_geometry_reads()
 
     families = {_geometry_family_for_loc_id(loc_id) for loc_id in requested_ids}
