@@ -209,8 +209,8 @@ def load_country_parquet(iso3: str, admin_level: int = None, columns: list[str] 
     Returns DataFrame or None if file doesn't exist.
 
     Priority order (3-tier fallback):
-    1. countries/{ISO3}/geometry.parquet - Country-specific geometry (NUTS, ABS LGA, etc.)
-    2. countries/{ISO3}/crosswalk.json + geometry/{ISO3}.parquet - Crosswalk translation to geoBoundaries
+    1. geometry/countries/{ISO3}/geometry.parquet - Country-specific geometry (NUTS, ABS LGA, etc.)
+    2. geometry/countries/{ISO3}/crosswalk.json + geometry/{ISO3}.parquet - Crosswalk translation to geoBoundaries
     3. geometry/{ISO3}.parquet - Global geoBoundaries geometry (fallback)
 
     If admin_level is specified, uses predicate pushdown for efficiency.
@@ -374,8 +374,8 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, colu
     """
     min_lon, min_lat, max_lon, max_lat = bbox
 
-    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
-    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
+    country_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "geometry.parquet"
+    crosswalk_file = DATA_ROOT / "geometry" / "countries" / iso3 / "crosswalk.json"
     global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
 
     parquet_file = None
@@ -474,8 +474,8 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, colu
 
 def _resolve_geometry_source(iso3: str):
     """Resolve the parquet source and optional crosswalk for a country geometry lookup."""
-    country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
-    crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
+    country_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "geometry.parquet"
+    crosswalk_file = DATA_ROOT / "geometry" / "countries" / iso3 / "crosswalk.json"
     global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
 
     if _parquet_accessible(country_geom_file):
@@ -510,19 +510,19 @@ def _direct_family_bank_path(family: str | None, iso3: str) -> Path | None:
     family_value = str(family or "").strip().lower()
     iso3_value = str(iso3 or "").strip().upper()
     if family_value == "regional_base":
-        return DATA_ROOT / "countries" / "EUR" / "geometry.parquet"
+        return DATA_ROOT / "geometry" / "countries" / "EUR" / "geometry.parquet"
     if family_value == "overlay_zcta" and iso3_value:
-        return DATA_ROOT / "countries" / iso3_value / "geometry" / "zcta" / f"{iso3_value}.parquet"
+        return DATA_ROOT / "geometry" / "countries" / iso3_value / "zcta" / f"{iso3_value}.parquet"
     if family_value == "overlay_tribal" and iso3_value:
-        return DATA_ROOT / "countries" / iso3_value / "geometry" / "tribal" / f"{iso3_value}.parquet"
+        return DATA_ROOT / "geometry" / "countries" / iso3_value / "tribal" / f"{iso3_value}.parquet"
     if family_value == "overlay_nws_public_zone" and iso3_value:
-        return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_public_zone" / f"{iso3_value}.parquet"
+        return DATA_ROOT / "geometry" / "countries" / iso3_value / "nws_public_zone" / f"{iso3_value}.parquet"
     if family_value == "overlay_nws_fire_weather_zone" and iso3_value:
-        return DATA_ROOT / "countries" / iso3_value / "geometry" / "nws_fire_weather_zone" / f"{iso3_value}.parquet"
+        return DATA_ROOT / "geometry" / "countries" / iso3_value / "nws_fire_weather_zone" / f"{iso3_value}.parquet"
     if family_value == "can_federal_electoral_district_2013" and iso3_value == "CAN":
-        return DATA_ROOT / "countries" / "CAN" / "geometry" / "federal_electoral_district_2013" / "CAN.parquet"
+        return DATA_ROOT / "geometry" / "countries" / "CAN" / "federal_electoral_district_2013" / "CAN.parquet"
     if family_value == "can_designated_place" and iso3_value == "CAN":
-        return DATA_ROOT / "countries" / "CAN" / "geometry" / "designated_place" / "CAN.parquet"
+        return DATA_ROOT / "geometry" / "countries" / "CAN" / "designated_place" / "CAN.parquet"
     return None
 
 
@@ -635,7 +635,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
     if reference is not None and not reference.empty:
         return reference
 
-    county_geom_file = DATA_ROOT / "countries" / iso3 / "geometry" / "county.parquet"
+    county_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "county.parquet"
     crosswalk_data = load_country_crosswalk(iso3) or {}
     local_to_geo, geo_to_local = build_crosswalk_maps(crosswalk_data)
     requested_set = set(requested_ids)
@@ -709,8 +709,8 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
                 logger.error(f"Error loading county geometry rows for {iso3}: {e}")
 
     if prefer_local:
-        country_geom_file = DATA_ROOT / "countries" / iso3 / "geometry.parquet"
-        crosswalk_file = DATA_ROOT / "countries" / iso3 / "crosswalk.json"
+        country_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "geometry.parquet"
+        crosswalk_file = DATA_ROOT / "geometry" / "countries" / iso3 / "crosswalk.json"
         global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
         if country_geom_file.exists():
             parquet_file, crosswalk_data = country_geom_file, None
@@ -3089,7 +3089,7 @@ def prewarm_geometry() -> None:
     # NWS is the only current live feed with a bounded, repeatedly reused
     # national administrative geometry set.  Loading the exact county bank
     # once prevents each retained alert frame from paying an R2/DuckDB lookup.
-    county_geom_file = DATA_ROOT / "countries" / "USA" / "geometry" / "county.parquet"
+    county_geom_file = DATA_ROOT / "geometry" / "countries" / "USA" / "county.parquet"
     county_cache_key = ("exact_county", "USA")
     try:
         with _country_parquet_cache_lock:

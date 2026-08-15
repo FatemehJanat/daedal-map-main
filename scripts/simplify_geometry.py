@@ -61,16 +61,16 @@ GEOMETRY_FILES = {
     "geometry/USA.parquet": "mixed",
 
     # ZCTA (level 3)
-    "countries/USA/geometry_zcta.parquet": 3,
+    "geometry/countries/USA/geometry_zcta.parquet": 3,
 
     # Tracts by state (level 4)
-    "countries/USA/geometry_tract": 4,
+    "geometry/countries/USA/tract": 4,
 
     # Block Groups by state (level 5)
-    "countries/USA/geometry_blockgroup": 5,
+    "geometry/countries/USA/blockgroup": 5,
 
     # Blocks by state (level 6)
-    "countries/USA/geometry_block": 6,
+    "geometry/countries/USA/block": 6,
 }
 
 

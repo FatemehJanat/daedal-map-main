@@ -52,6 +52,7 @@ DATA_ROOT = LOCAL_DATA_ROOT
 COUNTRIES_DIR = DATA_ROOT / "countries"
 GLOBAL_DIR = DATA_ROOT / "global"
 GEOMETRY_DIR = DATA_ROOT / "geometry"
+COUNTRY_GEOMETRY_DIR = GEOMETRY_DIR / "countries"
 CATALOG_PATH = DATA_ROOT / "catalog.json"
 WIP_CATALOG_PATH = DATA_ROOT / "wip_catalog.json"
 INDEX_PATH = DATA_ROOT / "index.json"
@@ -70,6 +71,10 @@ def get_country_dir(iso3: str) -> Path:
 
 def get_country_index(iso3: str) -> Path:
     return get_country_dir(iso3) / "index.json"
+
+
+def get_country_geometry_dir(iso3: str) -> Path:
+    return COUNTRY_GEOMETRY_DIR / iso3.upper()
 
 
 def get_dataset_path(scope: str, dataset: str, filename: str = "events.parquet") -> Path:

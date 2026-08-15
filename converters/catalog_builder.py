@@ -380,7 +380,7 @@ def _build_root_index(data_root: Path, scopes: dict):
     root_index = {
         "_description": "Data folder routing - which countries have sub-national data folders",
         "_format": "ISO3 -> {has_folder, path, datasets, admin_levels}",
-        "_schema_version": "1.0.0",
+        "_schema_version": "1.1.0",
         "_last_updated": date.today().strftime("%Y-%m"),
     }
 
@@ -398,11 +398,23 @@ def _build_root_index(data_root: Path, scopes: dict):
 
     # Geometry bank
     root_index["_geometry_bank"] = {
-        "_description": "GADM sub-national geometry files",
-        "_note": "One parquet per country for admin1/admin2 boundaries",
+        "_description": "Global fallback banks plus country authority geometry",
         "path": "geometry",
-        "pattern": "geometry/{ISO3}.parquet",
+        "fallback_pattern": "geometry/{ISO3}.parquet",
+        "country_pattern": "geometry/countries/{ISO3}/",
+        "catalog": "geometry/geometry_catalog.json",
         "country_count": gadm_count
+    }
+
+    root_index["_layout"] = {
+        "country_data": "countries/{ISO3}/",
+        "global_data": "global/",
+        "country_geometry": "geometry/countries/{ISO3}/",
+        "fallback_geometry": "geometry/{ISO3}.parquet",
+        "data_catalog": "catalog.json",
+        "geometry_catalog": "geometry/geometry_catalog.json",
+        "agent_catalog": "agent_catalog/api_catalog.json",
+        "ops_catalog": "ops_feed_registry.json",
     }
 
     # Default entry
@@ -425,7 +437,7 @@ def _build_root_index(data_root: Path, scopes: dict):
             continue
 
         # Check for geometry
-        geo_path = country_dir / "geometry.parquet"
+        geo_path = data_root / "geometry" / "countries" / code / "geometry.parquet"
         admin_counts = {}
         admin_levels = [0]
 
@@ -437,7 +449,7 @@ def _build_root_index(data_root: Path, scopes: dict):
             "name": code,
             "has_folder": True,
             "path": f"countries/{code}",
-            "geometry": f"countries/{code}/geometry.parquet" if geo_path.exists() else None,
+            "geometry": f"geometry/countries/{code}/geometry.parquet" if geo_path.exists() else None,
             "admin_levels": admin_levels,
             "datasets": sorted([
                 m.get("source_id") for m, _ in sources if m.get("source_id")

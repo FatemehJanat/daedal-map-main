@@ -94,7 +94,7 @@ class AccessLaneEnumTests(unittest.TestCase):
     def test_provenance_summary_normalizes_existing_fields_without_invention(self) -> None:
         summary = _provenance_summary({
             "matches": [{"source_system": "Statistics Canada", "source_vintage": "2021"}],
-            "geometry_sources": {"left": {"geometry_bank": "countries/CAN/geometry.parquet"}},
+            "geometry_sources": {"left": {"geometry_bank": "geometry/countries/CAN/geometry.parquet"}},
             "license": None,
             "geometry": {"coordinates": [[1, 2]]},
         })
@@ -102,7 +102,7 @@ class AccessLaneEnumTests(unittest.TestCase):
         self.assertEqual(summary["status"], "reported")
         self.assertEqual(summary["source_systems"], ["Statistics Canada"])
         self.assertEqual(summary["source_vintages"], ["2021"])
-        self.assertEqual(summary["bank_ids"], ["countries/CAN/geometry.parquet"])
+        self.assertEqual(summary["bank_ids"], ["geometry/countries/CAN/geometry.parquet"])
         self.assertNotIn("licenses", summary)
 
     def test_provenance_summary_reports_missing_instead_of_guessing(self) -> None:

@@ -5,7 +5,7 @@ from typing import Any
 
 from ..duckdb_helpers import is_cloud_mode, parquet_columns
 from ..foundation_helpers import load_country_crosswalk
-from ..paths import COUNTRIES_DIR, GEOMETRY_DIR
+from ..paths import COUNTRY_GEOMETRY_DIR, GEOMETRY_DIR
 from .read_posture import prefer_local_geometry_reads
 
 
@@ -46,8 +46,9 @@ def resolve_country_geometry_source(iso3: str, *, admin_level: int | None = None
             "source_kind": "missing",
         }
 
-    country_geom_file = COUNTRIES_DIR / iso3 / "geometry.parquet"
-    county_geom_file = COUNTRIES_DIR / iso3 / "geometry" / "county.parquet"
+    country_root = COUNTRY_GEOMETRY_DIR / iso3
+    country_geom_file = country_root / "geometry.parquet"
+    county_geom_file = country_root / "county.parquet"
     global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
     crosswalk = load_country_crosswalk(iso3)
 

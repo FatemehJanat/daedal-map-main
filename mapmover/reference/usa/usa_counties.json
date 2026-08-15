@@ -1,6 +1,6 @@
 {
   "_description": "USA county bridge loc_ids aligned to GeoBoundaries county geometry",
-  "_source": "county-map-data/geometry/USA.parquet + county-map-data/countries/USA/crosswalk.json",
+  "_source": "county-map-data/geometry/USA.parquet + county-map-data/geometry/countries/USA/crosswalk.json",
   "_schema_version": "2.0.0",
   "_count": 3231,
   "_last_updated": "2026-07-20",

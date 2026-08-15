@@ -14,7 +14,7 @@ from ..geometry_handlers import (
     resolve_point_to_location as legacy_resolve_point_to_location,
 )
 from ..name_standardizer import NameStandardizer
-from ..paths import COUNTRIES_DIR
+from ..paths import GEOMETRY_DIR
 from ..reference.usa.location_lookup import by_zip as usa_zip_lookup
 from .admin_hierarchy import get_parent_loc_id, infer_admin_level_from_loc_id
 from .country_geography import get_country_location_aliases
@@ -25,6 +25,7 @@ from .geography_reference import (
     translate_geometry_id_to_local_id,
 )
 from .marine_geometry import load_marine_geometry
+from .place_lookup import resolve_populated_place
 
 _LOC_ID_RE = re.compile(r"^[A-Z]{3}(?:-[A-Z0-9]+)+$|^[A-Z]{3}$")
 _USA_ZIP_RE = re.compile(r"^\d{5}$")
@@ -333,7 +334,7 @@ def _build_usa_tribal_aliases() -> tuple[dict[str, str], dict[str, str]]:
     """
     alias_map: dict[str, str] = {}
     derived_map: dict[str, str] = {}
-    file_path = COUNTRIES_DIR / "USA" / "geometry" / "tribal" / "USA.parquet"
+    file_path = GEOMETRY_DIR / "countries" / "USA" / "tribal" / "USA.parquet"
     if not file_path.exists():
         return alias_map, derived_map
 
@@ -916,6 +917,38 @@ def resolve_place_to_point(
     country_hint: str | None = None,
 ) -> dict[str, Any]:
     value = str(query or "").strip()
+    if resolved_place is None:
+        local_place = resolve_populated_place(value, country_hint=country_hint)
+        if local_place and local_place.get("status") == "ambiguous":
+            return {
+                "query": value,
+                "provider": "daedalmap_place_index",
+                "error": "place name is ambiguous; provide a country or region qualifier",
+                "candidates": local_place.get("candidates") or [],
+            }
+        if local_place and local_place.get("status") == "matched":
+            match = local_place["match"]
+            normalized = _normalize_resolved_place(
+                {
+                    "label": match.get("display_name") or match.get("matched_name") or value,
+                    "place_id": match.get("loc_id"),
+                    "place_type": "populated_place",
+                    "lat": match.get("latitude"),
+                    "lng": match.get("longitude"),
+                    "state": match.get("region_label"),
+                    "country_code": match.get("country_code"),
+                },
+                query=value,
+                provider="daedalmap_place_index",
+            )
+            if normalized is not None:
+                normalized["resolved_place"]["canonical_place_loc_id"] = match.get("loc_id")
+                normalized["resolved_place"]["feature_subtype"] = match.get("subtype")
+                normalized["resolved_place"]["matched_name"] = match.get("matched_name")
+                normalized["resolved_place"]["source_system"] = match.get("source_system")
+                normalized["resolved_place"]["source_release"] = match.get("source_release")
+                return normalized
+
     direct_match = resolve_admin_text_to_loc_id(value, country_hint=country_hint)
     if direct_match.get("matches"):
         return {
@@ -1058,6 +1091,27 @@ def resolve_place_to_loc_id_stack(
     include_geometry: bool = False,
 ) -> dict[str, Any]:
     value = str(query or "").strip()
+
+    local_place = resolve_populated_place(value, country_hint=country_hint) if resolved_place is None else None
+    if local_place:
+        point_payload = resolve_place_to_point(
+            value,
+            resolved_place=resolved_place,
+            provider=provider,
+            country_hint=country_hint,
+        )
+        if point_payload.get("error"):
+            point_payload["resolution_mode"] = "populated_place_index"
+            return point_payload
+        place = point_payload.get("resolved_place") or {}
+        stack_payload = resolve_point_to_loc_id_stack(
+            place.get("lng"), place.get("lat"), include_geometry=include_geometry
+        )
+        stack_payload["query"] = value
+        stack_payload["provider"] = point_payload.get("provider")
+        stack_payload["resolved_place"] = place
+        stack_payload["resolution_mode"] = "populated_place_index"
+        return stack_payload
 
     direct_match = resolve_admin_text_to_loc_id(
         value,

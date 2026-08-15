@@ -46,7 +46,7 @@ FOUNDATION_HELPER_REGISTRY = {
         "water_body_codes.json",
         "usa/usa_admin.json",
     ],
-    "country_crosswalks": "countries/{ISO3}/crosswalk.json",
+    "country_crosswalks": "geometry/countries/{ISO3}/crosswalk.json",
     "country_json_assets": "countries/{ISO3}/{filename}",
     "global_country_geometry": "geometry/global.csv",
     "world_factbook_static": "global/world_factbook_static/all_countries.parquet",
@@ -289,7 +289,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     if cache_key in _COUNTRY_CROSSWALK_CACHE:
         return _COUNTRY_CROSSWALK_CACHE[cache_key]
 
-    crosswalk_path = COUNTRIES_DIR / iso3 / "crosswalk.json"
+    crosswalk_path = GEOMETRY_DIR / "geometry" / "countries" / iso3 / "crosswalk.json"
     if crosswalk_path.exists():
         try:
             with open(crosswalk_path, "r", encoding="utf-8-sig") as f:
@@ -308,7 +308,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     if not crosswalk_path.exists():
         if is_cloud_mode():
             try:
-                data = read_artifact_json(f"countries/{iso3}/crosswalk.json", lane="published")
+                data = read_artifact_json(f"geometry/countries/{iso3}/crosswalk.json", lane="published")
                 _COUNTRY_CROSSWALK_CACHE[cache_key] = data
                 return data
             except Exception as e:

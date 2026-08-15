@@ -67,9 +67,9 @@ class PublishedArtifactTests(unittest.TestCase):
             os.environ, {"S3_BUCKET": "bucket"}, clear=True
         ), mock.patch.object(published_artifacts, "get_runtime_config", return_value=self._config()):
             root = Path(temp_dir) / "data"
-            inside = root / "countries" / "CAN" / "geometry.parquet"
+            inside = root / "geometry" / "countries" / "CAN" / "geometry.parquet"
             ref = published_artifacts.data_artifact_ref(inside, data_root=root)
-            self.assertEqual(ref.relative_path, "countries/CAN/geometry.parquet")
+            self.assertEqual(ref.relative_path, "geometry/countries/CAN/geometry.parquet")
             with self.assertRaises(ValueError):
                 published_artifacts.data_artifact_ref(Path(temp_dir) / "outside.parquet", data_root=root)
 

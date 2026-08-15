@@ -683,7 +683,7 @@ def _load_pack_source_docs(pack_sources: list[dict]) -> list[dict]:
 
 def _load_pack_reference(pack_id: str) -> dict:
     from mapmover.paths import DATA_ROOT
-    from mapmover.data_loading import _fetch_json_from_s3
+    from mapmover.data_loading import load_api_pack_detail
 
     pack_id = str(pack_id or "").strip()
     if not pack_id:
@@ -691,9 +691,17 @@ def _load_pack_reference(pack_id: str) -> dict:
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
     if runtime_mode == "cloud":
         try:
-            data = _fetch_json_from_s3(f"packs/{pack_id}/reference.json")
-            if isinstance(data, dict):
-                return data
+            detail = load_api_pack_detail(pack_id)
+            if isinstance(detail, dict) and detail:
+                upstream_sources = detail.get("upstream_sources") or []
+                primary_upstream = upstream_sources[0] if isinstance(upstream_sources, list) and upstream_sources else {}
+                return {
+                    "source_name": detail.get("pack_name") or detail.get("title"),
+                    "description": detail.get("description"),
+                    "source_url": primary_upstream.get("source_url") if isinstance(primary_upstream, dict) else None,
+                    "license": detail.get("license"),
+                    "upstream_sources": upstream_sources,
+                }
         except Exception:
             pass
     path = DATA_ROOT / "packs" / pack_id / "reference.json"
@@ -718,6 +726,9 @@ def _pack_display_meta(primary: dict, primary_doc: dict | None) -> dict:
     primary_upstream = upstream_sources[0] if upstream_sources else {}
     pack_ref = _load_pack_reference(pack_id)
     if pack_ref:
+        pack_upstream = _normalized_upstream_sources(pack_ref.get("upstream_sources"))
+        upstream_sources = pack_upstream or upstream_sources
+        primary_upstream = upstream_sources[0] if upstream_sources else {}
         return {
             "source_name": _best_source_text(
                 pack_ref.get("source_name"),

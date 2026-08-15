@@ -87,7 +87,7 @@ the normal MCP surface without publishing or uploading it:
 DEPLOYMENT=local
 STORAGE_MODE=local
 DATA_ROOT=C:/path/to/data
-GEOGRAPHY_REFERENCE_GRAPH_ROOT=countries/CAN/geometry/crosswalks/canada_reference_graph_candidate
+GEOGRAPHY_REFERENCE_GRAPH_ROOT=geometry/countries/CAN/crosswalks/canada_reference_graph_candidate
 ```
 
 Run the normal local server and connect the MCP client to its

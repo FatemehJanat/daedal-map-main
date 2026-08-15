@@ -12,7 +12,7 @@ INPUT_CSV = AUDIT_DIR / "state_only_fallback_rows.csv"
 OUTPUT_CSV = AUDIT_DIR / "state_only_fallback_geo_analysis.csv"
 SUMMARY_MD = AUDIT_DIR / "state_only_fallback_geo_summary.md"
 USA_GEOMETRY = ROOT / "county-map-data" / "geometry" / "USA.parquet"
-USA_COUNTIES = ROOT / "county-map-data" / "countries" / "USA" / "geometry" / "county.parquet"
+USA_COUNTIES = ROOT / "county-map-data" / "geometry" / "countries" / "USA" / "county.parquet"
 
 
 def _load_geometry(value):

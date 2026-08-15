@@ -207,11 +207,7 @@ def _fetch_json_from_s3(relative_path: str) -> dict:
 
 
 def _agent_catalog_output_root() -> Path:
-    configured = str(
-        os.environ.get("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT")
-        or os.environ.get("COUNTY_MAP_API_CATALOG_OUTPUT_ROOT")
-        or ""
-    ).strip()
+    configured = str(os.environ.get("COUNTY_MAP_AGENT_CATALOG_OUTPUT_ROOT") or "").strip()
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parents[2] / "agent_catalog" / "output"
@@ -226,11 +222,7 @@ def _load_json_from_runtime_or_s3(relative_path: str, *, use_agent_prefix: bool 
     runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
     if runtime_mode == "cloud":
         use_discovery_prefix = use_agent_prefix or use_api_prefix
-        candidate_paths = (
-            [f"agent_catalog/{relative_path}", f"api_catalog/{relative_path}"]
-            if use_discovery_prefix
-            else [relative_path]
-        )
+        candidate_paths = [f"agent_catalog/{relative_path}"] if use_discovery_prefix else [relative_path]
         last_error = None
         for s3_path in candidate_paths:
             try:
@@ -241,17 +233,12 @@ def _load_json_from_runtime_or_s3(relative_path: str, *, use_agent_prefix: bool 
         logger.warning(f"Failed to load {candidate_paths[0]} from S3: {last_error}")
         return None
 
-    roots = [_agent_catalog_output_root()]
-    legacy_root = Path(__file__).resolve().parents[2] / "api_catalog" / "output"
-    if legacy_root not in roots:
-        roots.append(legacy_root)
-    for root in roots:
-        local_path = root / relative_path
-        try:
-            if local_path.exists():
-                return json.loads(local_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.warning(f"Failed to load local Agent Catalog artifact {local_path}: {e}")
+    local_path = _agent_catalog_output_root() / relative_path
+    try:
+        if local_path.exists():
+            return json.loads(local_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to load local Agent Catalog artifact {local_path}: {e}")
     return None
 
 
@@ -1117,8 +1104,8 @@ def get_countries_folder():
 def load_geometry_for_country(iso3: str):
     """
     Load geometry for a country using 3-tier fallback:
-    1. countries/{ISO3}/geometry.parquet (local/official source like NUTS)
-    2. countries/{ISO3}/crosswalk.json -> geometry/{ISO3}.parquet (translated)
+    1. geometry/countries/{ISO3}/geometry.parquet (local/official source like NUTS)
+    2. geometry/countries/{ISO3}/crosswalk.json -> geometry/{ISO3}.parquet (translated)
     3. geometry/{ISO3}.parquet (GADM fallback)
 
     Returns:

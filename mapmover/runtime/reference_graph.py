@@ -21,7 +21,7 @@ from .published_artifacts import read_artifact_json, relative_data_path
 
 
 ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
-DEFAULT_RELATIVE_ROOT = Path("countries/CAN/geometry/crosswalks/canada_reference_graph")
+DEFAULT_RELATIVE_ROOT = Path("geometry/countries/CAN/crosswalks/canada_reference_graph")
 REQUIRED_FILES = (
     "identities.parquet", "identity_versions.parquet", "aliases.parquet",
     "relationships.parquet", "metadata.json", "completion_report.json",
@@ -123,7 +123,7 @@ def where_is_geography_data() -> dict[str, Any]:
             "scope": metadata.get("scope"),
             "totals": completion.get("totals"),
         })
-        candidate_pointer = DATA_ROOT / "countries" / "CAN" / "geometry" / "releases" / "candidates" / "current.json"
+        candidate_pointer = DATA_ROOT / "geometry" / "countries" / "CAN" / "releases" / "candidates" / "current.json"
         if not is_cloud_mode() and candidate_pointer.exists():
             pointer = json.loads(candidate_pointer.read_text(encoding="utf-8"))
             pointer_root = (DATA_ROOT / str(pointer.get("graph_root") or "")).resolve()

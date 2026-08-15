@@ -10,15 +10,15 @@ from mapmover.runtime.reference_geometry_bank import (
 
 
 LAKE_SUPERIOR = "CGNDB-666A39DABA2A11D892E2080020A0F4C9"
-CANVEC_BANK = DATA_ROOT / "countries" / "CAN" / "geometry" / "relationships" / "canada_canvec_water_bodies_1m"
-CANADA_ADMIN_BANK = DATA_ROOT / "countries" / "CAN" / "geometry.parquet"
-CANADA_DB_BANK = DATA_ROOT / "countries" / "CAN" / "geometry" / "dissemination_block" / "CAN-BC.parquet"
+CANVEC_BANK = DATA_ROOT / "geometry" / "countries" / "CAN" / "relationships" / "canada_canvec_water_bodies_1m"
+CANADA_ADMIN_BANK = DATA_ROOT / "geometry" / "countries" / "CAN" / "geometry.parquet"
+CANADA_DB_BANK = DATA_ROOT / "geometry" / "countries" / "CAN" / "dissemination_block" / "CAN-BC.parquet"
 
 
 class ReferenceGeometryBankRuntimeTests(unittest.TestCase):
     def test_bank_paths_cannot_escape_data_root(self):
         self.assertIsNone(_safe_bank_root("../outside"))
-        bank = _safe_bank_root("countries/CAN/geometry/relationships/example")
+        bank = _safe_bank_root("geometry/countries/CAN/relationships/example")
         self.assertIsNotNone(bank)
         self.assertIsNone(_safe_partition_path(bank, "../../outside.parquet"))
 

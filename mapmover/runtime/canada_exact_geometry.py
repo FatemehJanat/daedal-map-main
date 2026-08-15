@@ -13,7 +13,7 @@ from ..paths import DATA_ROOT
 
 
 ROOT = (
-    DATA_ROOT / "countries" / "CAN" / "geometry" / "representations" /
+    DATA_ROOT / "geometry" / "countries" / "CAN" / "representations" /
     "statcan_2021" / "predicate_exact"
 )
 
