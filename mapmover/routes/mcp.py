@@ -1607,12 +1607,15 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
         }
     return {
         "request_id": request_id,
+        "resolution_schema_version": raw.get("resolution_schema_version") or "1.0.0",
         "point": raw.get("point"),
         "country": raw.get("country"),
         "matched": raw.get("matched"),
         "deepest_resolved_loc_id": raw.get("deepest_resolved_loc_id") or (raw.get("matched") or {}).get("loc_id"),
         "deepest_resolved_admin_level": raw.get("deepest_resolved_admin_level") or (raw.get("matched") or {}).get("admin_level"),
         "stack": raw.get("stack") or [],
+        "join_keys": raw.get("join_keys") or {},
+        "join_grain": raw.get("join_grain") or raw.get("deepest_resolved_admin_level"),
         "resolution_mode": raw.get("resolution_mode") or "latest_available_per_depth",
         "target_admin_level": raw.get("target_admin_level"),
         "deeper_available": bool(raw.get("deeper_available")),

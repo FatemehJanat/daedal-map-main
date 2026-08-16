@@ -25,7 +25,13 @@ from ..geometry_handlers import GEOMETRY_INDEX_COLUMNS, get_geometry_index, load
 from .admin_hierarchy import infer_admin_level_from_loc_id
 from .country_geography import get_country_supported_deep_admin_levels
 from .geography_reference import translate_geometry_id_to_local_id
-from .reference_exchange import convert_reference, get_geometry_availability, get_geometry_references, resolve_reference
+from .reference_exchange import (
+    convert_reference,
+    get_geometry_availability,
+    get_geometry_references,
+    resolve_reference,
+    resolve_references_batch,
+)
 from .reference_identification import identify_reference_system
 
 
@@ -50,6 +56,7 @@ _RESERVED_OUTPUT_PREFIX = "daedalmap_"
 # be tuned by the route's authored/env operational limit.
 GEOMETRY_EXPORT_INLINE_LIMIT = 250
 CONVERSION_INLINE_LIMIT = 7_500
+CONVERSION_BATCH_SCAN_THRESHOLD = 25
 
 
 def _clean_json(value: Any) -> Any:
@@ -614,6 +621,21 @@ def _run_conversion_row(row: dict[str, Any], *, default_limit: int) -> dict[str,
     )
 
 
+def _conversion_reference_request(row: dict[str, Any], *, default_limit: int) -> dict[str, Any]:
+    request = {
+        "from_system": str(row.get("from_system") or ""),
+        "value": str(row.get("value") or ""),
+        "iso3": str(row.get("iso3") or "USA"),
+        "target_admin_level": row.get("target_admin_level") or "admin_2",
+        "bridge_vintage": row.get("bridge_vintage"),
+        "min_share": row.get("min_share"),
+        "limit": int(row.get("limit") or default_limit),
+    }
+    if row.get("to_system"):
+        request["to_system"] = str(row.get("to_system"))
+    return request
+
+
 def _verify_conversion_binding(payload: dict[str, Any], items: list[Any], *, limit: int = 100) -> dict[str, Any] | None:
     binding = payload.get("geography_binding") if isinstance(payload.get("geography_binding"), dict) else None
     if not binding:
@@ -647,6 +669,27 @@ def _conversion_output_row(item: dict[str, Any], result: dict[str, Any], *, fall
     row["daedalmap_input_identifier"] = item.get("value")
     row["daedalmap_conversion_ok"] = bool(result.get("ok"))
     row["daedalmap_loc_id"] = result.get("resolved_loc_id") or result.get("loc_id")
+    row["daedalmap_family"] = result.get("resolved_family") or result.get("family")
+    row["daedalmap_admin_level"] = result.get("admin_level") or (result.get("bridge") or {}).get("target_admin_level")
+    row["daedalmap_match_type"] = result.get("match_type")
+    row["daedalmap_source_vintage"] = result.get("source_vintage")
+    row["daedalmap_bridge_vintage"] = (result.get("bridge") or {}).get("bridge_vintage")
+    matches = result.get("matches")
+    match_count = result.get("match_count")
+    if match_count is None and isinstance(matches, list):
+        match_count = len(matches)
+    if match_count is None:
+        match_count = 1 if row["daedalmap_conversion_ok"] and row["daedalmap_loc_id"] else 0
+    row["daedalmap_match_count"] = int(match_count or 0)
+    if result.get("match_type") == "bridge_overlap" and row["daedalmap_match_count"] > 1:
+        row["daedalmap_join_cardinality"] = "weighted_one_to_many"
+    elif row["daedalmap_match_count"] > 1:
+        row["daedalmap_join_cardinality"] = "one_to_many"
+    elif row["daedalmap_match_count"] == 1:
+        row["daedalmap_join_cardinality"] = "one_to_one"
+    else:
+        row["daedalmap_join_cardinality"] = "unresolved"
+    row["daedalmap_geometry_available"] = result.get("geometry_available")
     error = result.get("error")
     if isinstance(error, dict):
         row["daedalmap_error_code"] = error.get("code")
@@ -656,8 +699,8 @@ def _conversion_output_row(item: dict[str, Any], result: dict[str, Any], *, fall
     else:
         row["daedalmap_error_code"] = None
         row["daedalmap_error_message"] = None
-    if result.get("matches") is not None:
-        row["daedalmap_matches_json"] = json.dumps(result.get("matches"), ensure_ascii=False, separators=(",", ":"))
+    if matches is not None:
+        row["daedalmap_matches_json"] = json.dumps(matches, ensure_ascii=False, separators=(",", ":"))
     return _clean_json(row)
 
 
@@ -817,6 +860,19 @@ def create_conversion_job(payload: dict[str, Any], *, inline_limit: int | None =
     results = []
     output_rows = []
     resolution_cache: dict[str, dict[str, Any]] = {}
+    unique_rows: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = _conversion_row(payload, item)
+        unique_rows.setdefault(_conversion_cache_key(row), row)
+    if len(unique_rows) >= CONVERSION_BATCH_SCAN_THRESHOLD:
+        keys = list(unique_rows)
+        batch_results = resolve_references_batch([
+            _conversion_reference_request(unique_rows[key], default_limit=10)
+            for key in keys
+        ])
+        resolution_cache.update(zip(keys, batch_results))
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             invalid = {"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}}

@@ -108,6 +108,17 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(result["matches"]["admin_2"]["loc_id"], "AUS-SA-406")
         self.assertEqual(result["matches"]["admin_6"]["name"], "40215189900")
+        self.assertEqual(result["join_keys"]["admin_6_loc_id"], "AUS-SA-406-02-1141-07-0215189900")
+
+    def test_france_uses_global_geoboundaries_when_country_bank_is_absent(self):
+        """The global baseline remains usable, but only after country lookup."""
+        result = resolve_point_to_loc_id_stack(2.3522, 48.8566, include_geometry=False)
+
+        self.assertEqual(result["country"]["loc_id"], "FRA")
+        self.assertEqual(result["deepest_resolved_admin_level"], "admin_2")
+        self.assertTrue(result["deepest_resolved_loc_id"].startswith("FRA-G"))
+        self.assertEqual(result["join_keys"]["admin_0_loc_id"], "FRA")
+        self.assertEqual(result["join_keys"]["admin_2_loc_id"], result["deepest_resolved_loc_id"])
 
     def test_canada_point_resolves_to_declared_admin5_spine(self):
         result = resolve_point_to_loc_id_stack(-122.849, 49.191, include_geometry=False)
@@ -164,6 +175,7 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
             patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=_Frame()),
             patch("mapmover.geometry_handlers.load_country_parquet_viewport", return_value=_Frame()),
             patch("mapmover.geometry_handlers.load_country_parquet", return_value=_Frame()),
+            patch("mapmover.geometry_handlers.resolve_admin_spine_query_point", return_value=None),
             patch(
                 "mapmover.geometry_handlers._find_containing_row",
                 side_effect=[country_row, admin1_row, admin2_row],
@@ -232,7 +244,11 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
                 "mapmover.geometry_handlers.load_country_parquet",
                 side_effect=lambda iso3, admin_level=None: aus_admin0_df if admin_level == 0 else admin1_df if admin_level == 1 else admin2_df if admin_level == 2 else None,
             ),
-            patch("mapmover.geometry_handlers.load_country_parquet_viewport", side_effect=[admin1_df, admin2_df]),
+            patch(
+                "mapmover.geometry_handlers.load_country_parquet_viewport",
+                return_value=__import__("pandas").concat([admin1_df, admin2_df], ignore_index=True),
+            ),
+            patch("mapmover.geometry_handlers.resolve_admin_spine_query_point", return_value=None),
             patch("mapmover.geometry_handlers._resolve_deepest_point_match", return_value=None),
         ):
             result = resolve_point_to_location(151.2093, -33.8688, include_geometry=False)

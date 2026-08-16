@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -9,11 +11,35 @@ from mapmover.geometry_handlers import (
     _direct_family_bank_path,
     df_to_geojson,
     get_selection_geometries,
+    load_subcounty_geometry,
     load_geometry_rows_by_loc_ids,
 )
 
 
 class GeometrySelectionRuntimeTests(unittest.TestCase):
+    def test_deep_partition_reads_canonical_country_geometry_root(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            path = root / "USA" / "tract" / "USA-CA.parquet"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            expected = pd.DataFrame([{"loc_id": "USA-CA-001-000100"}])
+            with patch(
+                "mapmover.geometry_handlers.COUNTRY_GEOMETRY_DIR", root
+            ), patch(
+                "mapmover.geometry_handlers.get_country_level_config",
+                return_value={"folder": "tract"},
+            ), patch(
+                "mapmover.geometry_handlers._read_subcounty_geometry",
+                return_value=expected,
+            ) as reader:
+                result = load_subcounty_geometry(
+                    "USA", admin_level=3, state_abbrev="CA", bbox=(-1, -1, 1, 1)
+                )
+
+        self.assertEqual(result.iloc[0]["loc_id"], "USA-CA-001-000100")
+        self.assertEqual(reader.call_args.args[0], path)
+
     def test_usa_admin5_selection_carries_census_geometry_provenance(self):
         frame = pd.DataFrame(
             [{

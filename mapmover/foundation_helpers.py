@@ -19,7 +19,7 @@ import pandas as pd
 
 from .duckdb_helpers import is_cloud_mode, parquet_columns
 from .orchestrator_specs import list_orchestrator_specs
-from .paths import COUNTRIES_DIR, DATA_ROOT, GEOMETRY_DIR
+from .paths import COUNTRIES_DIR, COUNTRY_GEOMETRY_DIR, DATA_ROOT, GEOMETRY_DIR
 from .runtime.explainer_response import build_explainer_response, looks_like_explainer_question
 from .runtime.read_posture import prefer_local_geometry_reads
 from .runtime.result_cap import (
@@ -289,7 +289,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
     if cache_key in _COUNTRY_CROSSWALK_CACHE:
         return _COUNTRY_CROSSWALK_CACHE[cache_key]
 
-    crosswalk_path = GEOMETRY_DIR / "geometry" / "countries" / iso3 / "crosswalk.json"
+    crosswalk_path = COUNTRY_GEOMETRY_DIR / iso3 / "crosswalk.json"
     if crosswalk_path.exists():
         try:
             with open(crosswalk_path, "r", encoding="utf-8-sig") as f:

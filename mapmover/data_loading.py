@@ -1218,15 +1218,20 @@ def fetch_geometries_by_loc_ids(loc_ids: list) -> dict:
                 for loc_id in list(remaining_lids)
             )
 
-        gdf = select_rows(
-            parquet_path,
-            columns=["loc_id", "name", "admin_level", "parent_id", "geometry"],
-            in_filters={"loc_id": sorted(requested_ids)},
+        # Keep every exact geometry request on the shared bounded loader.  The
+        # old fallback hydrated an entire country whenever a requested id was
+        # absent, turning an ordinary miss into a 500 MB+ allocation.  The
+        # shared loader also understands reference-family banks and retired
+        # aliases, so data downloads and map selection now use the same lookup
+        # contract as the geometry tools.
+        from .geometry_handlers import load_geometry_rows_by_loc_ids
+
+        gdf = load_geometry_rows_by_loc_ids(
+            country,
+            sorted(requested_ids),
+            columns=["loc_id", "local_loc_id", "source_loc_id", "name", "admin_level", "parent_id", "geometry"],
         )
-        if gdf.empty:
-            # Fall back to the old whole-file load path if the selective read fails.
-            gdf, crosswalk = load_geometry_for_country(country)
-        elif uses_crosswalk and crosswalk:
+        if uses_crosswalk and crosswalk and gdf is not None and not gdf.empty and "local_loc_id" not in gdf.columns:
             _, reverse_map = build_crosswalk_maps(crosswalk)
             gdf["local_loc_id"] = gdf["loc_id"].map(reverse_map)
 

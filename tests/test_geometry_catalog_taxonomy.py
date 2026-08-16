@@ -19,7 +19,7 @@ class GeometryCatalogTaxonomyTests(unittest.TestCase):
         cls.catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
     def test_schema_uses_canonical_object_names(self) -> None:
-        self.assertEqual(self.catalog["schema_version"], "1.1.0")
+        self.assertEqual(self.catalog["schema_version"], "1.1.1")
         for key in (
             "geometry_collections",
             "geometry_families",

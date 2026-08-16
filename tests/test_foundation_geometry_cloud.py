@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,25 @@ class FoundationGeometryCloudTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         foundation_helpers._GLOBAL_COUNTRIES_CACHE = None
+        foundation_helpers._COUNTRY_CROSSWALK_CACHE.clear()
+
+    def test_country_crosswalk_reads_canonical_country_geometry_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            path = root / "USA" / "crosswalk.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps({"sub_admin_levels": {"admin_3": {"folder": "tract"}}}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                foundation_helpers, "COUNTRY_GEOMETRY_DIR", root
+            ), mock.patch.object(
+                foundation_helpers, "prefer_local_geometry_reads", return_value=True
+            ):
+                payload = foundation_helpers.load_country_crosswalk("USA")
+
+        self.assertEqual(payload["sub_admin_levels"]["admin_3"]["folder"], "tract")
 
     def test_cloud_global_frame_merges_published_supplemental_admin0(self) -> None:
         supplemental = pd.DataFrame([{

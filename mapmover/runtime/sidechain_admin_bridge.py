@@ -59,13 +59,15 @@ def default_bridge_path(
 def _read_bridge_rows(
     bridge_path: Path,
     *,
-    exact_filters: dict[str, Any],
+    exact_filters: dict[str, Any] | None = None,
+    in_filters: dict[str, list[Any]] | None = None,
 ) -> pd.DataFrame:
     if bridge_path.exists():
-        filters = [(key, "==", value) for key, value in exact_filters.items()]
+        filters = [(key, "==", value) for key, value in (exact_filters or {}).items()]
+        filters.extend((key, "in", values) for key, values in (in_filters or {}).items() if values)
         return pd.read_parquet(bridge_path, filters=filters)
     if is_cloud_mode():
-        return select_rows(bridge_path, exact_filters=exact_filters)
+        return select_rows(bridge_path, exact_filters=exact_filters, in_filters=in_filters)
     return pd.DataFrame()
 
 
@@ -167,6 +169,53 @@ def resolve_sidechain_to_admin(
         "overlaps": overlaps,
         "overlap_count": len(overlaps),
     }
+
+
+def resolve_sidechains_to_admin(
+    source_loc_ids: list[str],
+    *,
+    source_family: str,
+    target_admin_level: int | str,
+    iso3: str = "USA",
+    bridge_path: Path | None = None,
+    min_source_area_share: float | None = None,
+    limit: int | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Resolve many source identities with one predicate-pushed bridge scan."""
+    ordered_ids = list(dict.fromkeys(str(value or "").strip() for value in source_loc_ids if str(value or "").strip()))
+    if not ordered_ids:
+        return {}
+    source_family = str(source_family or "").strip()
+    target_level = admin_level_name(target_admin_level)
+    path = bridge_path or default_bridge_path(
+        source_family=source_family,
+        target_admin_level=target_level,
+        iso3=iso3,
+    )
+    rows = _read_bridge_rows(path, in_filters={"source_loc_id": ordered_ids})
+    results: dict[str, dict[str, Any]] = {}
+    for source_loc_id in ordered_ids:
+        source_rows = rows[rows["source_loc_id"] == source_loc_id] if not rows.empty and "source_loc_id" in rows else pd.DataFrame()
+        source_rows = _filter_and_sort(
+            source_rows,
+            sort_col="source_area_share",
+            min_share=min_source_area_share,
+            limit=limit,
+        )
+        overlaps = [_shape_overlap(row, direction="source_to_admin") for _, row in source_rows.iterrows()]
+        results[source_loc_id] = {
+            "ok": bool(overlaps),
+            "direction": "source_to_admin",
+            "source_family": source_family,
+            "source_loc_id": source_loc_id,
+            "target_family": "admin",
+            "target_admin_level": target_level,
+            "bridge_path": str(path),
+            "primary_match": overlaps[0] if overlaps else None,
+            "overlaps": overlaps,
+            "overlap_count": len(overlaps),
+        }
+    return results
 
 
 def resolve_admin_to_sidechains(

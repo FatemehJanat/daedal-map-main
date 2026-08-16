@@ -26,7 +26,7 @@ from .reference_graph import identities
 
 
 IDENTITY_VERSION_COLUMNS = ["loc_id", "geometry_partition", "shape_storage"]
-DIRECT_ADMIN_PARTITION_BANKS = {"dissemination_area", "dissemination_block"}
+DIRECT_ADMIN_PARTITION_BANKS = {"dissemination_area", "dissemination_block", "deep"}
 
 
 @lru_cache(maxsize=256)

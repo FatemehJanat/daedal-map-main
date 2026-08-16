@@ -174,6 +174,15 @@ def _configure_common_runtime_settings(con) -> None:
     # Adjust DUCKDB_MEMORY_LIMIT env var to tune (default: 512MB).
     mem_limit = os.environ.get("DUCKDB_MEMORY_LIMIT", "512MB")
     con.execute(f"SET memory_limit='{mem_limit}'")
+    # Constrained containers pay memory per active scan thread.  Two threads
+    # retain useful parallelism without multiplying buffers up to the 488 MB
+    # Railway ceiling; deployments with more headroom can opt upward.
+    thread_count = max(1, int(os.environ.get("DUCKDB_THREADS", "2")))
+    con.execute(f"SET threads={thread_count}")
+    # SQL result order is never a storage contract here (callers that require
+    # order use ORDER BY). Disabling preservation allows DuckDB to stream and
+    # spill bounded queries instead of retaining insertion-order buffers.
+    con.execute("SET preserve_insertion_order=false")
 
 
 def build_guarded_connection(

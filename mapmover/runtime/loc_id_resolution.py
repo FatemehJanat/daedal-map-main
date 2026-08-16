@@ -1057,8 +1057,14 @@ def resolve_point_to_loc_id_stack(
         for entry in ordered_matches.values()
     ]
     deepest_entry = ordered_matches.get(_level_key(deepest_level) or "")
+    join_keys = {
+        f"{key}_loc_id": entry["loc_id"]
+        for key, entry in ordered_matches.items()
+        if entry.get("loc_id")
+    }
 
     result = {
+        "resolution_schema_version": "1.0.0",
         "point": raw.get("point") or {"lon": float(lon), "lat": float(lat)},
         "country": raw.get("country"),
         "matched": {
@@ -1072,6 +1078,11 @@ def resolve_point_to_loc_id_stack(
         "matches": ordered_matches,
         "deepest_resolved_loc_id": deepest_local_loc_id,
         "deepest_resolved_admin_level": _level_key(deepest_level),
+        # Flat, stable columns for CSV/Parquet/manual joins. Consumers do not
+        # need geometry—or an LLM—to recover every maintained admin grain from
+        # a coordinate result.
+        "join_keys": join_keys,
+        "join_grain": _level_key(deepest_level),
         "overlap_families": raw.get("overlap_families") or [],
         "should_persist_deepest_loc_id": bool(deepest_local_loc_id),
         "legacy_payload": raw,

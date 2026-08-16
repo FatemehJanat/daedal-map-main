@@ -29,7 +29,7 @@ except ImportError:
     def fast_json_loads(s):
         return json.loads(s)
 
-from .paths import GEOMETRY_DIR, DATA_ROOT, COUNTRIES_DIR
+from .paths import COUNTRY_GEOMETRY_DIR, GEOMETRY_DIR, DATA_ROOT, COUNTRIES_DIR
 from .duckdb_helpers import is_cloud_mode, parquet_columns, select_rows
 from .foundation_helpers import (
     load_country_crosswalk,
@@ -49,6 +49,7 @@ from .runtime.country_geography import (
     get_country_sub_admin_levels,
     get_country_supported_deep_admin_levels,
 )
+from .runtime.admin_spine_query import resolve_point as resolve_admin_spine_query_point
 from .runtime.geometry_loader import resolve_country_geometry_source
 from .runtime.geometry_compatibility import (
     load_current_alias_target_rows,
@@ -73,6 +74,10 @@ _country_parquet_waiters = {}  # key -> Event for concurrent waiters
 _country_bounds_cache = None
 
 _GEOMETRY_CACHE_MAX_BYTES = max(32 * 1024 * 1024, int(float(os.environ.get("GEOMETRY_CACHE_MAX_MB", "256")) * 1024 * 1024))
+_LOCAL_PARQUET_PUSHDOWN_THRESHOLD_BYTES = max(
+    64 * 1024 * 1024,
+    int(float(os.environ.get("LOCAL_PARQUET_PUSHDOWN_THRESHOLD_MB", "384")) * 1024 * 1024),
+)
 
 GEOMETRY_INDEX_COLUMNS = [
     "loc_id",
@@ -92,6 +97,14 @@ GEOMETRY_INDEX_COLUMNS = [
     "has_polygon",
     "iso_a3",
 ]
+
+# Smallest physical projection that can resolve a point and return a useful
+# hierarchy row.  In particular, do not use ``SELECT *`` against monolithic
+# country spines: Australia stores all seven admin levels in one ~938 MB
+# parquet and several optional metadata columns are much wider than a point
+# lookup needs.
+POINT_RESOLUTION_COLUMNS = list(GEOMETRY_INDEX_COLUMNS)
+POINT_RESOLUTION_COLUMNS.append("geometry")
 
 GEOMETRY_METADATA_COLUMNS = list(GEOMETRY_INDEX_COLUMNS)
 GEOMETRY_METADATA_COLUMNS.extend([
@@ -371,12 +384,15 @@ def load_country_parquet(iso3: str, admin_level: int = None, columns: list[str] 
         return None
 
 
-def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, columns: list[str] | None = None):
+def load_country_parquet_viewport(iso3: str, admin_level: int | None, bbox: tuple, columns: list[str] | None = None):
     """
-    Load only the geometry rows for one country/admin level that intersect a viewport bbox.
+    Load only geometry rows that intersect a viewport bbox.
 
     This is stricter than load_country_parquet(): it pushes bbox filtering into DuckDB so
     large countries like USA admin_2 do not need to load the whole level slice first.
+    Passing ``admin_level=None`` performs one bounded scan across all levels, which is
+    substantially cheaper for a monolithic multi-level spine than reopening it once
+    per level.
     """
     min_lon, min_lat, max_lon, max_lat = bbox
 
@@ -424,8 +440,19 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, colu
                 ("centroid_lat", "<=", max_lat),
             ]
 
-        if _prefer_local_geometry_reads() and parquet_file.exists():
-            filters = [("admin_level", "==", admin_level)]
+        # PyArrow can stream-filter very wide local row groups without first
+        # constructing DuckDB's full VARCHAR vector.  This matters for the
+        # adopted AUS spine whose first mixed-level row group is ~577 MB
+        # uncompressed: a bounded three-row point query otherwise requests a
+        # 512 MB allocation under the runtime's 488 MB DuckDB ceiling.
+        use_local_pushdown = parquet_file.exists() and (
+            _prefer_local_geometry_reads()
+            or parquet_file.stat().st_size >= _LOCAL_PARQUET_PUSHDOWN_THRESHOLD_BYTES
+        )
+        if use_local_pushdown:
+            filters = []
+            if admin_level is not None:
+                filters.append(("admin_level", "==", admin_level))
             if has_bbox:
                 filters.extend([
                     ("bbox_max_lon", ">=", min_lon),
@@ -445,12 +472,14 @@ def load_country_parquet_viewport(iso3: str, admin_level: int, bbox: tuple, colu
             df = select_rows(
                 parquet_file,
                 columns=read_columns,
-                exact_filters={"admin_level": admin_level},
+                exact_filters={"admin_level": admin_level} if admin_level is not None else None,
                 compare_filters=compare_filters,
             )
 
             if df.empty and not is_cloud_mode():
-                filters = [("admin_level", "==", admin_level)]
+                filters = []
+                if admin_level is not None:
+                    filters.append(("admin_level", "==", admin_level))
                 if has_bbox:
                     filters.extend([
                         ("bbox_max_lon", ">=", min_lon),
@@ -1118,8 +1147,16 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
 
 def _filter_df_for_point(df, lon: float, lat: float):
     """Filter candidate rows that could contain a point using bbox columns."""
-    if df is None or len(df) == 0:
+    if df is None:
         return pd.DataFrame()
+    try:
+        if len(df) == 0:
+            return pd.DataFrame()
+    except TypeError:
+        # Lightweight frame-like test/provider objects may only implement the
+        # containment contract. Preserve the legacy path when no tabular bbox
+        # surface is available.
+        return df
 
     result = df
     if all(col in result.columns for col in ("bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat")):
@@ -1152,11 +1189,14 @@ def _find_containing_country_with_fallback(country_df, lon: float, lat: float):
     the per-country geometry bank. In that case, use the global bbox shortlist
     and check the country parquet's admin_0 geometry before declaring failure.
     """
-    direct_match = _find_containing_row(country_df, lon, lat)
+    # The shared Admin0 bank contains hundreds of detailed polygons. Its bbox
+    # columns are a cheap spatial index; shortlist first so a point lookup does
+    # not parse and STRtree-index the entire world's geometry on cold start.
+    candidates = _filter_df_for_point(country_df, lon, lat)
+    direct_match = _find_containing_row(candidates, lon, lat)
     if direct_match is not None:
         return direct_match
 
-    candidates = _filter_df_for_point(country_df, lon, lat)
     if candidates.empty:
         return None
 
@@ -1171,7 +1211,14 @@ def _find_containing_country_with_fallback(country_df, lon: float, lat: float):
     return None
 
 
-def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=None, admin2_row=None):
+def _resolve_deepest_point_match(
+    iso3: str,
+    lon: float,
+    lat: float,
+    admin1_row=None,
+    admin2_row=None,
+    point_candidates: pd.DataFrame | None = None,
+):
     """Attempt admin_3+ point resolution where country-specific deep geometry exists."""
     deep_levels = get_country_supported_deep_admin_levels(iso3)
     if not deep_levels:
@@ -1193,28 +1240,31 @@ def _resolve_deepest_point_match(iso3: str, lon: float, lat: float, admin1_row=N
     parent_scope = admin2_local or admin1_local
 
     for admin_level in deep_levels:
-        level_config = get_country_level_config(iso3, admin_level) or {}
-        if str(level_config.get("folder") or "").strip() == ".":
-            df = load_subcounty_geometry(
-                iso3, admin_level=admin_level,
-                bbox=(lon, lat, lon, lat),
-            )
+        if point_candidates is not None and "admin_level" in point_candidates.columns:
+            df = point_candidates[point_candidates["admin_level"] == admin_level]
         else:
-            df = load_subcounty_geometry(
-                iso3, admin_level=admin_level, state_abbrev=state_abbrev,
-                bbox=(lon, lat, lon, lat),
-            )
-            if (df is None or df.empty) and not state_abbrev:
-                regions = get_regions_in_bbox(iso3, lon, lat, lon, lat)
-                frames = []
-                for region_code in regions:
-                    region_df = load_subcounty_geometry(
-                        iso3, admin_level=admin_level, state_abbrev=region_code,
-                        bbox=(lon, lat, lon, lat),
-                    )
-                    if region_df is not None and not region_df.empty:
-                        frames.append(region_df)
-                df = pd.concat(frames, ignore_index=True) if frames else None
+            level_config = get_country_level_config(iso3, admin_level) or {}
+            if str(level_config.get("folder") or "").strip() == ".":
+                df = load_subcounty_geometry(
+                    iso3, admin_level=admin_level,
+                    bbox=(lon, lat, lon, lat),
+                )
+            else:
+                df = load_subcounty_geometry(
+                    iso3, admin_level=admin_level, state_abbrev=state_abbrev,
+                    bbox=(lon, lat, lon, lat),
+                )
+                if (df is None or df.empty) and not state_abbrev:
+                    regions = get_regions_in_bbox(iso3, lon, lat, lon, lat)
+                    frames = []
+                    for region_code in regions:
+                        region_df = load_subcounty_geometry(
+                            iso3, admin_level=admin_level, state_abbrev=region_code,
+                            bbox=(lon, lat, lon, lat),
+                        )
+                        if region_df is not None and not region_df.empty:
+                            frames.append(region_df)
+                    df = pd.concat(frames, ignore_index=True) if frames else None
         if df is None or df.empty:
             continue
 
@@ -1255,14 +1305,60 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
     iso3 = country_match.get("loc_id")
     country_name = country_match.get("name") or iso3
 
-    admin1_df = load_country_parquet_viewport(iso3, 1, (lon, lat, lon, lat))
-    if admin1_df is None or admin1_df.empty:
-        admin1_df = load_country_parquet(iso3, admin_level=1)
+    query_layout_match = resolve_admin_spine_query_point(iso3, lon, lat)
+    if query_layout_match is not None:
+        matched = query_layout_match["matched"]
+        stack = [
+            {
+                "loc_id": row.get("loc_id"),
+                "name": row.get("name"),
+                "admin_level": int(row.get("admin_level", 0)),
+            }
+            for row in query_layout_match["stack"]
+        ]
+        result = {
+            "point": {"lon": lon, "lat": lat},
+            "country": {"loc_id": iso3, "name": country_name},
+            "matched": {
+                "loc_id": matched.get("loc_id"),
+                "name": matched.get("name"),
+                "admin_level": int(matched.get("admin_level", 0)),
+                "country_name": country_name,
+                "iso3": iso3,
+            },
+            "stack": stack,
+            "query_layout": "admin_0_3_plus_admin_1_deep",
+        }
+        if include_geometry:
+            result["geojson"] = get_selection_geometries([matched.get("loc_id")])
+        return result
+
+    point_bbox = (lon, lat, lon, lat)
+    deep_levels = get_country_supported_deep_admin_levels(iso3)
+    monolithic_levels = bool(deep_levels) and all(
+        str((get_country_level_config(iso3, level) or {}).get("folder") or "").strip() == "."
+        for level in deep_levels
+    )
+    point_candidates = None
+    if monolithic_levels:
+        point_candidates = load_country_parquet_viewport(
+            iso3, None, point_bbox, columns=POINT_RESOLUTION_COLUMNS,
+        )
+
+    if point_candidates is not None and "admin_level" in point_candidates.columns:
+        admin1_df = point_candidates[point_candidates["admin_level"] == 1]
+    else:
+        admin1_df = load_country_parquet_viewport(
+            iso3, 1, point_bbox, columns=POINT_RESOLUTION_COLUMNS,
+        )
     admin1_match = _find_containing_row(admin1_df, lon, lat)
 
-    admin2_df = load_country_parquet_viewport(iso3, 2, (lon, lat, lon, lat))
-    if admin2_df is None or admin2_df.empty:
-        admin2_df = load_country_parquet(iso3, admin_level=2)
+    if point_candidates is not None and "admin_level" in point_candidates.columns:
+        admin2_df = point_candidates[point_candidates["admin_level"] == 2]
+    else:
+        admin2_df = load_country_parquet_viewport(
+            iso3, 2, point_bbox, columns=POINT_RESOLUTION_COLUMNS,
+        )
     admin2_match = _find_containing_row(admin2_df, lon, lat)
 
     if admin2_match is not None:
@@ -1271,7 +1367,14 @@ def resolve_point_to_location(lon: float, lat: float, include_geometry: bool = T
         deepest_row = admin1_match
     else:
         deepest_row = country_match
-    deep_match = _resolve_deepest_point_match(iso3, lon, lat, admin1_row=admin1_match, admin2_row=admin2_match)
+    deep_match = _resolve_deepest_point_match(
+        iso3,
+        lon,
+        lat,
+        admin1_row=admin1_match,
+        admin2_row=admin2_match,
+        point_candidates=point_candidates,
+    )
     if deep_match is not None:
         deepest_row = deep_match
 
@@ -2541,7 +2644,7 @@ def load_subcounty_geometry(
     Returns:
         DataFrame or None
     """
-    countries_dir = DATA_ROOT / "countries" / iso3
+    countries_dir = COUNTRY_GEOMETRY_DIR / iso3
 
     level_config = get_country_level_config(iso3, admin_level)
 
@@ -2550,7 +2653,15 @@ def load_subcounty_geometry(
 
     geom_type = level_config.get("folder") or level_config.get("name")
     if str(geom_type or "").strip() == ".":
-        df = load_country_parquet(iso3, admin_level=admin_level)
+        if bbox is not None:
+            df = load_country_parquet_viewport(
+                iso3,
+                admin_level,
+                bbox,
+                columns=columns or POINT_RESOLUTION_COLUMNS,
+            )
+        else:
+            df = load_country_parquet(iso3, admin_level=admin_level, columns=columns)
         return _apply_subcounty_filters(
             df,
             loc_ids=loc_ids,
@@ -2568,7 +2679,7 @@ def load_subcounty_geometry(
         if not filtered_request and cache_key in _subcounty_geometry_cache:
             return _subcounty_geometry_cache[cache_key]
 
-        file_path = countries_dir / "geometry" / f"{geom_type}.parquet"
+        file_path = countries_dir / f"{geom_type}.parquet"
         if not is_cloud_mode() and not file_path.exists():
             logger.debug(f"Sub-county geometry not found: {file_path}")
             return None
@@ -2593,7 +2704,7 @@ def load_subcounty_geometry(
             return None
 
         subdir = geom_type  # e.g., "tract", "blockgroup", "block"
-        file_path = countries_dir / "geometry" / subdir / f"{iso3}-{state_abbrev}.parquet"
+        file_path = countries_dir / subdir / f"{iso3}-{state_abbrev}.parquet"
         if not is_cloud_mode() and not file_path.exists():
             logger.debug(f"Sub-county geometry not found: {file_path}")
             return None

@@ -62,11 +62,11 @@ class CountryGeometryRuntimeTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            tract_path = Path(tmpdir) / "USA" / "geometry" / "tract.parquet"
+            tract_path = Path(tmpdir) / "USA" / "tract.parquet"
             tract_path.parent.mkdir(parents=True, exist_ok=True)
             tract_path.touch()
 
-            with patch("mapmover.runtime.country_geography.COUNTRIES_DIR", Path(tmpdir)):
+            with patch("mapmover.runtime.country_geography.COUNTRY_GEOMETRY_DIR", Path(tmpdir)):
                 with patch("mapmover.runtime.country_geography.load_country_crosswalk", return_value=crosswalk):
                     lines = build_country_geometry_alias_context_lines("USA")
 

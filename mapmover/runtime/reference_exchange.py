@@ -26,7 +26,12 @@ from .geography_reference import (
 from .geometry_catalog import load_geometry_catalog, resolve_geometry_name
 from .geography_relationships import resolve_historical_country_reference
 from .loc_id_resolution import resolve_admin_text_to_loc_id
-from .sidechain_admin_bridge import admin_level_name, resolve_admin_to_sidechains, resolve_sidechain_to_admin
+from .sidechain_admin_bridge import (
+    admin_level_name,
+    resolve_admin_to_sidechains,
+    resolve_sidechain_to_admin,
+    resolve_sidechains_to_admin,
+)
 
 
 LOC_ID_SYSTEM = "daedalmap.loc_id"
@@ -597,6 +602,79 @@ def resolve_reference(
         "match_count": result.get("overlap_count") or 0,
         "error": result.get("error"),
     })
+
+
+def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Resolve reference requests while scanning each shared bridge only once.
+
+    Direct IDs, names, aliases, historical references, and family-to-family
+    conversions retain their existing single-request paths. Only homogeneous
+    sidechain-to-admin bridge work is coalesced.
+    """
+    results: list[dict[str, Any] | None] = [None] * len(requests)
+    groups: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
+    for index, request in enumerate(requests):
+        if request.get("to_system"):
+            results[index] = convert_reference(**request)
+            continue
+        system = _normalize_system(request.get("from_system"))
+        level = admin_level_name(request.get("target_admin_level") or "admin_2")
+        iso3 = str(request.get("iso3") or "USA").strip().upper()
+        artifact = _first_bridge_artifact(
+            source_family=system,
+            target_admin_level=level,
+            iso3=iso3,
+            bridge_vintage=request.get("bridge_vintage"),
+        )
+        if not artifact:
+            results[index] = resolve_reference(**request)
+            continue
+        key = (
+            system,
+            level,
+            iso3,
+            str(_catalog_bridge_path(artifact) or ""),
+            request.get("min_share"),
+            int(request.get("limit") or 10),
+        )
+        groups.setdefault(key, []).append((index, request))
+
+    for (system, level, iso3, artifact_path, min_share, limit), members in groups.items():
+        normalized = [
+            _normalize_source_loc_id(system, str(request.get("value") or "").strip(), iso3)
+            for _, request in members
+        ]
+        batched = resolve_sidechains_to_admin(
+            normalized,
+            source_family=system,
+            target_admin_level=level,
+            iso3=iso3,
+            bridge_path=Path(artifact_path),
+            min_source_area_share=min_share,
+            limit=limit,
+        )
+        for (index, request), source_loc_id in zip(members, normalized):
+            bridge_result = batched.get(source_loc_id) or {}
+            primary = bridge_result.get("primary_match") or {}
+            results[index] = _clean_json({
+                "ok": bool(bridge_result.get("ok")),
+                "from_system": system,
+                "input": request.get("value"),
+                "normalized_input": source_loc_id,
+                "resolved_loc_id": primary.get("match_loc_id"),
+                "resolved_family": "admin_boundary" if primary.get("match_loc_id") else None,
+                "match_type": "bridge_overlap",
+                "bridge": {
+                    "artifact_path": str(Path(artifact_path).relative_to(DATA_ROOT)).replace("\\", "/") if artifact_path else None,
+                    "bridge_vintage": (primary or {}).get("bridge_vintage"),
+                    "target_admin_level": level,
+                },
+                "primary_match": primary,
+                "matches": bridge_result.get("overlaps") or [],
+                "match_count": bridge_result.get("overlap_count") or 0,
+                "error": bridge_result.get("error"),
+            })
+    return [result or {"ok": False, "error": "batch resolution produced no result"} for result in results]
 
 
 def loc_id_references(

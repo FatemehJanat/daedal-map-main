@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..foundation_helpers import load_country_crosswalk
-from ..paths import COUNTRIES_DIR
+from ..paths import COUNTRY_GEOMETRY_DIR
 
 
 def load_country_geometry_profile(iso3: str) -> dict[str, Any]:
@@ -73,9 +73,9 @@ def _country_level_geometry_exists(iso3: str, info: dict[str, Any]) -> bool:
     if not folder:
         return False
 
-    countries_dir = Path(COUNTRIES_DIR)
-    direct_path = countries_dir / iso3 / "geometry" / f"{folder}.parquet"
-    partition_dir = countries_dir / iso3 / "geometry" / folder
+    countries_dir = Path(COUNTRY_GEOMETRY_DIR)
+    direct_path = countries_dir / iso3 / f"{folder}.parquet"
+    partition_dir = countries_dir / iso3 / folder
     return direct_path.exists() or partition_dir.exists()
 
 
