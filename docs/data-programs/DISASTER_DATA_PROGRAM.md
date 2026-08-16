@@ -114,9 +114,12 @@ The working worst-case chain for validating that split is:
 The shared disaster identity contract should be read as four distinct things:
 
 1. `event_id`
-- the canonical source-table-unique event identifier
+- the canonical occurrence identifier; it is an event identity, not geometry
 - used for exact lookup, URLs, source traceability, external references, and
   joins from `events` to companion/support tables inside that source lane
+- static/closed events derive their stable geographic anchor from the reviewed
+  affected-area set; progressive events keep the identity they received when
+  first admitted while their frames continue to change
 
 `source_event_id`, when present, retains a raw agency identifier that is not
 unique enough to be the canonical event key by itself.
@@ -142,6 +145,9 @@ Migration rule:
 - migrate those keys to `event_id` before a source passes its strict API gate.
 - source-local companion tables may join on `event_id`; cross-source links must
   carry explicit source/hazard context instead of inventing a geographic id.
+- there is no compatibility exception for occurrence-shaped values in geometry
+  fields: unresolved retrospective events use a `WORLD-{FAMILY}-...` event ID
+  and a null geometry foreign key until reviewed location evidence exists.
 
 Anchor rule:
 
@@ -192,8 +198,8 @@ Likewise, not every multi-hazard relationship should be represented as a formal 
 - `links` are for causal or source-supported event relationships
 - shared geography or co-occurrence should usually be represented through `aggregates` and overlay logic instead
 - future Ops-mode "something changed" questions will often depend on baseline/anomaly products, not links
-- the shared long-term schema should prefer event-id naming, but the current
-  compatibility layer still includes some loc-id-based relationship records
+- the shared relationship schema uses event-id naming; link endpoints are
+  canonical event IDs, while any location fields are geometry context only
 - hazard-native embedded relationship fields are allowed when the source itself
   exposes them; they should not be confused with the shared cross-hazard link
   table
@@ -368,14 +374,19 @@ The foundation is strong:
 - cross-disaster links exist and are already useful
 - runtime/query work is good enough to support real multi-layer questions
 
-The remaining work is mostly contract-hardening and standardization:
+The shared identity/progression migration is now locally complete and published:
 
-- finish `event_type` normalization everywhere
-- lock canonical link naming and semantics
-- formalize wildfire progression as its own schema class in QA
-- keep progression expectations narrow so QA does not treat tracks or paths as missing progression files
-- standardize aggregate outputs and placement
-- close remaining null/coverage gaps in selected hazards
+- all 22 audited data packs resolve their 903,677 distinct geometry foreign
+  keys with zero missing geometry IDs
+- 2,974 disaster-link rows close with zero missing event endpoints
+- Global Fire Atlas validates 20,318,111 events and 58,941,104 progression
+  rows, including an explicit multipart-frame key
+- flood duration semantics validate 5,305 multi-day intervals without
+  pretending that duration-only records contain progression frames
+- the generated canonical exact-event matrix passes 110/110 cases, and its
+  seven registered per-hazard suites are projections of that same matrix
+
+Remaining work is source expansion and freshness, not a second identity model.
 
 In short:
 
@@ -391,16 +402,16 @@ status belongs in the internal pack-deployment tracker; hosted/local QA
 expectations should be derived from catalogs, QA results, and real lane
 presence.
 
-| Hazard | Schema class | Primary source | Timeline covered | Gap to now | Live source status | Layers present | Notes |
+| Hazard | Schema class | Primary source | Timeline covered | Gap to now | Published/update status | Layers present | Notes |
 |---|---|---|---|---|---|---|---|
-| earthquakes | `event_point` | USGS | `2150 BC-2026` | days | deployed | events, event_areas, links, annual/rolling aggregates | Strongest operational disaster package. |
-| floods | `event_point` | DFO/GFD | `1985-2019` | 6+ years | none | events, event_areas, shared links, annual/rolling aggregates | Freshness is the biggest gap; strict local seam now validates the maintained archive. |
-| hurricanes | `event_track` | IBTrACS | `1842-2026` | weeks | found, not deployed | storm/position events, event_areas, annual/rolling aggregates, selected links | Track-style source; commercial review remains separate from the structural seam. |
+| earthquakes | `event_point` | USGS | `2150 BC-2026` | days | published; live updates | events, event_areas, links, annual/rolling aggregates | Strongest operational disaster package. |
+| floods | `event_point` | DFO/GFD + NOAA | `1985-2019` plus NOAA history | source-dependent | published; batch | events, event_areas, duration contracts, shared links, annual/rolling aggregates | Freshness is the biggest gap; multi-day duration is not fabricated progression. |
+| hurricanes | `event_track` | IBTrACS | `1842-2026` | weeks | published; live updates | storm/position events, event_areas, annual/rolling aggregates, selected links | Track-style source; commercial review remains separate from the structural seam. |
 | landslides | `event_point` | merged sources | `1760-2025` | about 1 year | batch only | events present; supporting layers incomplete | Keep sparse/local until confidence improves. |
-| tornadoes | `event_point` | NOAA | `1950-2025` | weeks | batch only | events, event_areas, annual/rolling aggregates, selected links | Audit row count and sequence/path expectations before expansion. |
-| tsunamis | `event_point` | NOAA | `2000 BC-2025` | about 1 year | deployed | events, event_areas, annual/rolling aggregates, shared links | Strong historical event layer with live collector path. |
-| volcanoes | `event_point` | Smithsonian | Holocene-2025 | about 1 year | deployed | events, event_areas, annual/rolling aggregates, shared links | Good event base; shared seam gate owns aggregate/link integrity. |
-| wildfires | `event_polygon_progression` | NASA FIRMS + Global Fire Atlas | `2002-2024` | about 1 year | found, not deployed | events, event_areas, progression, annual/rolling aggregates, shared links | Progression is canonical; progression snapshots are separate from Admin2 affected-area aggregation. |
+| tornadoes | `event_point` | NOAA | `1950-2025` | weeks | published; batch | events, event_areas, annual/rolling aggregates, selected links | Path geometry remains distinct from progression. |
+| tsunamis | `event_point` | NOAA | `2000 BC-2025` | about 1 year | published; live updates | events, event_areas, annual/rolling aggregates, shared links | Strong historical event layer with live collector path. |
+| volcanoes | `event_point` | Smithsonian | Holocene-2025 | about 1 year | published; live updates | events, event_areas, annual/rolling aggregates, shared links | Good event base; shared seam gate owns aggregate/link integrity. |
+| wildfires | `event_polygon_progression` | Canadian NFD, US sources, Global Fire Atlas | source-dependent, `1930-2024` overall | source-dependent | published; live updates | events, event_areas, progression, annual/rolling aggregates, shared links | Progression is canonical; progression snapshots are separate from affected-area aggregation. |
 
 Non-canonical support sources such as `desinventar`, `reliefweb`, `event_areas`,
 and `links` should not be promoted as standalone public disaster families unless
