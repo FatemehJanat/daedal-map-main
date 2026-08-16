@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from functools import lru_cache
 
 from shapely import from_wkb
 from shapely.geometry import Point
@@ -11,6 +12,7 @@ from shapely.geometry import Point
 from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, path_to_uri
 from ..paths import COUNTRY_GEOMETRY_DIR
 from .geometry_catalog import load_geometry_catalog
+from .published_artifacts import read_artifact_json
 
 
 META_COLUMNS = """
@@ -30,10 +32,29 @@ def layout_available(iso3: str) -> bool:
     if not is_cloud_mode():
         return (root / "manifest.json").is_file() and (root / "admin_0_3.parquet").is_file()
     expected = f"geometry/countries/{str(iso3).upper()}/admin_spine/manifest.json"
-    return any(
+    if any(
         str(bank.get("query_layout_manifest") or "").replace("\\", "/") == expected
         for bank in load_geometry_catalog().get("geometry_banks") or []
         if isinstance(bank, dict)
+    ):
+        return True
+    # The published manifest is the executable contract. Catalog discovery is
+    # preferred, but a catalog cache/read failure must not silently send point
+    # lookup back through a legacy monolithic geometry bank.
+    return _published_layout_manifest_available(str(iso3).upper(), expected)
+
+
+@lru_cache(maxsize=64)
+def _published_layout_manifest_available(iso3: str, relative_path: str) -> bool:
+    try:
+        payload = read_artifact_json(relative_path, lane="published")
+    except Exception:
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("status") == "PASS"
+        and str(payload.get("country") or "").upper() == iso3
+        and payload.get("layout_policy") == "national_admin_0_3_plus_admin_1_owned_deep"
     )
 
 

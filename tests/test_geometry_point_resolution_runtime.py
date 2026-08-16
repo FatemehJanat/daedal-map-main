@@ -14,6 +14,18 @@ from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 
 class GeometryPointResolutionRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        # Legacy-reader tests author their own geometry frames. Keep the new
+        # adopted query-layout lane opt-in unless a test explicitly exercises it.
+        self._query_layout_patch = patch(
+            "mapmover.geometry_handlers.resolve_admin_spine_query_point",
+            return_value=None,
+        )
+        self._query_layout_patch.start()
+
+    def tearDown(self):
+        self._query_layout_patch.stop()
+
     def test_runtime_geometry_spine_prefers_smallest_covering_polygon(self):
         import pandas as pd
 
@@ -256,6 +268,41 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(result["country"]["loc_id"], "AUS")
         self.assertEqual(result["matched"]["loc_id"], "AUS-G114531-G295907")
         self.assertEqual(result["matched"]["admin_level"], 2)
+
+    def test_resolve_points_prefers_adopted_country_query_layout(self):
+        import pandas as pd
+
+        country_df = pd.DataFrame([{
+            "loc_id": "NZL", "name": "New Zealand", "admin_level": 0,
+            "geometry": '{"type":"Polygon","coordinates":[[[160,-50],[160,-30],[180,-30],[180,-50],[160,-50]]]}',
+        }])
+        query_match = {
+            "stack": [
+                {"loc_id": "NZL", "name": "New Zealand", "admin_level": 0},
+                {"loc_id": "NZL-AUK", "name": "Auckland", "admin_level": 1},
+                {"loc_id": "NZL-AUK-001", "name": "Central", "admin_level": 2},
+                {"loc_id": "NZL-AUK-001-007", "name": "Meshblock", "admin_level": 3},
+            ],
+            "matched": {"loc_id": "NZL-AUK-001-007", "name": "Meshblock", "admin_level": 3},
+        }
+        with (
+            patch("mapmover.geometry_handlers.load_global_countries_frame", return_value=country_df),
+            patch(
+                "mapmover.geometry_handlers.resolve_admin_spine_query_point",
+                return_value=query_match,
+            ),
+            patch("mapmover.geometry_handlers.load_country_parquet_viewport") as legacy_load,
+        ):
+            result = resolve_points_to_locations(
+                [{"lon": 174.76, "lat": -36.85}],
+                target_admin_level=2,
+                country_scope="NZL",
+            )[0]
+
+        self.assertEqual(result["matched"]["loc_id"], "NZL-AUK-001")
+        self.assertEqual(result["query_layout"], "admin_0_3_plus_admin_1_deep")
+        self.assertEqual([row["loc_id"] for row in result["stack"]], ["NZL", "NZL-AUK", "NZL-AUK-001"])
+        legacy_load.assert_not_called()
 
     def test_resolve_points_to_locations_batches_country_admin_reads(self):
         import pandas as pd

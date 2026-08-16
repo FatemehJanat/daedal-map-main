@@ -1529,6 +1529,79 @@ def resolve_points_to_locations(
         _add_timing_ms(timing_ms, "country_match_ms", stage_started)
 
     for iso3, country_items in by_country.items():
+        # The adopted query layout is the primary country-spine reader. It is
+        # deliberately attempted before any legacy country bank so a country's
+        # maintained spine always outranks the GeoBoundaries/global fallback.
+        # Failed/unavailable layout lookups remain eligible for the legacy path.
+        unresolved_items: list[dict] = []
+        stage_started = time.perf_counter()
+        for item in country_items:
+            query_match = resolve_admin_spine_query_point(
+                iso3, float(item["lon"]), float(item["lat"])
+            )
+            if query_match is None:
+                unresolved_items.append(item)
+                continue
+            full_stack = list(query_match.get("stack") or [])
+            available_levels = sorted({int(row.get("admin_level", 0)) for row in full_stack})
+            selected_stack = full_stack
+            if target_admin_level is not None:
+                selected_stack = [
+                    row for row in full_stack
+                    if int(row.get("admin_level", 0)) <= target_admin_level
+                ]
+            exact_target = (
+                target_admin_level is None
+                or any(int(row.get("admin_level", 0)) == target_admin_level for row in selected_stack)
+            )
+            selected = selected_stack[-1] if selected_stack else None
+            country_match = item["country_match"]
+            country_name = country_match.get("name") or iso3
+            if not exact_target or selected is None:
+                max_level = max(available_levels or [0])
+                error_code = (
+                    "target_admin_level_unavailable"
+                    if target_admin_level is not None and target_admin_level > max_level
+                    else "no_match_at_target_admin_level"
+                )
+                results[item["index"]] = {
+                    "point": {"lon": float(item["lon"]), "lat": float(item["lat"])},
+                    "country": {"loc_id": iso3, "name": country_name},
+                    "target_admin_level": f"admin_{target_admin_level}",
+                    "max_available_admin_level": f"admin_{max_level}",
+                    "available_admin_levels": [f"admin_{level}" for level in available_levels],
+                    "query_layout": "admin_0_3_plus_admin_1_deep",
+                    "error": {
+                        "code": error_code,
+                        "message": f"Point did not match admin_{target_admin_level} in {iso3}",
+                    },
+                }
+                continue
+            selected_level = int(selected.get("admin_level", 0))
+            deeper_levels = [level for level in available_levels if level > selected_level]
+            results[item["index"]] = {
+                "point": {"lon": float(item["lon"]), "lat": float(item["lat"])},
+                "country": {"loc_id": iso3, "name": country_name},
+                "matched": {
+                    "loc_id": selected.get("loc_id"), "name": selected.get("name"),
+                    "admin_level": selected_level, "country_name": country_name, "iso3": iso3,
+                },
+                "stack": [_compact_point_stack_entry(row) for row in selected_stack],
+                "resolution_mode": "latest_available_per_depth",
+                "target_admin_level": (
+                    f"admin_{target_admin_level}" if target_admin_level is not None else "deepest"
+                ),
+                "deeper_available": bool(deeper_levels),
+                "available_deeper_admin_levels": [f"admin_{level}" for level in deeper_levels],
+                "query_layout": "admin_0_3_plus_admin_1_deep",
+            }
+            if include_geometry:
+                results[item["index"]]["geojson"] = get_selection_geometries([selected.get("loc_id")])
+        _add_timing_ms(timing_ms, f"{iso3}_query_layout_ms", stage_started)
+        country_items = unresolved_items
+        if not country_items:
+            continue
+
         min_lon = min(float(item["lon"]) for item in country_items)
         max_lon = max(float(item["lon"]) for item in country_items)
         min_lat = min(float(item["lat"]) for item in country_items)

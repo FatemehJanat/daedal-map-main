@@ -1617,6 +1617,7 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
         "join_keys": raw.get("join_keys") or {},
         "join_grain": raw.get("join_grain") or raw.get("deepest_resolved_admin_level"),
         "resolution_mode": raw.get("resolution_mode") or "latest_available_per_depth",
+        "query_layout": raw.get("query_layout"),
         "target_admin_level": raw.get("target_admin_level"),
         "deeper_available": bool(raw.get("deeper_available")),
         "available_deeper_admin_levels": raw.get("available_deeper_admin_levels") or [],

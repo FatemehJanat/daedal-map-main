@@ -13,9 +13,22 @@ def test_cloud_layout_availability_comes_from_published_catalog() -> None:
     with (
         patch.object(admin_spine_query, "is_cloud_mode", return_value=True),
         patch.object(admin_spine_query, "load_geometry_catalog", return_value=catalog),
+        patch.object(admin_spine_query, "_published_layout_manifest_available", return_value=False),
     ):
         assert admin_spine_query.layout_available("NZL") is True
         assert admin_spine_query.layout_available("FRA") is False
+
+
+def test_cloud_layout_availability_falls_back_to_published_manifest() -> None:
+    with (
+        patch.object(admin_spine_query, "is_cloud_mode", return_value=True),
+        patch.object(admin_spine_query, "load_geometry_catalog", return_value={"geometry_banks": []}),
+        patch.object(admin_spine_query, "_published_layout_manifest_available", return_value=True) as fallback,
+    ):
+        assert admin_spine_query.layout_available("NZL") is True
+    fallback.assert_called_once_with(
+        "NZL", "geometry/countries/NZL/admin_spine/manifest.json"
+    )
 
 
 def test_cloud_metadata_uses_object_store_uri() -> None:

@@ -1103,6 +1103,19 @@ def resolve_place_to_loc_id_stack(
 ) -> dict[str, Any]:
     value = str(query or "").strip()
 
+    # A maintained administrative name/code is authoritative and must win
+    # before a same-named city or gazetteer point. For example, "Virginia"
+    # resolves to the USA Admin1; a city lookup remains available when the
+    # administrative resolver has no unique match.
+    direct_match = resolve_admin_text_to_loc_id(
+        value,
+        country_hint=country_hint,
+        admin_level_hint=admin_level_hint,
+    )
+    if direct_match.get("matches"):
+        direct_match["resolution_mode"] = "direct_admin_text"
+        return direct_match
+
     local_place = resolve_populated_place(value, country_hint=country_hint) if resolved_place is None else None
     if local_place:
         point_payload = resolve_place_to_point(
@@ -1123,15 +1136,6 @@ def resolve_place_to_loc_id_stack(
         stack_payload["resolved_place"] = place
         stack_payload["resolution_mode"] = "populated_place_index"
         return stack_payload
-
-    direct_match = resolve_admin_text_to_loc_id(
-        value,
-        country_hint=country_hint,
-        admin_level_hint=admin_level_hint,
-    )
-    if direct_match.get("matches"):
-        direct_match["resolution_mode"] = "direct_admin_text"
-        return direct_match
 
     point_payload = resolve_place_to_point(
         value,

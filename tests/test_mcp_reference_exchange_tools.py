@@ -147,6 +147,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                     "target_admin_level": "admin_2",
                     "deeper_available": True,
                     "available_deeper_admin_levels": ["admin_3"],
+                    "query_layout": "admin_0_3_plus_admin_1_deep",
                 }
                 for point in points
             ]
@@ -176,6 +177,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["deepest_resolved_loc_id"], "TEST-49.2--123.1")
         self.assertEqual(payload["results"][0]["resolution_mode"], "latest_available_per_depth")
         self.assertEqual(payload["results"][0]["resolution_schema_version"], "1.0.0")
+        self.assertEqual(payload["results"][0]["query_layout"], "admin_0_3_plus_admin_1_deep")
         self.assertIn("join_keys", payload["results"][0])
         self.assertTrue(payload["results"][0]["deeper_available"])
         self.assertEqual(payload["results"][0]["available_deeper_admin_levels"], ["admin_3"])
