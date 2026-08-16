@@ -823,6 +823,39 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
                     filters=[("loc_id", "in", query_ids)],
                 )
 
+        # A country-specific spine has priority, but it is not necessarily a
+        # complete replacement for the global GeoBoundaries namespace. Data
+        # packs can intentionally retain global Admin1/Admin2 affected-area
+        # ids. Resolve only the rows the adopted country bank did not contain
+        # from the global bank, preserving the caller's requested id space.
+        # This is a row-level fallback; it never lets global geometry shadow a
+        # country row that was found successfully.
+        found_ids = set(df["loc_id"].astype(str)) if not df.empty and "loc_id" in df else set()
+        missing_global_ids = [
+            loc_id
+            for loc_id in query_ids
+            if loc_id not in found_ids and classify_loc_id_family(loc_id) == "admin_geometry"
+        ]
+        global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
+        if missing_global_ids and global_geom_file != parquet_file and (
+            (prefer_local and global_geom_file.exists()) or _parquet_accessible(global_geom_file)
+        ):
+            global_columns = _physical_parquet_columns(global_geom_file, columns)
+            if prefer_local and global_geom_file.exists():
+                global_df = pd.read_parquet(
+                    global_geom_file,
+                    columns=global_columns,
+                    filters=[("loc_id", "in", missing_global_ids)],
+                )
+            else:
+                global_df = select_rows(
+                    global_geom_file,
+                    columns=global_columns,
+                    in_filters={"loc_id": missing_global_ids},
+                )
+            if global_df is not None and not global_df.empty:
+                df = pd.concat([df, global_df], ignore_index=True)
+
         if df.empty:
             # Shared fallback for admin-spine ids that have a dedicated cached
             # level loader but are not present on the exact-row path in cloud

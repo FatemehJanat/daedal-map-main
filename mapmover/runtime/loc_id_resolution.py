@@ -22,6 +22,7 @@ from .geography_reference import (
     canonicalize_loc_id,
     classify_loc_id_family,
     is_named_water_loc_id,
+    load_conversions,
     translate_geometry_id_to_local_id,
 )
 from .marine_geometry import load_marine_geometry
@@ -771,6 +772,13 @@ def resolve_admin_text_to_loc_id(
         }
 
     aliased_loc_id = _resolve_country_direct_location_alias(value, country_hint=country_hint)
+    if not aliased_loc_id:
+        normalized_value = _normalize_admin_text(value)
+        reviewed_aliases = (load_conversions() or {}).get("location_aliases", {})
+        for alias, candidate_loc_id in reviewed_aliases.items():
+            if _normalize_admin_text(alias) == normalized_value:
+                aliased_loc_id = canonicalize_loc_id(candidate_loc_id)
+                break
     if aliased_loc_id:
         family = classify_loc_id_family(aliased_loc_id)
         admin_level = infer_admin_level_from_loc_id(aliased_loc_id) if family in {"admin_0", "admin_local", "admin_geometry"} else None
