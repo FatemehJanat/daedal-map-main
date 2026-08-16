@@ -60,6 +60,7 @@ SIDECHAIN_FAMILIES = {
     "health_region",
     "service_territory",
     "hazard_zone",
+    "named_feature",
     "custom_private",
 }
 
@@ -100,6 +101,11 @@ COUNTRY_SCOPED_SIDECHAIN_PATTERNS = (
     re.compile(r"^[A-Z]{3}-POA-\d{4}$"),
     re.compile(r"^[A-Z]{3}-TRIBAL-[A-Z0-9]+$"),
     re.compile(r"^[A-Z]{3}-NWS[ZF]Z-[A-Z]{2}Z\d{3}$"),
+    re.compile(
+        r"^[A-Z]{3}(?:-[A-Z0-9]+)*-(?:POSTAL|INDIGENOUS|WEATHER|FIREWX|PLACE|URBAN|"
+        r"ELECTORAL|SCHOOL|HEALTH|WATERSHED|PROTECTED|WATER|ECOLOGICAL|TIMEZONE|PROGRAM)-"
+        r"[A-Z0-9][A-Z0-9-]*$"
+    ),
 )
 
 EVENT_MARKERS = {"EQ", "FIRE", "FLOOD", "HRCN", "TORN", "TSUN", "VOLC", "ALERT"}
@@ -137,6 +143,7 @@ STEWARDSHIP_ORACLE_FIELDS = {
     "supports_temporal_identifier_network": "temporal_identifier_network",
     "covers_admin_water_world": "admin_water_world_partition",
     "derives_release_scale_hints": "release_scale_hint",
+    "derives_shaped_sibling_area_depth": "shaped_sibling_area_depth",
     "isolates_customer_world_branches": "customer_world_branching",
     "pins_family_authority": "family_authority_selection",
     "declares_geometry_distribution": "geometry_distribution_profile",
@@ -196,6 +203,7 @@ BASE_DOCTRINE_RULES: dict[str, Any] = {
     "temporal_identifier_network": False,
     "admin_water_world_partition": False,
     "release_scale_hint": False,
+    "shaped_sibling_area_depth": False,
     "customer_world_branching": False,
     "family_authority_selection": False,
     "geometry_distribution_profile": False,
@@ -400,8 +408,8 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
         },
         {
             "id": "repro-007",
-            "decision": "Normalized scale is a release-versioned presentation and query hint, never geographic identity.",
-            "effect": "Zoom, labeling, aggregation, and comparison can improve without changing source-native hierarchy or identifiers.",
+            "decision": "Non-shaped normalized scale is a release-versioned presentation and query hint, never geographic identity.",
+            "effect": "Zoom, labeling, aggregation, and comparison can improve for grids, routes, and source aliases without changing their identifiers.",
         },
         {
             "id": "repro-008",
@@ -412,6 +420,11 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
             "id": "repro-009",
             "decision": "Confidence and supersession are typed, nullable, source-backed, and reproducible by method and release.",
             "effect": "A candidate never becomes a confirmed successor through a default score or undocumented threshold change.",
+        },
+        {
+            "id": "repro-010",
+            "decision": "A shaped country sibling's complete owned physical area determines canonical ancestry depth against a stable-spine-fingerprint-pinned country profile.",
+            "effect": "Area controls precision while official ownership selects extent, dominant same-depth overlap selects one anchor, and every crossing remains a bridge.",
         },
     ],
     "stewarded_release_graph": [
@@ -467,8 +480,8 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
         },
         {
             "id": "steward-011",
-            "decision": "Derived scale hints name their purpose, method, input release, and output release and never affect identity.",
-            "effect": "A builder revision can change map behavior without silently changing a place, grid, or source-native level.",
+            "decision": "Non-shaped presentation scale hints name their purpose, method, input release, and output release and never affect identity.",
+            "effect": "A builder revision can change map behavior for grids, routes, and source aliases without silently changing identity.",
         },
         {
             "id": "steward-012",
@@ -490,6 +503,11 @@ DOCTRINE_DECISIONS: dict[str, list[dict[str, str]]] = {
             "decision": "Confidence and supersession claims pin method, source, algorithm, threshold, evidence artifact, and release.",
             "effect": "Authoritative claims may honestly omit a numeric score while probabilistic candidates remain distinguishable from confirmed successors.",
         },
+        {
+            "id": "steward-016",
+            "decision": "Shaped country siblings use ISO3-owned, physical-area-derived canonical ancestry pinned to the adopted spine fingerprint.",
+            "effect": "Large shapes receive shorter ancestry and small shapes longer ancestry; boundary straddling changes bridges and anchor choice, not depth.",
+        },
     ],
 }
 
@@ -506,6 +524,19 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
         "bridge_policy": "admin_spine",
         "lifecycle_policy": "current_with_supersession",
         "license_policy": "public",
+    },
+    {
+        "namespace": "country_shaped_sibling_area_depth",
+        "pattern": r"^[A-Z]{3}(?:-[A-Z0-9]+)*-(?:POSTAL|INDIGENOUS|WEATHER|FIREWX|PLACE|URBAN|ELECTORAL|SCHOOL|HEALTH|WATERSHED|PROTECTED|WATER|ECOLOGICAL|TIMEZONE|PROGRAM)-[A-Z0-9][A-Z0-9-]*$",
+        "identity_role": "loc_id",
+        "family_id": "shaped_sidechain",
+        "scope_type": "country_reference_scope",
+        "public_promise": "stable_public_loc_id",
+        "raw_input_allowed": True,
+        "canonical_output_allowed": True,
+        "bridge_policy": "sibling_area_depth_and_overlap",
+        "lifecycle_policy": "source_vintage_with_alias_lifecycle",
+        "license_policy": "family_specific",
     },
     {
         "namespace": "current_admin_local",
@@ -587,7 +618,7 @@ PROPOSED_NAMESPACE_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "namespace": "external_source_alias",
-        "pattern": r"^(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|PLACEKEY|WHG|GERS|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+$",
+        "pattern": r"^(?:OSM|GADM|WIKIDATA|GEONAMES|CGNDB|UNLOCODE|ISO3166-3|COW|FCC|PLACEKEY|WHG|GERS|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+$",
         "identity_role": "source_alias",
         "family_id": "source_alias",
         "scope_type": "source_family_scope",
@@ -690,7 +721,7 @@ SOLIDIFIED_SIBLING_LAYER_REGISTRY: list[dict[str, Any]] = [
     if entry["namespace"] == "crosswalk_artifact"
     else {
         **entry,
-        "pattern": r"^(?:(?:OSM|GADM|WIKIDATA|GEONAMES|UNLOCODE|ISO3166-3|COW|FCC|WHG|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+|PLACEKEY-(?!@).+|GERS-.+)$",
+        "pattern": r"^(?:(?:OSM|GADM|WIKIDATA|GEONAMES|CGNDB|UNLOCODE|ISO3166-3|COW|FCC|WHG|OCHA-PCODE|OS-UPRN|PMTILES|TILE-ZXY)-.+|PLACEKEY-(?!@).+|GERS-.+)$",
     }
     if entry["namespace"] == "external_source_alias"
     else entry
@@ -872,6 +903,7 @@ DOCTRINE_PROFILES: dict[str, dict[str, Any]] = {
             "authority_snapshot_provenance": True,
             "pinnable_geography_release": True,
             "release_scale_hint": True,
+            "shaped_sibling_area_depth": True,
             "geometry_distribution_profile": True,
             "confidence_supersession_evidence": True,
             "relationship_method_provenance": True,
@@ -1061,6 +1093,7 @@ def expected_parent_semantics(identifier: str | None, *, family_id: str | None =
         return "strict_admin_parent"
     if family in SIDECHAIN_FAMILIES or family in {
         "sidechain",
+        "shaped_sidechain",
         "source_sidechain",
         "source_or_temporal_sidechain",
         "temporal_or_claim_sidechain",
@@ -1977,6 +2010,102 @@ def oracle_fingerprint(cases: list[dict[str, Any]]) -> str:
     return _stable_fingerprint(payload)
 
 
+def _valid_shaped_sibling_area_depth(metadata: Any) -> bool:
+    """Validate the minimum reproducible evidence for area-derived sibling ancestry."""
+    if not isinstance(metadata, dict):
+        return False
+    profile = metadata.get("area_profile")
+    if not isinstance(profile, dict):
+        return False
+    prior_form = isinstance(profile.get("level_median_area_km2"), dict)
+    medians = (
+        profile.get("level_median_area_km2")
+        if prior_form
+        else profile.get("level_median_area_sq_km")
+    )
+    thresholds = (
+        profile.get("depth_thresholds_km2")
+        if prior_form
+        else profile.get("enter_level_max_area_sq_km")
+    )
+    if not isinstance(medians, dict) or not isinstance(thresholds, dict):
+        return False
+    try:
+        levels = sorted(medians, key=lambda value: int(str(value).split("_")[-1]))
+        median_values = [float(medians[level]) for level in levels]
+        owned_area = float(metadata.get("owned_area_km2"))
+    except (TypeError, ValueError):
+        return False
+    if len(levels) < 2 or owned_area <= 0 or any(value <= 0 for value in median_values):
+        return False
+    if any(left <= right for left, right in zip(median_values, median_values[1:])):
+        return False
+
+    expected_level_number = int(str(levels[-1]).split("_")[-1])
+    for shallow, deep, shallow_area, deep_area in zip(
+        levels, levels[1:], median_values, median_values[1:]
+    ):
+        shallow_number = int(str(shallow).split("_")[-1])
+        deep_number = int(str(deep).split("_")[-1])
+        key = f"{shallow}_to_{deep}" if prior_form else str(deep_number)
+        try:
+            threshold = float(thresholds[key])
+        except (KeyError, TypeError, ValueError):
+            return False
+        geometric_midpoint = (shallow_area * deep_area) ** 0.5
+        if abs(threshold - geometric_midpoint) > max(1e-9, geometric_midpoint * 1e-9):
+            return False
+        if owned_area >= threshold:
+            expected_level_number = shallow_number
+            break
+    expected_level = f"label_{expected_level_number}"
+
+    owner_iso3 = str(metadata.get("country_owner_iso3") or "")
+    canonical_loc_id = str(metadata.get("canonical_loc_id") or "")
+    sibling_anchor = str(metadata.get("sibling_anchor_loc_id") or "")
+    spine_fingerprint = str(
+        metadata.get("spine_candidate_fingerprint")
+        or metadata.get("stable_spine_fingerprint")
+        or ""
+    )
+    profile_fingerprint = str(
+        profile.get("spine_candidate_fingerprint")
+        or profile.get("stable_spine_fingerprint")
+        or ""
+    )
+    analysis_crs = metadata.get("equal_area_crs") or profile.get("analysis_crs")
+    profile_contract_valid = (
+        profile.get("threshold_method") == "geometric_midpoint_adjacent_medians"
+        and bool(profile.get("derivation_version"))
+        if prior_form
+        else profile.get("area_unit") == "square_kilometre"
+        and profile.get("depth_rule")
+        == "deepest_level_whose_geometric_midpoint_threshold_contains_feature_area"
+        and bool(profile.get("schema_version"))
+        and bool(profile.get("builder_version"))
+    )
+    return bool(
+        re.fullmatch(r"[A-Z]{3}", owner_iso3)
+        and canonical_loc_id.startswith(f"{owner_iso3}-")
+        and sibling_anchor.startswith(f"{owner_iso3}-")
+        and canonical_loc_id.startswith(f"{sibling_anchor}-")
+        and metadata.get("geometry_role") in {"official_polygon", "official_multipolygon"}
+        and metadata.get("owned_extent_method") == "complete_owned_physical_area"
+        and analysis_crs
+        and metadata.get("selected_reference_level") == expected_level
+        and metadata.get("anchor_method")
+        == "dominant_owned_area_overlap_at_selected_depth"
+        and metadata.get("population_affects_depth") is False
+        and metadata.get("importance_affects_depth") is False
+        and metadata.get("boundary_crossing_affects_depth") is False
+        and metadata.get("other_intersections_retained_as_bridges") is True
+        and metadata.get("affects_identity") is True
+        and re.fullmatch(r"[0-9a-f]{64}", spine_fingerprint)
+        and profile_fingerprint == spine_fingerprint
+        and profile_contract_valid
+    )
+
+
 def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
     """Expose fixture provenance, oracle coverage, and legacy hidden assumptions."""
     case_counts = Counter(str(case.get("case") or "") for case in cases)
@@ -2406,6 +2535,9 @@ def corpus_audit(cases: list[dict[str, Any]]) -> dict[str, Any]:
                                 and metadata["scale_hint"].get("source_native_level") is not None
                                 and metadata["scale_hint"].get("field_status") == "derived"
                                 and metadata["scale_hint"].get("affects_identity") is False
+                            ),
+                            "derives_shaped_sibling_area_depth": _valid_shaped_sibling_area_depth(
+                                metadata.get("sibling_area_depth")
                             ),
                             "isolates_customer_world_branches": bool(
                                 isinstance(metadata.get("world_branch"), dict)

@@ -3585,6 +3585,214 @@
     }
   },
   {
+    "case": "Large shaped sibling receives short area-depth ancestry",
+    "source_system": "DaedalMap shaped-sibling area-depth invariant",
+    "sample_kind": "shaped_sibling_area_depth",
+    "id": "REL-REVIEW-AREA-DEPTH-LARGE-CITY",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "sibling_area_depth": {
+        "canonical_loc_id": "AUS-VIC-212-URBAN-201001",
+        "country_owner_iso3": "AUS",
+        "official_admin_1_owner_loc_id": "AUS-VIC",
+        "geometry_role": "official_polygon",
+        "owned_extent_method": "complete_owned_physical_area",
+        "owned_area_km2": 12000.0,
+        "equal_area_crs": "EPSG:3577",
+        "selected_reference_level": "label_2",
+        "sibling_anchor_loc_id": "AUS-VIC-212",
+        "anchor_method": "dominant_owned_area_overlap_at_selected_depth",
+        "population_affects_depth": false,
+        "importance_affects_depth": false,
+        "boundary_crossing_affects_depth": false,
+        "other_intersections_retained_as_bridges": true,
+        "affects_identity": true,
+        "stable_spine_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "area_profile": {
+          "stable_spine_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "derivation_version": "fixture-country-median-profile-v1",
+          "threshold_method": "geometric_midpoint_adjacent_medians",
+          "level_median_area_km2": {
+            "label_0": 1000000.0,
+            "label_1": 100000.0,
+            "label_2": 10000.0,
+            "label_3": 1000.0,
+            "label_4": 100.0,
+            "label_5": 10.0
+          },
+          "depth_thresholds_km2": {
+            "label_0_to_label_1": 316227.7660168379,
+            "label_1_to_label_2": 31622.776601683792,
+            "label_2_to_label_3": 3162.2776601683795,
+            "label_3_to_label_4": 316.22776601683796,
+            "label_4_to_label_5": 31.622776601683793
+          }
+        }
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "derives_shaped_sibling_area_depth": true
+      }
+    }
+  },
+  {
+    "case": "Small boundary straddler keeps deep area-derived ancestry",
+    "source_system": "DaedalMap shaped-sibling area-depth invariant",
+    "sample_kind": "shaped_sibling_area_depth",
+    "id": "REL-REVIEW-AREA-DEPTH-SMALL-STRADDLER",
+    "family_id": "relationship",
+    "public_promise": "internal",
+    "should_persist_as_loc_id": false,
+    "stewardship": {
+      "sibling_area_depth": {
+        "canonical_loc_id": "AUS-QLD-315-03-1410-PLACE-30340",
+        "country_owner_iso3": "AUS",
+        "official_admin_1_owner_loc_id": "AUS-QLD",
+        "geometry_role": "official_multipolygon",
+        "owned_extent_method": "complete_owned_physical_area",
+        "owned_area_km2": 80.0,
+        "equal_area_crs": "EPSG:3577",
+        "selected_reference_level": "label_4",
+        "sibling_anchor_loc_id": "AUS-QLD-315-03-1410",
+        "anchor_method": "dominant_owned_area_overlap_at_selected_depth",
+        "crosses_same_depth_siblings": true,
+        "population_affects_depth": false,
+        "importance_affects_depth": false,
+        "boundary_crossing_affects_depth": false,
+        "other_intersections_retained_as_bridges": true,
+        "affects_identity": true,
+        "stable_spine_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "area_profile": {
+          "stable_spine_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "derivation_version": "fixture-country-median-profile-v1",
+          "threshold_method": "geometric_midpoint_adjacent_medians",
+          "level_median_area_km2": {
+            "label_0": 1000000.0,
+            "label_1": 100000.0,
+            "label_2": 10000.0,
+            "label_3": 1000.0,
+            "label_4": 100.0,
+            "label_5": 10.0
+          },
+          "depth_thresholds_km2": {
+            "label_0_to_label_1": 316227.7660168379,
+            "label_1_to_label_2": 31622.776601683792,
+            "label_2_to_label_3": 3162.2776601683795,
+            "label_3_to_label_4": 316.22776601683796,
+            "label_4_to_label_5": 31.622776601683793
+          }
+        }
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "relationship_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "not_applicable",
+        "placement_semantics": "not_applicable"
+      },
+      "stewardship": {
+        "status": "verified",
+        "derives_shaped_sibling_area_depth": true
+      }
+    }
+  },
+  {
+    "case": "Canada ancestry-bearing place remains a shaped sidechain in raw parsing",
+    "source_system": "DaedalMap generic Canada sibling migration fixture",
+    "sample_kind": "shaped_sibling_area_depth",
+    "id": "CAN-BC-5915-PLACE-5900001",
+    "family_id": "municipality",
+    "public_promise": "stable_public",
+    "should_persist_as_loc_id": true,
+    "stewardship": {
+      "sibling_area_depth": {
+        "canonical_loc_id": "CAN-BC-5915-PLACE-5900001",
+        "country_owner_iso3": "CAN",
+        "official_admin_1_owner_loc_id": "CAN-BC",
+        "geometry_role": "official_polygon",
+        "owned_extent_method": "complete_owned_physical_area",
+        "owned_area_km2": 12000.0,
+        "selected_reference_level": "label_2",
+        "sibling_anchor_loc_id": "CAN-BC-5915",
+        "anchor_method": "dominant_owned_area_overlap_at_selected_depth",
+        "population_affects_depth": false,
+        "importance_affects_depth": false,
+        "boundary_crossing_affects_depth": false,
+        "other_intersections_retained_as_bridges": true,
+        "affects_identity": true,
+        "spine_candidate_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "area_profile": {
+          "schema_version": "country-sibling-area-profile-v1",
+          "builder_version": "build-country-sibling-area-profile-v1",
+          "spine_candidate_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "analysis_crs": "EPSG:3347",
+          "area_unit": "square_kilometre",
+          "depth_rule": "deepest_level_whose_geometric_midpoint_threshold_contains_feature_area",
+          "level_median_area_sq_km": {
+            "0": 1000000.0,
+            "1": 100000.0,
+            "2": 10000.0,
+            "3": 1000.0,
+            "4": 100.0,
+            "5": 10.0
+          },
+          "enter_level_max_area_sq_km": {
+            "1": 316227.7660168379,
+            "2": 31622.776601683792,
+            "3": 3162.2776601683795,
+            "4": 316.22776601683796,
+            "5": 31.622776601683793
+          }
+        }
+      }
+    },
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "loc_id",
+        "first_segment_scope": "country_reference_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "placement_semantics": "bridge_or_context"
+      },
+      "stewardship": {
+        "status": "verified",
+        "derives_shaped_sibling_area_depth": true
+      }
+    }
+  },
+  {
+    "case": "Canada point-only named feature does not acquire area-derived ancestry",
+    "source_system": "Canadian Geographical Names Database",
+    "sample_kind": "point_only_named_feature_negative",
+    "id": "CGNDB-00000118CCC54AB8BC2083A146C45EAD",
+    "family_id": "named_feature",
+    "geometry_role": "official_point",
+    "public_promise": "source_id",
+    "should_persist_as_loc_id": false,
+    "oracle": {
+      "declared": {
+        "status": "verified",
+        "role": "loc_id",
+        "first_segment_scope": "source_family_scope",
+        "parent_semantics": "context_or_bridge_only",
+        "placement_semantics": "bridge_or_context"
+      }
+    }
+  },
+  {
     "case": "Same local identifier remains isolated in two customer worlds",
     "source_system": "DaedalMap customer-world branch invariant",
     "sample_kind": "customer_branch_identity_collision",

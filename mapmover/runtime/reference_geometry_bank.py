@@ -8,11 +8,16 @@ returns the same normalized frame consumed by the existing geometry tools.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+import pyarrow.parquet as pq
+from pyproj import CRS, Transformer
+from pyproj.exceptions import ProjError
 from shapely.geometry import mapping, shape
+from shapely.ops import transform as transform_geometry
 from shapely.wkb import loads as load_wkb
 
 from ..duckdb_helpers import parquet_available, parquet_columns, path_to_uri, run_df, select_rows
@@ -22,6 +27,19 @@ from .reference_graph import identities
 
 IDENTITY_VERSION_COLUMNS = ["loc_id", "geometry_partition", "shape_storage"]
 DIRECT_ADMIN_PARTITION_BANKS = {"dissemination_area", "dissemination_block"}
+
+
+@lru_cache(maxsize=256)
+def _geoparquet_crs(path_text: str) -> CRS | None:
+    """Return the declared primary-geometry CRS, if locally readable."""
+    try:
+        metadata = pq.ParquetFile(Path(path_text)).schema_arrow.metadata or {}
+        payload = json.loads(metadata.get(b"geo", b"{}").decode("utf-8"))
+        primary = str(payload.get("primary_column") or "geometry")
+        crs_value = (payload.get("columns") or {}).get(primary, {}).get("crs")
+        return CRS.from_user_input(crs_value) if crs_value else None
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def _safe_bank_root(value: str | None) -> Path | None:
@@ -66,11 +84,28 @@ def _read_shape_partition(path: Path, loc_ids: list[str]) -> pd.DataFrame:
         f"SELECT {selected}, ST_AsWKB(\"geometry\") AS __geometry_wkb "
         f"FROM read_parquet(?) WHERE \"loc_id\" IN ({placeholders})"
     )
-    return run_df(sql, [path_to_uri(path), *loc_ids])
+    try:
+        return run_df(sql, [path_to_uri(path), *loc_ids])
+    except Exception as exc:
+        if "Out of Memory" not in str(exc):
+            raise
+        # A few official Canadian partitions contain single 100MB+ geometry
+        # cells. DuckDB's guarded 512MB runtime connection can exhaust its
+        # allocation while converting an otherwise small filtered result.
+        # PyArrow applies the same loc_id predicate without weakening the
+        # caller's bank/partition boundary.
+        return pd.read_parquet(
+            path, columns=[*ordinary, "geometry"],
+            filters=[("loc_id", "in", loc_ids)],
+        )
 
 
 def _read_single_file_bank(path: Path, loc_ids: list[str]) -> pd.DataFrame:
     """Read a legacy/adopted bank whose polygons live in one Parquet file."""
+    if _geoparquet_crs(str(path.resolve())) is not None:
+        # Avoid DuckDB attempting to materialize a projected GeoParquet
+        # extension type directly into NumPy/Pandas.
+        return _read_shape_partition(path, loc_ids)
     if not loc_ids or not parquet_available(path):
         return pd.DataFrame()
     available = parquet_columns(path)
@@ -82,7 +117,14 @@ def _read_single_file_bank(path: Path, loc_ids: list[str]) -> pd.DataFrame:
             "source_id", "source_release", "area_square_km", "geometry",
         ) if column in available
     ]
-    return select_rows(path, columns=columns, in_filters={"loc_id": loc_ids})
+    try:
+        return select_rows(path, columns=columns, in_filters={"loc_id": loc_ids})
+    except Exception as exc:
+        if "Out of Memory" not in str(exc):
+            raise
+        return pd.read_parquet(
+            path, columns=columns, filters=[("loc_id", "in", loc_ids)],
+        )
 
 
 def _direct_admin_partitions(bank_root: Path, loc_ids: list[str]) -> dict[Path, list[str]]:
@@ -98,7 +140,9 @@ def _direct_admin_partitions(bank_root: Path, loc_ids: list[str]) -> dict[Path, 
     return partitions
 
 
-def _normalized_row(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any] | None:
+def _normalized_row(
+    row: dict[str, Any], identity: dict[str, Any], *, source_crs: CRS | None = None,
+) -> dict[str, Any] | None:
     raw_wkb = row.get("__geometry_wkb")
     raw_geometry = row.get("geometry")
     try:
@@ -114,13 +158,21 @@ def _normalized_row(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, 
             return None
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
+    if source_crs is not None and not source_crs.equals(CRS.from_epsg(4326)):
+        try:
+            transformer = Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
+            geometry = transform_geometry(transformer.transform, geometry)
+        except (ValueError, TypeError, ProjError):
+            return None
     if geometry.is_empty:
         return None
     min_lon, min_lat, max_lon, max_lat = geometry.bounds
     centroid = geometry.centroid
     bank = str(identity.get("geometry_bank") or "").strip()
     return {
-        "loc_id": row.get("loc_id") or identity.get("loc_id"),
+        # The graph identity is canonical. ``geometry_loc_id`` may point at an
+        # immutable shape row retained under a retired identifier.
+        "loc_id": identity.get("loc_id") or row.get("loc_id"),
         "name": row.get("name") or row.get("name_en") or identity.get("name"),
         "name_local": row.get("name_fr"),
         "family": row.get("family") or identity.get("family"),
@@ -159,30 +211,42 @@ def load_reference_graph_geometry(
         if row.get("has_shape") is True and row.get("geometry_bank")
     }
     by_bank: dict[Path, list[str]] = {}
+    bank_identities: dict[Path, dict[str, list[dict[str, Any]]]] = {}
     for loc_id in requested:
-        bank_root = _safe_bank_root((by_id.get(loc_id) or {}).get("geometry_bank"))
+        identity_row = by_id.get(loc_id) or {}
+        bank_root = _safe_bank_root(identity_row.get("geometry_bank"))
         if bank_root is not None:
-            by_bank.setdefault(bank_root, []).append(loc_id)
+            geometry_loc_id = str(identity_row.get("geometry_loc_id") or loc_id).strip()
+            if not geometry_loc_id:
+                geometry_loc_id = loc_id
+            by_bank.setdefault(bank_root, []).append(geometry_loc_id)
+            bank_identities.setdefault(bank_root, {}).setdefault(
+                geometry_loc_id, [],
+            ).append(identity_row)
 
     normalized: list[dict[str, Any]] = []
     for bank_root, bank_ids in by_bank.items():
+        bank_ids = list(dict.fromkeys(bank_ids))
+        identities_by_geometry_id = bank_identities[bank_root]
         if bank_root.suffix.lower() == ".parquet":
             shape_rows = _read_single_file_bank(bank_root, bank_ids)
+            source_crs = _geoparquet_crs(str(bank_root.resolve()))
             for row in shape_rows.to_dict("records"):
-                identity = by_id.get(str(row.get("loc_id"))) or {}
-                item = _normalized_row(row, identity)
-                if item is not None:
-                    normalized.append(item)
+                for identity_row in identities_by_geometry_id.get(str(row.get("loc_id")), []):
+                    item = _normalized_row(row, identity_row, source_crs=source_crs)
+                    if item is not None:
+                        normalized.append(item)
             continue
         direct_partitions = _direct_admin_partitions(bank_root, bank_ids)
         if direct_partitions:
             for partition, partition_ids in direct_partitions.items():
                 shape_rows = _read_single_file_bank(partition, partition_ids)
+                source_crs = _geoparquet_crs(str(partition.resolve()))
                 for row in shape_rows.to_dict("records"):
-                    identity = by_id.get(str(row.get("loc_id"))) or {}
-                    item = _normalized_row(row, identity)
-                    if item is not None:
-                        normalized.append(item)
+                    for identity_row in identities_by_geometry_id.get(str(row.get("loc_id")), []):
+                        item = _normalized_row(row, identity_row, source_crs=source_crs)
+                        if item is not None:
+                            normalized.append(item)
             continue
         versions_path = bank_root / "identity_versions.parquet"
         version_rows = select_rows(
@@ -199,11 +263,12 @@ def load_reference_graph_geometry(
                 partitions.setdefault(partition, []).append(str(row.get("loc_id")))
         for partition, partition_ids in partitions.items():
             shape_rows = _read_shape_partition(partition, partition_ids)
+            source_crs = _geoparquet_crs(str(partition.resolve()))
             for row in shape_rows.to_dict("records"):
-                identity = by_id.get(str(row.get("loc_id"))) or {}
-                item = _normalized_row(row, identity)
-                if item is not None:
-                    normalized.append(item)
+                for identity_row in identities_by_geometry_id.get(str(row.get("loc_id")), []):
+                    item = _normalized_row(row, identity_row, source_crs=source_crs)
+                    if item is not None:
+                        normalized.append(item)
 
     frame = pd.DataFrame(normalized)
     if frame.empty:

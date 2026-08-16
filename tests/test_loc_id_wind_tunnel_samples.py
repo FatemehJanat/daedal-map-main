@@ -391,7 +391,7 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         self.assertLess(passed, total)
         self.assertEqual(score["stewardship"]["assertion_accuracy"], round(passed / total, 6))
         self.assertEqual(
-            score["complexity"]["enabled_stewardship_capability_count"], 8
+            score["complexity"]["enabled_stewardship_capability_count"], 9
         )
 
     def test_single_rule_stewardship_ablation_attributes_unique_contribution(self) -> None:
@@ -557,7 +557,7 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         self.assertFalse(water["fabricated_admin_descendants"])
         self.assertTrue(all(row["gap_count"] == row["overlap_count"] == 0 for row in (land, water)))
 
-    def test_scale_hints_are_release_derived_and_never_identity(self) -> None:
+    def test_non_shaped_presentation_scale_hints_never_affect_identity(self) -> None:
         with FIXTURE_PATH.open(encoding="utf-8") as handle:
             cases = json.load(handle)
 
@@ -571,6 +571,72 @@ class LocIdWindTunnelSampleTests(unittest.TestCase):
         self.assertTrue(all(row["field_status"] == "derived" for row in (water, raster)))
         self.assertTrue(all(row["affects_identity"] is False for row in (water, raster)))
         self.assertTrue(all(row["input_release_id"] and row["output_release_id"] for row in (water, raster)))
+
+    def test_shaped_sibling_area_depth_affects_canonical_ancestry(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        by_id = {case["id"]: case for case in cases}
+        large = by_id["REL-REVIEW-AREA-DEPTH-LARGE-CITY"]["stewardship"][
+            "sibling_area_depth"
+        ]
+        straddler = by_id["REL-REVIEW-AREA-DEPTH-SMALL-STRADDLER"]["stewardship"][
+            "sibling_area_depth"
+        ]
+
+        self.assertEqual(large["selected_reference_level"], "label_2")
+        self.assertEqual(straddler["selected_reference_level"], "label_4")
+        self.assertLess(
+            len(large["sibling_anchor_loc_id"].split("-")),
+            len(straddler["sibling_anchor_loc_id"].split("-")),
+        )
+        self.assertTrue(straddler["crosses_same_depth_siblings"])
+        self.assertFalse(straddler["boundary_crossing_affects_depth"])
+        self.assertTrue(straddler["other_intersections_retained_as_bridges"])
+        self.assertTrue(all(row["affects_identity"] is True for row in (large, straddler)))
+        self.assertTrue(
+            all(
+                row["canonical_loc_id"].startswith(f'{row["country_owner_iso3"]}-')
+                for row in (large, straddler)
+            )
+        )
+
+    def test_canada_area_depth_suffix_is_not_mistaken_for_admin_depth(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        case = next(
+            row for row in cases if row["id"] == "CAN-BC-5915-PLACE-5900001"
+        )
+        result = evaluate_dual_mode_case(case)
+        stewardship = evaluate_stewardship_cases([case], doctrine="reproducible_relationship_graph")[0]
+
+        self.assertEqual(result["raw"]["namespace"], "country_shaped_sibling_area_depth")
+        self.assertEqual(result["raw"]["role"], "loc_id")
+        self.assertEqual(result["raw"]["first_segment_scope"], "country_reference_scope")
+        self.assertFalse(result["raw"]["may_encode_admin_hierarchy"])
+        self.assertIsNone(result["raw"]["reference_level"])
+        self.assertEqual(result["raw"]["parent_semantics"], "context_or_bridge_only")
+        self.assertEqual(stewardship["signal"], "pass")
+
+    def test_canada_point_only_name_does_not_acquire_area_depth(self) -> None:
+        with FIXTURE_PATH.open(encoding="utf-8") as handle:
+            cases = json.load(handle)
+
+        case = next(
+            row
+            for row in cases
+            if row["id"] == "CGNDB-00000118CCC54AB8BC2083A146C45EAD"
+        )
+        result = evaluate_dual_mode_case(case)
+
+        self.assertEqual(result["raw"]["namespace"], "external_source_alias")
+        self.assertEqual(result["raw"]["role"], "source_alias")
+        self.assertFalse(result["declared"]["may_encode_admin_hierarchy"])
+        self.assertFalse(result["raw"]["may_encode_admin_hierarchy"])
+        self.assertIsNone(result["declared"]["reference_level"])
+        self.assertIsNone(result["raw"]["reference_level"])
+        self.assertNotIn("stewardship", case)
 
     def test_customer_worlds_are_isolated_until_reviewed_promotion(self) -> None:
         with FIXTURE_PATH.open(encoding="utf-8") as handle:
