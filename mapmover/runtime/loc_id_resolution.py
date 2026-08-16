@@ -59,6 +59,16 @@ _COUNTRY_DIRECT_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 _COUNTRY_FALLBACK_LOCATION_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 
 
+def _explicit_admin_level_from_text(value: str) -> int | None:
+    """Return a conservative level hint only for unambiguous grain words."""
+    text = str(value or "").strip().lower()
+    if re.search(r"\b(state|province)\b", text):
+        return 1
+    if re.search(r"\b(county|parish|municipio|county of)\b", text):
+        return 2
+    return None
+
+
 def normalize_geometry_longitude(value: float) -> float:
     """Normalize a wrapped map longitude to the GeoJSON/geometry convention.
 
@@ -790,9 +800,11 @@ def resolve_admin_text_to_loc_id(
     standardizer = _get_name_standardizer()
     country = str(country_hint or "").strip().upper() or None
 
+    explicit_text_level = _explicit_admin_level_from_text(value)
+    effective_level_hint = admin_level_hint if admin_level_hint is not None else explicit_text_level
     level_order: list[int | None]
-    if admin_level_hint is not None:
-        level_order = [int(admin_level_hint)]
+    if effective_level_hint is not None:
+        level_order = [int(effective_level_hint)]
     elif country:
         # Let the shared country geometry spine resolve the deepest matching
         # admin level first instead of assuming province/state or county only.
@@ -815,13 +827,15 @@ def resolve_admin_text_to_loc_id(
             if fallback_entry is None:
                 continue
             fallback_loc_id = str(fallback_entry.get("loc_id") or "")
-            preferred_loc_id = _prefer_same_name_ancestor(
-                fallback_loc_id,
-                value,
-                country=country,
-                matched_level=fallback_entry.get("admin_level"),
-                standardizer=standardizer,
-            )
+            preferred_loc_id = fallback_loc_id
+            if effective_level_hint is None:
+                preferred_loc_id = _prefer_same_name_ancestor(
+                    fallback_loc_id,
+                    value,
+                    country=country,
+                    matched_level=fallback_entry.get("admin_level"),
+                    standardizer=standardizer,
+                )
             if preferred_loc_id != fallback_loc_id:
                 fallback_entry = _build_match_entry(
                     preferred_loc_id,
@@ -840,13 +854,14 @@ def resolve_admin_text_to_loc_id(
                 "should_persist_deepest_loc_id": True,
             }
         local_loc_id = translate_geometry_id_to_local_id(resolved)
-        local_loc_id = _prefer_same_name_ancestor(
-            local_loc_id,
-            value,
-            country=country,
-            matched_level=admin_level,
-            standardizer=standardizer,
-        )
+        if effective_level_hint is None:
+            local_loc_id = _prefer_same_name_ancestor(
+                local_loc_id,
+                value,
+                country=country,
+                matched_level=admin_level,
+                standardizer=standardizer,
+            )
         resolved_level = infer_admin_level_from_loc_id(local_loc_id)
         key = _level_key(resolved_level)
         entry = _build_match_entry(

@@ -400,6 +400,11 @@ class LocIdResolutionRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved["resolution_mode"], "direct_admin_text")
         self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-VA")
 
+    def test_explicit_county_grain_does_not_collapse_to_same_named_state(self):
+        resolved = resolve_admin_text_to_loc_id("New York County", country_hint="USA")
+        self.assertEqual(resolved["deepest_resolved_loc_id"], "USA-NY-061")
+        self.assertEqual(resolved["deepest_resolved_admin_level"], "admin_2")
+
     def test_name_standardizer_returns_none_for_ambiguous_exact_match(self):
         standardizer = NameStandardizer()
         standardizer._loaded = True

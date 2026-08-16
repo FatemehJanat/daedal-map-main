@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from mapmover.geometry_handlers import (
+    clear_cache,
     get_selection_geometries,
     get_selection_geometry_metadata,
     get_location_info,
@@ -15,6 +16,7 @@ from mapmover.runtime.loc_id_resolution import resolve_point_to_loc_id_stack
 
 class GeometryPointResolutionRuntimeTests(unittest.TestCase):
     def setUp(self):
+        clear_cache()
         # Legacy-reader tests author their own geometry frames. Keep the new
         # adopted query-layout lane opt-in unless a test explicitly exercises it.
         self._query_layout_patch = patch(
@@ -25,6 +27,7 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
 
     def tearDown(self):
         self._query_layout_patch.stop()
+        clear_cache()
 
     def test_runtime_geometry_spine_prefers_smallest_covering_polygon(self):
         import pandas as pd
