@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from mapmover import logger
+from mapmover.catalog_surface import catalog_surface_scope
 from mapmover.data_loading import get_source_path, load_catalog, load_source_metadata
 from mapmover.duckdb_helpers import (
     duckdb_available,
@@ -160,6 +161,8 @@ LAT_FIELDS = ("lat", "latitude", "centroid_lat")
 LON_FIELDS = ("lon", "longitude", "centroid_lon")
 TIME_FIELDS = ("timestamp", "observed_at", "event_time", "start_time", "updated_at", "last_updated", "time", "date")
 EXACT_EVENT_ID_RULES = [
+    {"regex": re.compile(r"-TSUN-", re.IGNORECASE), "packs": ("tsunamis",), "strict": True},
+    {"regex": re.compile(r"-FIRE-", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
     {"regex": re.compile(r"^ts\d{4,}$", re.IGNORECASE), "packs": ("tsunamis",), "strict": True},
     {"regex": re.compile(r"^ve\d{4,}$", re.IGNORECASE), "packs": ("volcanoes",), "strict": True},
     {"regex": re.compile(r"^(?:dfo|gfd)-\d+$", re.IGNORECASE), "packs": ("floods",), "strict": True},
@@ -173,6 +176,19 @@ EXACT_EVENT_ID_RULES = [
     {"regex": re.compile(r"^(?:iscgem|iscgemsup|rusms|noaa-sig|gcmtc|gcmtb|official|cent|ld|eqh|cdmg|aacse|ismpkansas|ok|snm|wes|flag|ew|ott)", re.IGNORECASE), "packs": ("earthquakes",), "strict": True},
     {"regex": re.compile(r"(?:irwin|mtbs|-fire-)", re.IGNORECASE), "packs": ("wildfires",), "strict": True},
 ]
+
+
+def _load_exact_event_catalog() -> dict:
+    """Load the published API surface used by the exact-event API.
+
+    Exact-event resolution is an API operation, even when it is reached from
+    an Explore URL.  Using the request's default Explore catalog surface here
+    incorrectly hides API/MCP-only event sources before their Parquets can be
+    queried.
+    """
+    with catalog_surface_scope("api"):
+        catalog = load_catalog() or {}
+    return catalog if isinstance(catalog, dict) else {}
 
 
 def _classify_exact_event_identifier(identifier_value: str) -> tuple[list[str], bool]:
@@ -200,7 +216,7 @@ def _catalog_event_sources_for_pack(pack_id: str) -> list[dict]:
     if not normalized_pack_id:
         return []
 
-    catalog = load_catalog() or {}
+    catalog = _load_exact_event_catalog()
     candidates: list[dict] = []
     for source in catalog.get("sources", []):
         if not isinstance(source, dict):
@@ -313,7 +329,7 @@ def _get_exact_event_candidates(pack_id: str | None = None, identifier_value: st
             identifier_value=identifier_value,
         )
 
-    catalog = load_catalog() or {}
+    catalog = _load_exact_event_catalog()
     pack_ids: list[str] = []
     seen_pack_ids: set[str] = set()
     for source in catalog.get("sources", []):
