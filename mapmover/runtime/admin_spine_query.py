@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import duckdb
 from shapely import from_wkb
 from shapely.geometry import Point
 
+from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, path_to_uri
 from ..paths import COUNTRY_GEOMETRY_DIR
+from .geometry_catalog import load_geometry_catalog
 
 
 META_COLUMNS = """
@@ -26,21 +27,28 @@ def layout_root(iso3: str) -> Path:
 
 def layout_available(iso3: str) -> bool:
     root = layout_root(iso3)
-    return (root / "manifest.json").is_file() and (root / "admin_0_3.parquet").is_file()
+    if not is_cloud_mode():
+        return (root / "manifest.json").is_file() and (root / "admin_0_3.parquet").is_file()
+    expected = f"geometry/countries/{str(iso3).upper()}/admin_spine/manifest.json"
+    return any(
+        str(bank.get("query_layout_manifest") or "").replace("\\", "/") == expected
+        for bank in load_geometry_catalog().get("geometry_banks") or []
+        if isinstance(bank, dict)
+    )
 
 
-def _connection() -> duckdb.DuckDBPyConnection:
-    connection = duckdb.connect()
+def _connection():
+    connection = build_guarded_connection()
     connection.execute("SET memory_limit='400MB'")
     connection.execute("SET threads=1")
     connection.execute("SET preserve_insertion_order=false")
     return connection
 
 
-def _metadata(connection: duckdb.DuckDBPyConnection, path: Path, lon: float, lat: float,
+def _metadata(connection, path: Path, lon: float, lat: float,
               admin3: str = "") -> list[tuple]:
     owner_clause = "" if not admin3 else " AND admin_3_loc_id = ?"
-    parameters: list[Any] = [str(path), lon, lon, lat, lat]
+    parameters: list[Any] = [path_to_uri(path), lon, lon, lat, lat]
     if admin3:
         parameters.append(admin3)
     return connection.execute(f"""
@@ -52,7 +60,7 @@ def _metadata(connection: duckdb.DuckDBPyConnection, path: Path, lon: float, lat
     """, parameters).fetchall()
 
 
-def _exact_rows(connection: duckdb.DuckDBPyConnection, path: Path, rows: list[tuple],
+def _exact_rows(connection, path: Path, rows: list[tuple],
                 lon: float, lat: float) -> list[tuple[tuple, bytes, float]]:
     if not rows:
         return []
@@ -60,7 +68,7 @@ def _exact_rows(connection: duckdb.DuckDBPyConnection, path: Path, rows: list[tu
     placeholders = ",".join("?" for _ in identifiers)
     shapes = dict(connection.execute(
         f"SELECT loc_id, ST_AsWKB(geometry) FROM read_parquet(?) WHERE loc_id IN ({placeholders})",
-        [str(path), *identifiers],
+        [path_to_uri(path), *identifiers],
     ).fetchall())
     point = Point(lon, lat)
     matches = []
@@ -97,7 +105,7 @@ def resolve_point(iso3: str, lon: float, lat: float) -> dict[str, Any] | None:
         admin1, admin3 = str(anchor[5] or ""), str(anchor[7] or "")
         deep: list[tuple[tuple, bytes, float]] = []
         deep_path = root / "deep" / f"{admin1}.parquet"
-        if admin3 and deep_path.is_file():
+        if admin3 and (is_cloud_mode() or deep_path.is_file()):
             deep_meta = _metadata(connection, deep_path, lon, lat, admin3)
             deep = _exact_rows(connection, deep_path, deep_meta, lon, lat)
             deep.sort(key=lambda item: (int(item[0][2]), -item[2], str(item[0][0])))

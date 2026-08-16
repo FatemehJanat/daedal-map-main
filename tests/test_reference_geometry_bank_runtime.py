@@ -13,6 +13,7 @@ from shapely.ops import transform as transform_geometry
 
 from mapmover.paths import DATA_ROOT
 from mapmover.runtime.reference_geometry_bank import (
+    _read_single_file_bank,
     _safe_bank_root,
     _safe_partition_path,
     load_reference_graph_geometry,
@@ -26,6 +27,22 @@ CANADA_DB_BANK = DATA_ROOT / "geometry" / "countries" / "CAN" / "dissemination_b
 
 
 class ReferenceGeometryBankRuntimeTests(unittest.TestCase):
+    def test_remote_geoparquet_extension_conversion_falls_back_to_wkb_reader(self):
+        expected = pd.DataFrame([{"loc_id": "CAN-BC-TEST", "__geometry_wkb": b"shape"}])
+        with (
+            patch("mapmover.runtime.reference_geometry_bank._geoparquet_crs", return_value=None),
+            patch("mapmover.runtime.reference_geometry_bank.parquet_available", return_value=True),
+            patch("mapmover.runtime.reference_geometry_bank.parquet_columns", return_value={"loc_id", "geometry"}),
+            patch(
+                "mapmover.runtime.reference_geometry_bank.select_rows",
+                side_effect=RuntimeError('Unsupported type "GEOMETRY(\'OGC:CRS84\')" for DuckDB -> NumPy conversion'),
+            ),
+            patch("mapmover.runtime.reference_geometry_bank._read_shape_partition", return_value=expected) as fallback,
+        ):
+            actual = _read_single_file_bank(Path("CAN-BC.parquet"), ["CAN-BC-TEST"])
+        fallback.assert_called_once_with(Path("CAN-BC.parquet"), ["CAN-BC-TEST"])
+        self.assertEqual(actual.iloc[0]["loc_id"], "CAN-BC-TEST")
+
     def test_bank_paths_cannot_escape_data_root(self):
         self.assertIsNone(_safe_bank_root("../outside"))
         bank = _safe_bank_root("geometry/countries/CAN/relationships/example")

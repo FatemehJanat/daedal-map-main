@@ -120,7 +120,10 @@ def _read_single_file_bank(path: Path, loc_ids: list[str]) -> pd.DataFrame:
     try:
         return select_rows(path, columns=columns, in_filters={"loc_id": loc_ids})
     except Exception as exc:
-        if "Out of Memory" not in str(exc):
+        message = str(exc)
+        if "Unsupported type" in message and "GEOMETRY" in message:
+            return _read_shape_partition(path, loc_ids)
+        if "Out of Memory" not in message:
             raise
         return pd.read_parquet(
             path, columns=columns, filters=[("loc_id", "in", loc_ids)],
