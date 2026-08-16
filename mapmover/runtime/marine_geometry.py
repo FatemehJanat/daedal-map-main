@@ -8,7 +8,10 @@ geometry banks:
   - EEZ-<ISO3> / EEZ-MRGID-<n>  -> geometry/marine/eez.parquet
   - X* water-body aggregate codes (XOP..) -> geometry/marine/water_bodies.parquet
   - IHO1953-<n> reviewed IHO-1953 named waters -> iho1953_sea_areas.parquet
-  - MRGID-<n> legacy named waters -> iho_sea_areas.parquet (only if approved)
+
+The MRGID-<n> legacy named-water bank (Marine Regions / VLIZ IHO Sea Areas) was
+removed on 2026-08-16. It was licence-unreviewed, so its routing was already
+inert, and the reviewed IHO-1953 bank supersedes it with wider coverage.
 
 This is the geometry counterpart to the shared grid helper's classification
 (is_eez_loc_id / is_water_body_loc_id): given marine loc_ids, return their
@@ -32,7 +35,6 @@ MARINE_DIR = GEOMETRY_DIR / "marine"
 EEZ_PATH = MARINE_DIR / "eez.parquet"
 WATER_BODIES_PATH = MARINE_DIR / "water_bodies.parquet"
 IHO1953_NAMED_WATER_PATH = MARINE_DIR / "iho1953_sea_areas.parquet"
-LEGACY_NAMED_WATER_PATH = MARINE_DIR / "iho_sea_areas.parquet"
 GEOMETRY_CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
 
 _MARINE_COLUMNS = ["loc_id", "name", "geometry", "centroid_lon", "centroid_lat"]
@@ -67,12 +69,7 @@ def _catalog_approves_geometry(path: Path) -> bool:
 
 def named_water_bank_approved(loc_id: str | None = None) -> bool:
     """True if the bank owning this named-water namespace is reviewed."""
-    value = str(loc_id or "").strip().upper()
-    if value.startswith("IHO1953-"):
-        return _catalog_approves_geometry(IHO1953_NAMED_WATER_PATH)
-    if value.startswith("MRGID-"):
-        return _catalog_approves_geometry(LEGACY_NAMED_WATER_PATH)
-    return _catalog_approves_geometry(IHO1953_NAMED_WATER_PATH) or _catalog_approves_geometry(LEGACY_NAMED_WATER_PATH)
+    return _catalog_approves_geometry(IHO1953_NAMED_WATER_PATH)
 
 
 def marine_bank_for_loc_id(loc_id: str | None) -> Optional[Path]:
@@ -80,10 +77,7 @@ def marine_bank_for_loc_id(loc_id: str | None) -> Optional[Path]:
     if is_eez_loc_id(loc_id):
         return EEZ_PATH
     if is_named_water_loc_id(loc_id):
-        value = str(loc_id or "").strip().upper()
-        if value.startswith("IHO1953-"):
-            return IHO1953_NAMED_WATER_PATH if named_water_bank_approved(value) else None
-        return LEGACY_NAMED_WATER_PATH if named_water_bank_approved(value) else None
+        return IHO1953_NAMED_WATER_PATH if named_water_bank_approved(loc_id) else None
     if is_water_body_loc_id(loc_id):
         return WATER_BODIES_PATH
     return None
@@ -95,7 +89,6 @@ def has_marine_geometry() -> bool:
         parquet_available(EEZ_PATH)
         or parquet_available(WATER_BODIES_PATH)
         or (named_water_bank_approved("IHO1953-0") and parquet_available(IHO1953_NAMED_WATER_PATH))
-        or (named_water_bank_approved("MRGID-0") and parquet_available(LEGACY_NAMED_WATER_PATH))
     )
 
 
@@ -158,13 +151,8 @@ def load_marine_geometry(loc_ids: Optional[Iterable[str]] = None, *, columns: Op
         frames.append(_read_bank(EEZ_PATH, want, columns=columns))
     if need_wb:
         frames.append(_read_bank(WATER_BODIES_PATH, want, columns=columns))
-    if need_named_water:
-        if want is None or any(str(x).strip().upper().startswith("IHO1953-") for x in want):
-            if named_water_bank_approved("IHO1953-0"):
-                frames.append(_read_bank(IHO1953_NAMED_WATER_PATH, want, columns=columns))
-        if want is None or any(str(x).strip().upper().startswith("MRGID-") for x in want):
-            if named_water_bank_approved("MRGID-0"):
-                frames.append(_read_bank(LEGACY_NAMED_WATER_PATH, want, columns=columns))
+    if need_named_water and named_water_bank_approved("IHO1953-0"):
+        frames.append(_read_bank(IHO1953_NAMED_WATER_PATH, want, columns=columns))
     if not frames:
         return pd.DataFrame(columns=columns or _MARINE_COLUMNS)
     return pd.concat(frames, ignore_index=True).reset_index(drop=True)
