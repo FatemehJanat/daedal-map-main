@@ -337,6 +337,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         allow = ("allow", {"status": "allow", "settlement": {"settlement_id": "settle-abc"}})
         with (
             mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=allow),
+            mock.patch(
+                "mapmover.routes.mcp.settle_commercial_access",
+                return_value=(True, {"status": "allow", "context": {"account_credit": {"charged_micro_usd": 0}}}),
+            ) as settle_mock,
             mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
@@ -347,6 +351,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["point_count"], 26)
+        settle_kwargs = settle_mock.call_args.kwargs
+        self.assertEqual(settle_kwargs["actual_pricing"]["amount_usdc_base_units"], 0)
+        self.assertEqual(settle_kwargs["meter_receipt"]["successful_distinct_items"], 1)
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "allow")
         self.assertEqual(analytics["payment_rail"], "paid")
@@ -914,7 +921,9 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["limit"], 1)
-        self.assertEqual(payload["error"]["code"], "too_many_items")
+        self.assertEqual(payload["item_count"], 2)
+        self.assertEqual(payload["error"]["code"], "paid_bulk_unavailable")
+        self.assertEqual(payload["limits"], {"free_batch_limit": 1, "paid_batch_limit": 2500})
 
     def test_resolve_reference_tool_normalizes_string_error(self) -> None:
         with (
@@ -1216,6 +1225,88 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(created["next_call"]["arguments"]["job_id"], created["job_id"])
         self.assertEqual(status["job_id"], created["job_id"])
         self.assertEqual(status["status"], "completed")
+
+    def test_hosted_geometry_export_uses_estimate_quote_and_settles_actual_meter(self) -> None:
+        reserved_quote = {
+            "quote_id": "geoquote_test",
+            "tool_name": "create_geometry_export",
+            "capability_id": "geometry_export",
+            "pricing_version": "test-v1",
+            "quantity": 2,
+            "charge_units": 2,
+            "amount_usdc_base_units": 18000,
+        }
+        estimate = {"ok": True, "quote_id": "geoquote_test", "quote": reserved_quote}
+        allow = (
+            "allow",
+            {
+                "status": "allow",
+                "context": {"request_fingerprint": "fp-1", "caller_binding": "caller-1"},
+                "settlement": {"settlement_id": "settle-1"},
+            },
+        )
+        geometry_result = {
+            "ok": True,
+            "requested": 2,
+            "available": 1,
+            "missing": 1,
+            "results": [{"ok": True, "loc_id": "USA-CA-037", "has_shape": True}],
+        }
+        with mock.patch.dict("os.environ", {"COMMERCIAL_ACCESS_ENABLED": "1"}, clear=False):
+            with (
+                mock.patch("mapmover.routes.mcp._tool_paid_bulk_enforced", return_value=True),
+                mock.patch("mapmover.runtime.geometry_tool_jobs.estimate_geometry_package", return_value=estimate),
+                mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=allow) as authorize_mock,
+                mock.patch("mapmover.runtime.geometry_tool_jobs.get_geometry_references", return_value=geometry_result),
+                mock.patch(
+                    "mapmover.routes.mcp.settle_commercial_access",
+                    return_value=(True, {"status": "allow", "context": {"account_credit": {"charged_micro_usd": 14000}}}),
+                ) as settle_mock,
+                mock.patch("mapmover.routes.mcp.log_api_query_event"),
+            ):
+                created = _tool_call(
+                    self.client,
+                    "create_geometry_export",
+                    {"loc_ids": ["USA-CA-037", "USA-NOPE"], "include_polygon": True},
+                )
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(authorize_mock.call_args.kwargs["pricing_quote"], reserved_quote)
+        actual = settle_mock.call_args.kwargs["actual_pricing"]
+        self.assertEqual(actual["amount_usdc_base_units"], 14000)
+        self.assertEqual(settle_mock.call_args.kwargs["meter_receipt"]["successful_items"], 1)
+
+    def test_hosted_create_challenge_does_not_execute(self) -> None:
+        estimate = {
+            "ok": True,
+            "quote_id": "convquote_test",
+            "quote": {
+                "quote_id": "convquote_test",
+                "tool_name": "create_conversion_job",
+                "capability_id": "conversion_job",
+                "pricing_version": "test-v1",
+                "quantity": 1,
+                "charge_units": 1,
+                "amount_usdc_base_units": 12000,
+            },
+        }
+        challenge = ("challenge", {"status": "challenge", "context": {"pricing": estimate["quote"]}, "challenge": {"opaque": True}})
+        with mock.patch.dict("os.environ", {"COMMERCIAL_ACCESS_ENABLED": "1"}, clear=False):
+            with (
+                mock.patch("mapmover.routes.mcp._tool_paid_bulk_enforced", return_value=True),
+                mock.patch("mapmover.runtime.geometry_tool_jobs.estimate_conversion_job", return_value=estimate),
+                mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=challenge),
+                mock.patch("mapmover.runtime.geometry_tool_jobs.create_conversion_job") as execute_mock,
+                mock.patch("mapmover.routes.mcp.log_api_query_event"),
+            ):
+                payload = _tool_call(
+                    self.client,
+                    "create_conversion_job",
+                    {"items": [{"value": "00601"}]},
+                )
+        self.assertTrue(payload["payment_required"])
+        self.assertEqual(payload["error"]["code"], "payment_required")
+        execute_mock.assert_not_called()
 
     def test_large_geometry_export_returns_explicit_v0_limit(self) -> None:
         with mock.patch("mapmover.routes.mcp.log_api_query_event"):

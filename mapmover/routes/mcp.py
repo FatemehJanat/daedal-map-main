@@ -25,7 +25,12 @@ from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
 from mapmover.routes.api_query import execute_query_dataset_payload
-from mapmover.api_query_commercial import get_trusted_artifact_token
+from mapmover.api_query_commercial import (
+    commercial_access_enabled,
+    get_trusted_artifact_token,
+    settle_commercial_access,
+    settlement_headers,
+)
 from mapmover.caller_identity import request_caller_identity
 from mapmover.routes.disasters.related import (
     get_disaster_link_chain_for_exact_event,
@@ -38,6 +43,7 @@ from tool_access_shared import (
     FAMILY_GEOGRAPHY,
     licensing_permits_paid_bulk,
     tool_capability_id,
+    tool_effective_item_limit,
     tool_family as _tool_family,
     tool_profile,
     tool_inline_item_limit,
@@ -45,6 +51,7 @@ from tool_access_shared import (
     tool_is_paid_bulk,
     tool_legacy_limit_env,
     tool_paid_item_limit,
+    tool_payment_required_payload,
     tool_quote,
     tool_sub_limit,
 )
@@ -321,7 +328,10 @@ async def _commercial_access_decision(
     capability_id: str,
     units: int,
     include_polygon: bool = False,
+    pricing_quote: dict[str, Any] | None = None,
     request_id: str,
+    resource_path: str = "/mcp",
+    credit_authorized: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Ask the shared commercial verifier whether this bulk call may execute.
 
@@ -345,10 +355,26 @@ async def _commercial_access_decision(
     caller_identity = request_caller_identity(request, ip_hash=ip_hash)
     auth_user_id = caller_identity.auth_user_id
     caller_binding = caller_identity.binding
-    # A generic app session is not authority to spend through MCP. The future
-    # OAuth/API-key middleware must set this only after audience + scope checks.
-    mcp_credit_authorized = bool(getattr(request.state, "mcp_credit_authorized", False)) and caller_identity.can_spend_credits
-    fingerprint_source = f"{tool_name}:{capability_id}:{units}:{include_polygon}:{caller_binding}"
+    # MCP requires its purpose-issued authority bit. First-party REST may pass
+    # its already-verified spend authority explicitly; neither path trusts JSON.
+    if credit_authorized is None:
+        spend_authorized = bool(getattr(request.state, "mcp_credit_authorized", False)) and caller_identity.can_spend_credits
+    else:
+        spend_authorized = bool(credit_authorized) and caller_identity.can_spend_credits
+    authoritative_quote = pricing_quote or tool_quote(tool_name, units)
+    fingerprint_source = json.dumps(
+        {
+            "tool_name": tool_name,
+            "capability_id": capability_id,
+            "units": int(units),
+            "include_polygon": bool(include_polygon),
+            "caller_binding": caller_binding,
+            "pricing_quote": authoritative_quote,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     request_fingerprint = _hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
 
     try:
@@ -358,21 +384,23 @@ async def _commercial_access_decision(
             {
                 "request_id": request_id,
                 "capability_id": capability_id,
-                "resource": {"method": "POST", "path": "/mcp"},
+                "resource": {"method": "POST", "path": resource_path},
                 "forwarded_headers": forwarded_commercial_headers(request),
                 "subject": {"auth_present": bool(auth_user_id), "user_id": auth_user_id},
                 "request_context": {
                     "mcp_tool_name": tool_name,
                     "units": int(units),
                     "include_polygon": bool(include_polygon),
+                    "pricing_quote": authoritative_quote,
                     "request_fingerprint": request_fingerprint,
                 },
                 "caller": {
-                    "auth_user_id": caller_identity.auth_user_id if mcp_credit_authorized else None,
+                    "auth_user_id": caller_identity.auth_user_id if spend_authorized else None,
                     "ip_hash": ip_hash,
                     "caller_binding": caller_binding,
                     "caller_kind": caller_identity.kind,
-                    "caller_confidence": caller_identity.confidence if mcp_credit_authorized else "weak",
+                    "caller_confidence": caller_identity.confidence if spend_authorized else "weak",
+                    "can_spend_credits": bool(spend_authorized),
                 },
             },
         )
@@ -384,6 +412,106 @@ async def _commercial_access_decision(
     if status_name not in {"allow", "challenge"}:
         return "unavailable", payload or {}
     return status_name, payload or {}
+
+
+async def _authorize_paid_batch_tool(
+    request: Request,
+    *,
+    tool_name: str,
+    item_count: int,
+    request_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, int, int]:
+    free_limit = _tool_batch_item_limit(tool_name)
+    paid_limit = _tool_paid_batch_limit(tool_name, free_limit)
+    trusted_token, _trusted_token_id = _trusted_artifact_access(request)
+    if item_count > paid_limit and trusted_token is None and not is_local_loopback_request(request):
+        return None, _batch_error_payload(
+            request_id=request_id,
+            batch_id=None,
+            code="interactive_limit_exceeded",
+            message=f"{tool_name} accepts at most {paid_limit} hosted items per call",
+            limit=paid_limit,
+            loc_id_count=item_count,
+        ), free_limit, paid_limit
+    caller = request_caller_identity(request, ip_hash=hash_ip_for_analytics(get_client_ip(request)))
+    if (
+        item_count <= free_limit
+        or caller.can_use_included_bulk
+        or trusted_token is not None
+        or is_local_loopback_request(request)
+    ):
+        return None, None, free_limit, paid_limit
+    if not commercial_access_enabled() or not _tool_paid_bulk_enforced(tool_name):
+        return None, {
+            "ok": False,
+            "limit": free_limit,
+            "item_count": item_count,
+            "error": {
+                "code": "paid_bulk_unavailable",
+                "message": f"{tool_name} exceeds the free limit of {free_limit}, and hosted paid throughput is unavailable",
+            },
+            "limits": {"free_batch_limit": free_limit, "paid_batch_limit": paid_limit},
+        }, free_limit, paid_limit
+    quote = tool_quote(tool_name, item_count, free_limit=free_limit)
+    decision, verifier_payload = await _commercial_access_decision(
+        request,
+        tool_name=tool_name,
+        capability_id=tool_capability_id(tool_name),
+        units=item_count,
+        pricing_quote=quote,
+        request_id=request_id,
+    )
+    if decision != "allow":
+        return None, _commercial_tool_denial(
+            tool_name=tool_name,
+            quote=quote,
+            decision=decision,
+            verifier_payload=verifier_payload,
+        ), free_limit, paid_limit
+    context = verifier_payload.get("context") if isinstance(verifier_payload.get("context"), dict) else {}
+    settlement = verifier_payload.get("settlement") if isinstance(verifier_payload.get("settlement"), dict) else {}
+    return {
+        "settlement_id": str(settlement.get("settlement_id") or "").strip(),
+        "request_fingerprint": str(context.get("request_fingerprint") or "").strip(),
+        "caller_binding": str(context.get("caller_binding") or "").strip(),
+        "free_limit": free_limit,
+        "reserved_quote": quote,
+    }, None, free_limit, paid_limit
+
+
+async def _settle_paid_batch_tool(
+    commercial_context: dict[str, Any],
+    *,
+    tool_name: str,
+    request_id: str,
+    requested_items: int,
+    successful_items: int,
+) -> tuple[bool, dict[str, Any] | None, dict[str, Any]]:
+    import asyncio
+
+    actual_quote = tool_quote(
+        tool_name,
+        successful_items,
+        free_limit=int(commercial_context.get("free_limit") or 0),
+    )
+    meter_receipt = {
+        "tool_name": tool_name,
+        "requested_items": requested_items,
+        "successful_items": successful_items,
+        "unresolved_items": max(0, requested_items - successful_items),
+        "quote": actual_quote,
+    }
+    settled, payload = await asyncio.to_thread(
+        settle_commercial_access,
+        request_id,
+        str(commercial_context.get("settlement_id") or ""),
+        success=True,
+        request_fingerprint=str(commercial_context.get("request_fingerprint") or ""),
+        caller_binding=str(commercial_context.get("caller_binding") or ""),
+        actual_pricing=actual_quote,
+        meter_receipt=meter_receipt,
+    )
+    return settled, payload, meter_receipt
 
 
 def _tool_paid_bulk_enforced(tool_name: str) -> bool:
@@ -427,16 +555,8 @@ def _tool_paid_batch_limit(tool_name: str, free_limit: int) -> int:
 
     Authored in tool_access_shared; env overrides exist for load testing.
     """
-    suffix = _tool_env_suffix(tool_name)
-    profile_envs = tuple(
-        str(name) for name in (tool_profile(tool_name).get("legacy_paid_limit_env") or ())
-    )
-    for env_name in (f"MCP_TOOL_PAID_BATCH_LIMIT_{suffix}", *profile_envs):
-        value = _parse_env_int_optional(env_name)
-        if value is not None:
-            return max(free_limit, value)
-    authored = tool_paid_item_limit(tool_name)
-    return max(free_limit, int(authored)) if authored is not None else free_limit
+    value = tool_effective_item_limit(tool_name, lane="paid", default=free_limit)
+    return max(free_limit, int(value or free_limit))
 
 
 def _point_lookup_paid_batch_limit(free_limit: int) -> int:
@@ -465,40 +585,14 @@ def _point_lookup_quote_payload(
     free_limit: int,
     paid_limit: int,
 ) -> dict[str, Any]:
-    import os
-
-    def _money_env(name: str, default: str) -> float:
-        try:
-            return max(0.0, float(os.getenv(name, default) or default))
-        except ValueError:
-            return float(default)
-
-    # Same registry-backed price as the REST lane, and the same single ceiling:
-    # data size, not money. Keeping both surfaces on tool_quote is what makes
-    # per-tool pricing one lever instead of two drifting ones.
-    _quote = tool_quote("resolve_point", point_count, free_limit=free_limit)
-    extra_points = _quote["billable_quantity"]
-    estimated_usd = _quote["estimated_price_usd"]
-    return {
-        "request_id": request_id,
-        "batch_id": batch_id,
-        "payment_required": True,
-        "quote": {
-            "capability_id": "point_lookup_batch",
-            "quantity": point_count,
-            "free_quantity": free_limit,
-            "billable_quantity": extra_points,
-            "estimated_price_usd": estimated_usd,
-            "price_display": f"${estimated_usd:.4f}",
-            "base_usd": _quote["base_usd"],
-            "per_item_usd": _quote["per_item_usd"],
-            "payment_rails": ["account_credit", "x402"],
-            "status": "quote_only",
-        },
-        "limits": {"free_batch_limit": free_limit, "paid_batch_limit": paid_limit},
-        "retry_hint": "Fund account credits or satisfy the x402 payment challenge, then retry the same request.",
-        "error": {"code": "payment_required", "message": f"{point_count} points exceeds the free preview limit of {free_limit}."},
-    }
+    return tool_payment_required_payload(
+        "resolve_point",
+        point_count,
+        free_limit=free_limit,
+        paid_limit=paid_limit,
+        request_id=request_id,
+        batch_id=batch_id,
+    )
 
 
 def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
@@ -618,21 +712,14 @@ def _tool_batch_item_limit(
     default. Authoring a limit belongs in the registry; the env vars exist for
     incident response and load testing.
     """
-    suffix = _tool_env_suffix(tool_name)
-    registry_envs = tool_legacy_limit_env(tool_name)
-    for env_name in (f"MCP_TOOL_BATCH_LIMIT_{suffix}", *fallback_env_names, *registry_envs):
+    for env_name in fallback_env_names:
         value = _parse_env_int_optional(env_name)
         if value is not None:
             return max(1, value)
-
-    authored = tool_free_item_limit(tool_name)
-    if authored is None:
-        authored = tool_inline_item_limit(tool_name)
-    if authored is None:
-        authored = default
-    if authored is None:
+    value = tool_effective_item_limit(tool_name, lane="free", default=default)
+    if value is None:
         raise ValueError(f"no authored item limit for tool '{tool_name}'")
-    return max(1, int(authored))
+    return int(value)
 
 
 def _batch_error_payload(
@@ -1754,6 +1841,7 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         settlement_id = None
+        settlement_context: dict[str, Any] | None = None
         if len(points) > included_limit and trusted_token is None and not is_local_loopback_request(request):
             if not paid_bulk:
                 error_payload = _batch_error_payload(
@@ -1784,6 +1872,11 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
                 settlement_id = str(
                     ((verifier_payload.get("settlement") or {}).get("settlement_id") or "")
                 ).strip() or None
+                verifier_context = verifier_payload.get("context") if isinstance(verifier_payload.get("context"), dict) else {}
+                settlement_context = {
+                    "request_fingerprint": str(verifier_context.get("request_fingerprint") or "").strip(),
+                    "caller_binding": str(verifier_context.get("caller_binding") or "").strip(),
+                }
             else:
                 error_code = (
                     "payment_required" if decision == "challenge" else "commercial_access_unavailable"
@@ -1966,6 +2059,44 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             "bulk_preset": bulk_preset,
             "results": results,
         }
+        settlement_payload = None
+        if settlement_id:
+            import asyncio
+
+            successful_coordinates = {
+                (float(item["point"]["lon"]), float(item["point"]["lat"]))
+                for item in results
+                if not item.get("error") and isinstance(item.get("point"), dict)
+            }
+            actual_quote = tool_quote("resolve_point", len(successful_coordinates))
+            meter_receipt = {
+                "tool_name": "resolve_point",
+                "requested_items": len(points),
+                "successful_distinct_items": len(successful_coordinates),
+                "duplicate_items_collapsed": max(0, resolved_count - len(successful_coordinates)),
+                "quote": actual_quote,
+            }
+            settled, settlement_payload = await asyncio.to_thread(
+                settle_commercial_access,
+                request_id or batch_id or "",
+                settlement_id,
+                success=True,
+                request_fingerprint=str((settlement_context or {}).get("request_fingerprint") or ""),
+                caller_binding=str((settlement_context or {}).get("caller_binding") or ""),
+                actual_pricing=actual_quote,
+                meter_receipt=meter_receipt,
+            )
+            if not settled:
+                error_payload = {
+                    "request_id": request_id,
+                    "error": {
+                        "code": str((settlement_payload or {}).get("code") or "commercial_access_settlement_failed"),
+                        "message": str((settlement_payload or {}).get("message") or "Commercial settlement failed."),
+                    },
+                }
+                return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+            result_payload["meter_receipt"] = meter_receipt
+            result_payload["settlement_receipt"] = (settlement_payload or {}).get("context") or {}
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id or batch_id or "",
@@ -2007,7 +2138,11 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             payment_rail=_request_access_lane(request, trusted_token, paid=bool(settlement_id)),
             artifact_token_id=trusted_token_id,
         )
-        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        response = _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        if settlement_id:
+            for key, value in settlement_headers(settlement_payload).items():
+                response.headers[key] = value
+        return response
 
     try:
         lat = float(payload.get("lat"))
@@ -2657,34 +2792,17 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
-        limit = _tool_batch_item_limit("resolve_reference")
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
-        if len(items) > limit and trusted_token is None and not is_local_loopback_request(request):
-            error_payload = _batch_error_payload(
-                request_id=request_id,
-                batch_id=batch_id,
-                code="too_many_items",
-                message=f"resolve_reference accepts at most {limit} items per call",
-                limit=limit,
-                loc_id_count=len(items),
-            )
-            _log_mcp_tool_usage_event(
-                request,
-                request_id=request_id or batch_id or "",
-                tool_name="resolve_reference",
-                capability_id="reference_resolution",
-                decision="deny",
-                started_at=started_at,
-                row_count=len(items),
-                query_granularity=f"bulk_{len(items)}",
-                response_payload=error_payload,
-                error_code="too_many_items",
-                metadata={"event": "reference_resolution", "tool_mode": "bulk", "quantity": len(items), "item_count": len(items), "batch_id": batch_id, "batch_limit": limit},
-            )
-            return _jsonrpc_response(
-                _tool_result(error_payload, is_error=True),
-                rpc_request_id,
-            )
+        commercial_context, access_error, free_limit, paid_limit = await _authorize_paid_batch_tool(
+            request,
+            tool_name="resolve_reference",
+            item_count=len(items),
+            request_id=request_id or batch_id or "",
+        )
+        limit = paid_limit
+        if access_error is not None:
+            access_error["batch_id"] = batch_id
+            return _jsonrpc_response(_tool_result(access_error, is_error=True), rpc_request_id)
         runtime_started = time.perf_counter()
         results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
@@ -2709,6 +2827,26 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
             "unresolved_count": sum(1 for result in results if not result.get("ok")),
             "results": results,
         }
+        settlement_payload = None
+        if commercial_context is not None:
+            settled, settlement_payload, meter_receipt = await _settle_paid_batch_tool(
+                commercial_context,
+                tool_name="resolve_reference",
+                request_id=request_id or batch_id or "",
+                requested_items=len(items),
+                successful_items=result_payload["resolved_count"],
+            )
+            if not settled:
+                error_payload = {
+                    "request_id": request_id,
+                    "error": {
+                        "code": str((settlement_payload or {}).get("code") or "commercial_access_settlement_failed"),
+                        "message": str((settlement_payload or {}).get("message") or "Commercial settlement failed."),
+                    },
+                }
+                return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+            result_payload["meter_receipt"] = meter_receipt
+            result_payload["settlement_receipt"] = (settlement_payload or {}).get("context") or {}
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id or batch_id or "",
@@ -2735,8 +2873,14 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                     batch_limit=limit,
                 ),
             },
+            payment_rail=_request_access_lane(request, trusted_token, paid=commercial_context is not None),
+            artifact_token_id=trusted_token_id,
         )
-        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        response = _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        if commercial_context is not None:
+            for key, value in settlement_headers(settlement_payload).items():
+                response.headers[key] = value
+        return response
     runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_resolve_reference_item(payload)}
     stages = {"bridge_lookup_ms": _elapsed_ms(runtime_started)}
@@ -2837,34 +2981,17 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                 _tool_result(error_payload, is_error=True),
                 rpc_request_id,
             )
-        limit = _tool_batch_item_limit("convert_reference")
         trusted_token, trusted_token_id = _trusted_artifact_access(request)
-        if len(items) > limit and trusted_token is None and not is_local_loopback_request(request):
-            error_payload = _batch_error_payload(
-                request_id=request_id,
-                batch_id=batch_id,
-                code="too_many_items",
-                message=f"convert_reference accepts at most {limit} items per call",
-                limit=limit,
-                loc_id_count=len(items),
-            )
-            _log_mcp_tool_usage_event(
-                request,
-                request_id=request_id or batch_id or "",
-                tool_name="convert_reference",
-                capability_id="reference_conversion",
-                decision="deny",
-                started_at=started_at,
-                row_count=len(items),
-                query_granularity=f"bulk_{len(items)}",
-                response_payload=error_payload,
-                error_code="too_many_items",
-                metadata={"event": "reference_conversion", "tool_mode": "bulk", "quantity": len(items), "item_count": len(items), "batch_id": batch_id, "batch_limit": limit},
-            )
-            return _jsonrpc_response(
-                _tool_result(error_payload, is_error=True),
-                rpc_request_id,
-            )
+        commercial_context, access_error, free_limit, paid_limit = await _authorize_paid_batch_tool(
+            request,
+            tool_name="convert_reference",
+            item_count=len(items),
+            request_id=request_id or batch_id or "",
+        )
+        limit = paid_limit
+        if access_error is not None:
+            access_error["batch_id"] = batch_id
+            return _jsonrpc_response(_tool_result(access_error, is_error=True), rpc_request_id)
         runtime_started = time.perf_counter()
         results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
@@ -2889,6 +3016,26 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
             "unconverted_count": sum(1 for result in results if not result.get("ok")),
             "results": results,
         }
+        settlement_payload = None
+        if commercial_context is not None:
+            settled, settlement_payload, meter_receipt = await _settle_paid_batch_tool(
+                commercial_context,
+                tool_name="convert_reference",
+                request_id=request_id or batch_id or "",
+                requested_items=len(items),
+                successful_items=result_payload["converted_count"],
+            )
+            if not settled:
+                error_payload = {
+                    "request_id": request_id,
+                    "error": {
+                        "code": str((settlement_payload or {}).get("code") or "commercial_access_settlement_failed"),
+                        "message": str((settlement_payload or {}).get("message") or "Commercial settlement failed."),
+                    },
+                }
+                return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+            result_payload["meter_receipt"] = meter_receipt
+            result_payload["settlement_receipt"] = (settlement_payload or {}).get("context") or {}
         _log_mcp_tool_usage_event(
             request,
             request_id=request_id or batch_id or "",
@@ -2915,8 +3062,14 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                     batch_limit=limit,
                 ),
             },
+            payment_rail=_request_access_lane(request, trusted_token, paid=commercial_context is not None),
+            artifact_token_id=trusted_token_id,
         )
-        return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        response = _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
+        if commercial_context is not None:
+            for key, value in settlement_headers(settlement_payload).items():
+                response.headers[key] = value
+        return response
     runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_convert_reference_item(payload)}
     stages = {"conversion_lookup_ms": _elapsed_ms(runtime_started)}
@@ -3333,12 +3486,116 @@ def _result_row_count(tool_name: str, payload: dict[str, Any], result: dict[str,
     return 1
 
 
+def _commercial_tool_denial(
+    *, tool_name: str, quote: dict[str, Any], decision: str, verifier_payload: dict[str, Any]
+) -> dict[str, Any]:
+    code = "payment_required" if decision == "challenge" else "commercial_access_unavailable"
+    return {
+        "ok": False,
+        "payment_required": decision == "challenge",
+        "tool_name": tool_name,
+        "quote": quote,
+        "error": {
+            "code": code,
+            "message": str(
+                verifier_payload.get("message")
+                or ("Payment is required before this tool can execute." if decision == "challenge" else "Commercial access is unavailable.")
+            ),
+        },
+        "daedalmap_pricing": (verifier_payload.get("context") or {}).get("pricing") or quote,
+        "challenge": verifier_payload.get("challenge"),
+    }
+
+
+async def _authorize_geometry_job_execution(
+    request: Request,
+    *,
+    tool_name: str,
+    payload: dict[str, Any],
+    estimate: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Authorize one hosted create call from its canonical estimate quote.
+
+    Returns ``(commercial_context, denial_payload)``. Local installs, trusted
+    artifacts, and self-hosts without the commercial control plane bypass the
+    payment rail while retaining the same estimate and meter helpers.
+    """
+    trusted_token, _trusted_token_id = _trusted_artifact_access(request)
+    if is_local_loopback_request(request) or trusted_token is not None or not commercial_access_enabled():
+        return None, None
+    if not _tool_paid_bulk_enforced(tool_name):
+        return None, None
+
+    quote = estimate.get("quote") if isinstance(estimate.get("quote"), dict) else {}
+    expected_quote_id = str(estimate.get("quote_id") or quote.get("quote_id") or "").strip()
+    supplied_quote_id = str(payload.get("quote_id") or "").strip()
+    if supplied_quote_id and supplied_quote_id != expected_quote_id:
+        return None, {
+            "ok": False,
+            "error": {
+                "code": "quote_mismatch",
+                "message": "quote_id does not match the current arguments or pricing snapshot; estimate again before retrying",
+            },
+            "expected_quote_id": expected_quote_id,
+        }
+
+    decision, verifier_payload = await _commercial_access_decision(
+        request,
+        tool_name=tool_name,
+        capability_id=tool_capability_id(tool_name),
+        units=int(quote.get("charge_units") or quote.get("quantity") or 0),
+        include_polygon=bool(payload.get("include_polygon")),
+        pricing_quote=quote,
+        request_id=str(payload.get("request_id") or ""),
+    )
+    if decision != "allow":
+        return None, _commercial_tool_denial(
+            tool_name=tool_name,
+            quote=quote,
+            decision=decision,
+            verifier_payload=verifier_payload,
+        )
+    context = verifier_payload.get("context") if isinstance(verifier_payload.get("context"), dict) else {}
+    settlement = verifier_payload.get("settlement") if isinstance(verifier_payload.get("settlement"), dict) else {}
+    return {
+        "settlement_id": str(settlement.get("settlement_id") or "").strip(),
+        "request_fingerprint": str(context.get("request_fingerprint") or "").strip(),
+        "caller_binding": str(context.get("caller_binding") or "").strip(),
+        "reserved_quote": quote,
+    }, None
+
+
+async def _settle_geometry_job_execution(
+    commercial_context: dict[str, Any], *, request_id: str, result: dict[str, Any]
+) -> tuple[bool, dict[str, Any] | None]:
+    import asyncio
+
+    settlement_id = str(commercial_context.get("settlement_id") or "").strip()
+    if not settlement_id:
+        return False, {"code": "commercial_access_settlement_missing", "message": "Commercial verifier did not return a settlement handle."}
+    nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+    meter_receipt = nested.get("meter_receipt") if isinstance(nested.get("meter_receipt"), dict) else {}
+    actual_quote = meter_receipt.get("quote") if isinstance(meter_receipt.get("quote"), dict) else None
+    success = bool(result.get("ok")) and not result.get("error")
+    return await asyncio.to_thread(
+        settle_commercial_access,
+        request_id,
+        settlement_id,
+        success=success,
+        request_fingerprint=str(commercial_context.get("request_fingerprint") or ""),
+        caller_binding=str(commercial_context.get("caller_binding") or ""),
+        actual_pricing=actual_quote,
+        meter_receipt=meter_receipt or None,
+    )
+
+
 async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any, tool_name: str) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, tool_name)
     request_id = str(payload.get("request_id") or "")
     trusted_token, trusted_token_id = _trusted_artifact_access(request)
     local_unrestricted = is_local_loopback_request(request)
+    commercial_context: dict[str, Any] | None = None
     try:
         from mapmover.runtime import geometry_tool_jobs
 
@@ -3360,8 +3617,24 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
             capability_id = "geometry_package_estimate"
         elif tool_name == "create_geometry_export":
             inline_limit = None if local_unrestricted else _tool_batch_item_limit("create_geometry_export")
-            result = geometry_tool_jobs.create_geometry_export(payload, inline_limit=inline_limit)
             capability_id = "geometry_export"
+            hosted_commercial = (
+                commercial_access_enabled()
+                and not local_unrestricted
+                and trusted_token is None
+                and _tool_paid_bulk_enforced(tool_name)
+            )
+            if hosted_commercial:
+                estimate = geometry_tool_jobs.estimate_geometry_package(payload, execution_limit=inline_limit)
+                if not estimate.get("ok"):
+                    result = estimate
+                else:
+                    commercial_context, denial = await _authorize_geometry_job_execution(
+                        request, tool_name=tool_name, payload=payload, estimate=estimate
+                    )
+                    result = denial or geometry_tool_jobs.create_geometry_export(payload, inline_limit=inline_limit)
+            else:
+                result = geometry_tool_jobs.create_geometry_export(payload, inline_limit=inline_limit)
         elif tool_name == "estimate_conversion_job":
             result = geometry_tool_jobs.estimate_conversion_job(
                 payload,
@@ -3370,8 +3643,24 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
             capability_id = "conversion_job_estimate"
         elif tool_name == "create_conversion_job":
             inline_limit = None if local_unrestricted else _tool_batch_item_limit("create_conversion_job")
-            result = geometry_tool_jobs.create_conversion_job(payload, inline_limit=inline_limit)
             capability_id = "conversion_job"
+            hosted_commercial = (
+                commercial_access_enabled()
+                and not local_unrestricted
+                and trusted_token is None
+                and _tool_paid_bulk_enforced(tool_name)
+            )
+            if hosted_commercial:
+                estimate = geometry_tool_jobs.estimate_conversion_job(payload, execution_limit=inline_limit)
+                if not estimate.get("ok"):
+                    result = estimate
+                else:
+                    commercial_context, denial = await _authorize_geometry_job_execution(
+                        request, tool_name=tool_name, payload=payload, estimate=estimate
+                    )
+                    result = denial or geometry_tool_jobs.create_conversion_job(payload, inline_limit=inline_limit)
+            else:
+                result = geometry_tool_jobs.create_conversion_job(payload, inline_limit=inline_limit)
         elif tool_name == "get_job_status":
             result = geometry_tool_jobs.get_job_status(str(payload.get("job_id") or ""))
             capability_id = "geometry_job_status"
@@ -3384,6 +3673,22 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
         stages = {"runtime_ms": _elapsed_ms(started_at)}
 
     result = {"request_id": request_id, **result}
+    settlement_payload: dict[str, Any] | None = None
+    if commercial_context is not None:
+        settled, settlement_payload = await _settle_geometry_job_execution(
+            commercial_context, request_id=request_id, result=result
+        )
+        if not settled:
+            result = {
+                "ok": False,
+                "request_id": request_id,
+                "error": {
+                    "code": str((settlement_payload or {}).get("code") or "commercial_access_settlement_failed"),
+                    "message": str((settlement_payload or {}).get("message") or "Commercial settlement failed."),
+                },
+            }
+        else:
+            result["settlement_receipt"] = (settlement_payload or {}).get("context") or {}
     ok = bool(result.get("ok")) and not result.get("error")
     row_count = _result_row_count(tool_name, payload, result)
     job_id = str(result.get("job_id") or "").strip() or None
@@ -3403,6 +3708,7 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
         error_code=str((result.get("error") or {}).get("code") or "") or None,
         metadata={
             "event": capability_id,
+            "settlement_id": (commercial_context or {}).get("settlement_id"),
             "tool_mode": "bulk" if row_count > 1 else "single",
             "quantity": row_count,
             "job_id": job_id,
@@ -3420,8 +3726,14 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
                 batch_limit=payload.get("limit"),
             ),
         },
+        payment_rail=_request_access_lane(request, trusted_token, paid=commercial_context is not None),
+        artifact_token_id=trusted_token_id,
     )
-    return _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
+    response = _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
+    if commercial_context is not None:
+        for key, value in settlement_headers(settlement_payload).items():
+            response.headers[key] = value
+    return response
 
 
 async def _execute_check_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:

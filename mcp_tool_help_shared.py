@@ -263,7 +263,7 @@ def geometry_family_help_payload(question: str | None = None) -> dict[str, Any]:
             },
             {
                 "name": "known_or_suspected_dataset_identifiers",
-                "steps": ["identify_reference_system on representative or all distinct string keys", "use the unambiguous geography_binding", "estimate_conversion_job", "create_conversion_job within the 100-row v0 limit", "get_job_status to retrieve the completed result"],
+                "steps": ["identify_reference_system on representative or all distinct string keys", "use the unambiguous geography_binding", "estimate_conversion_job", "create_conversion_job within the advertised hosted limit (7,500 rows by default)", "get_job_status to retrieve the completed result"],
             },
             {
                 "name": "one_external_reference",

@@ -187,6 +187,9 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         body = response.json()
         self.assertTrue(body["payment_required"])
         self.assertEqual(body["limits"]["free_batch_limit"], 25)
+        self.assertEqual(body["quote"]["capability_id"], "point_lookup")
+        self.assertEqual(body["quote"]["pricing_version"], "geography-tools-2026-08-16.1")
+        self.assertIsInstance(body["quote"]["amount_usdc_base_units"], int)
         self.assertEqual(body["quote"]["payment_rails"], ["account_credit", "x402"])
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "challenge")
@@ -195,6 +198,44 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(analytics["error_code"], "payment_required")
         self.assertEqual(analytics["row_count"], 26)
         self.assertEqual(analytics["metadata"]["surface"], "test_data")
+
+    def test_paid_rest_point_batch_executes_and_settles_distinct_successes(self) -> None:
+        allow = (
+            "allow",
+            {
+                "status": "allow",
+                "context": {"request_fingerprint": "fp-1", "caller_binding": "caller-1"},
+                "settlement": {"settlement_id": "settle-1"},
+            },
+        )
+        resolved = [{"deepest_resolved_loc_id": "USA-CA-037"} for _ in range(26)]
+        with mock.patch.dict("os.environ", {"COMMERCIAL_ACCESS_ENABLED": "1"}, clear=False):
+            with (
+                mock.patch("mapmover.routes.geometry._tool_paid_bulk_enforced", return_value=True),
+                mock.patch("mapmover.routes.geometry._commercial_access_decision", new=mock.AsyncMock(return_value=allow)),
+                mock.patch("mapmover.routes.geometry.resolve_points_to_locations", return_value=resolved),
+                mock.patch(
+                    "mapmover.routes.geometry.settle_commercial_access",
+                    return_value=(True, {"status": "allow", "context": {"account_credit": {"charged_micro_usd": 0}}}),
+                ) as settle_mock,
+                mock.patch("mapmover.routes.geometry.log_api_query_event"),
+            ):
+                response = self.client.post(
+                    "/api/v1/resolve/points",
+                    json={
+                        "request_id": "req-1",
+                        "country_scope": "USA",
+                        "target_admin_level": "admin_2",
+                        "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["resolved_count"], 26)
+        self.assertEqual(body["meter_receipt"]["distinct_items_resolved"], 1)
+        self.assertEqual(settle_mock.call_args.kwargs["actual_pricing"]["amount_usdc_base_units"], 0)
+        self.assertEqual(settle_mock.call_args.kwargs["meter_receipt"]["successful_items"], 26)
 
     def test_point_lookup_verified_account_gets_included_bulk(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):

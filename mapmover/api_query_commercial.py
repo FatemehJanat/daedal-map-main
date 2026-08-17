@@ -247,13 +247,19 @@ def settle_commercial_access(
     success: bool,
     request_fingerprint: str | None = None,
     caller_binding: str | None = None,
+    actual_pricing: dict[str, Any] | None = None,
+    meter_receipt: dict[str, Any] | None = None,
 ) -> tuple[bool, dict[str, Any] | None]:
     _status_code, payload = post_commercial_access(
         COMMERCIAL_ACCESS_SETTLE_PATH,
         {
             "request_id": request_id,
             "settlement_id": settlement_id,
-            "outcome": {"status": "success" if success else "failed"},
+            "outcome": {
+                "status": "success" if success else "failed",
+                "actual_pricing": actual_pricing if isinstance(actual_pricing, dict) else None,
+                "meter_receipt": meter_receipt if isinstance(meter_receipt, dict) else None,
+            },
             "request_context": {"request_fingerprint": request_fingerprint} if request_fingerprint else {},
             "caller": {"caller_binding": caller_binding} if caller_binding else {},
         },

@@ -71,7 +71,7 @@ class GeometryCatalogTaxonomyTests(unittest.TestCase):
 
     def test_products_are_capabilities_not_release_packages(self) -> None:
         self.assertTrue(self.catalog["geometry_products"])
-        self.assertEqual(self.catalog["release_packages"], [])
+        self.assertTrue(self.catalog["release_packages"])
         family_ids = {item["family"] for item in self.catalog["geometry_families"]}
         product_ids = {item["product_id"] for item in self.catalog["geometry_products"]}
         for product in self.catalog["geometry_products"]:
@@ -79,6 +79,13 @@ class GeometryCatalogTaxonomyTests(unittest.TestCase):
             self.assertIsInstance(product["family_ids"], list)
             self.assertTrue(set(product["family_ids"]).issubset(family_ids))
             self.assertNotIn("asset_id", product)
+            self.assertNotIn("download", product)
+        product_ids_from_releases = {
+            str(item.get("geometry_product_id") or "")
+            for item in self.catalog["release_packages"]
+        }
+        self.assertTrue(product_ids_from_releases.issubset(product_ids))
+        self.assertTrue(all(item.get("package_id") for item in self.catalog["release_packages"]))
         for collection in self.catalog["geometry_collections"]:
             self.assertTrue(set(collection["family_ids"]).issubset(family_ids))
             self.assertTrue(set(collection["product_ids"]).issubset(product_ids))

@@ -1542,11 +1542,24 @@ def resolve_points_to_locations(
     distinct_point_count = len(seen_coords)
     normalized_points = deduped_points
 
+    def _deduplicated_error_results(message: str) -> list[dict]:
+        early: list[dict | None] = [None] * original_point_count
+        for item in normalized_points:
+            early[item["index"]] = {
+                "error": item.get("error") or message,
+                "point": {"lon": item.get("lon"), "lat": item.get("lat")},
+            }
+        for source_index, target_indexes in duplicate_targets.items():
+            source_result = early[source_index]
+            for target_index in target_indexes:
+                early[target_index] = dict(source_result) if isinstance(source_result, dict) else source_result
+        return [item or {"error": message} for item in early]
+
     stage_started = time.perf_counter()
     country_df = load_global_countries_frame()
     _add_timing_ms(timing_ms, "global_country_load_ms", stage_started)
     if country_df is None or country_df.empty:
-        return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
+        return _deduplicated_error_results("No global geometry available")
 
     results: list[dict | None] = [None] * original_point_count
     by_country: dict[str, list[dict]] = {}
@@ -1554,7 +1567,7 @@ def resolve_points_to_locations(
     if scope_iso3:
         scoped_rows = country_df[country_df["loc_id"].astype(str).str.upper() == scope_iso3] if "loc_id" in country_df.columns else pd.DataFrame()
         if scoped_rows.empty:
-            return [{"error": f"Unknown country_scope {scope_iso3}", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
+            return _deduplicated_error_results(f"Unknown country_scope {scope_iso3}")
         country_match = scoped_rows.iloc[0]
         for item in normalized_points:
             if item.get("error"):

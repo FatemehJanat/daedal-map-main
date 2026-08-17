@@ -456,8 +456,15 @@ def estimate_geometry_package(
     execution_limit = max(1, int(execution_limit)) if execution_limit is not None else None
     within_limit = execution_limit is None or len(loc_ids) <= execution_limit
     delivery_mode = "inline" if within_limit else "not_available_in_v0"
-    quote_basis = f"{sorted(loc_ids)[:25]}:{len(loc_ids)}:{output_format}:{include_polygon}"
-    quote_id = "geoquote_" + hashlib.sha256(quote_basis.encode("utf-8")).hexdigest()[:16]
+    charge_units = _geometry_charge_units(available_count if include_polygon else len(loc_ids), include_polygon=include_polygon, minimum=True)
+    quote = _charge_quote("create_geometry_export", charge_units)
+    create_arguments = {
+        "loc_ids": loc_ids,
+        "format": output_format,
+        "output_name": payload.get("output_name") or "geometry-export",
+        "include_polygon": include_polygon,
+    }
+    quote_id = _quote_id("geoquote", create_arguments, quote)
     return _clean_json(
         {
             "ok": True,
@@ -474,23 +481,14 @@ def estimate_geometry_package(
             "within_execution_limit": within_limit,
             "execution_limit": execution_limit,
             "license_citation_required": True,
-            "free_allowance": {"geometry_export_loc_ids": execution_limit, "unrestricted_local_runtime": execution_limit is None},
-            "charge_units": max(1, math.ceil(available_count / 10)) if include_polygon else max(1, math.ceil(len(loc_ids) / 100)),
-            "pricing_version": "geometry-tools-v0",
-            "quote": _charge_quote(
-                "create_geometry_export",
-                max(1, math.ceil(available_count / 10)) if include_polygon else max(1, math.ceil(len(loc_ids) / 100)),
-            ),
+            "execution_limits": {"geometry_export_loc_ids": execution_limit, "unrestricted_local_runtime": execution_limit is None},
+            "charge_units": charge_units,
+            "pricing_version": quote["pricing_version"],
+            "quote": {"quote_id": quote_id, **quote},
             "scope": scope_result,
             "create_call": {
                 "tool": "create_geometry_export",
-                "arguments": {
-                    "quote_id": quote_id,
-                    "loc_ids": loc_ids,
-                    "format": output_format,
-                    "output_name": payload.get("output_name") or "geometry-export",
-                    "include_polygon": include_polygon,
-                },
+                "arguments": {"quote_id": quote_id, **create_arguments},
             } if within_limit else None,
             "guidance": None if within_limit else _bounded_inline_error(
                 request_kind="geometry export",
@@ -512,14 +510,32 @@ def _charge_quote(tool_name: str, charge_units: int) -> dict[str, Any]:
     from tool_access_shared import tool_quote
 
     quote = tool_quote(tool_name, int(charge_units), free_limit=0)
-    return {
-        "charge_units": int(charge_units),
-        "base_usd": quote["base_usd"],
-        "per_unit_usd": quote["per_item_usd"],
-        "estimated_price_usd": quote["estimated_price_usd"],
-        "price_display": f"${quote['estimated_price_usd']:.4f}",
-        "pricing_version": "geometry-tools-v0",
+    return {**quote, "charge_units": int(charge_units)}
+
+
+def _geometry_charge_units(item_count: int, *, include_polygon: bool, minimum: bool = False) -> int:
+    divisor = 10 if include_polygon else 100
+    units = math.ceil(max(0, int(item_count)) / divisor)
+    return max(1, units) if minimum and item_count else units
+
+
+def _conversion_charge_units(item_count: int, *, minimum: bool = False) -> int:
+    units = math.ceil(max(0, int(item_count)) / 100)
+    return max(1, units) if minimum and item_count else units
+
+
+def _quote_id(prefix: str, payload: dict[str, Any], quote: dict[str, Any]) -> str:
+    bound_payload = {
+        key: value for key, value in payload.items()
+        if key not in {"quote_id", "request_id"}
     }
+    basis = json.dumps(
+        {"arguments": bound_payload, "pricing": quote},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return f"{prefix}_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
 
 
@@ -589,6 +605,16 @@ def create_geometry_export(payload: dict[str, Any], *, inline_limit: int | None 
         output_format=output_format,
         output_name=payload.get("output_name") or "geometry-export",
     )
+    successful_items = int(result.get("available") or 0)
+    charge_units = _geometry_charge_units(successful_items, include_polygon=include_polygon)
+    meter_receipt = {
+        "tool_name": "create_geometry_export",
+        "requested_items": len(loc_ids),
+        "successful_items": successful_items,
+        "unresolved_items": max(0, len(loc_ids) - successful_items),
+        "charge_units": charge_units,
+        "quote": _charge_quote("create_geometry_export", charge_units),
+    }
     return _new_job(
         "geometry_export",
         payload,
@@ -600,6 +626,7 @@ def create_geometry_export(payload: dict[str, Any], *, inline_limit: int | None 
             "requested": result.get("requested", len(loc_ids)),
             "available": result.get("available"),
             "missing": result.get("missing"),
+            "meter_receipt": meter_receipt,
         },
     )
 
@@ -824,7 +851,9 @@ def estimate_conversion_job(
     estimated_resolvable = row_count if not sample else int(row_count * (resolved / max(1, len(sample))))
     execution_limit = max(1, int(execution_limit)) if execution_limit is not None else None
     within_limit = bool(items) and (execution_limit is None or row_count <= execution_limit)
-    quote_id = "convquote_" + uuid.uuid4().hex[:16]
+    charge_units = _conversion_charge_units(row_count, minimum=True)
+    quote = _charge_quote("create_conversion_job", charge_units)
+    quote_id = _quote_id("convquote", payload, quote)
     return _clean_json(
         {
             "ok": True,
@@ -843,9 +872,9 @@ def estimate_conversion_job(
             "recommended_delivery_mode": "inline" if within_limit else "not_available_in_v0",
             "within_execution_limit": within_limit,
             "execution_limit": execution_limit,
-            "charge_units": max(1, math.ceil(row_count / 100)),
-            "pricing_version": "geometry-tools-v0",
-            "quote": _charge_quote("create_conversion_job", max(1, math.ceil(row_count / 100))),
+            "charge_units": charge_units,
+            "pricing_version": quote["pricing_version"],
+            "quote": {"quote_id": quote_id, **quote},
             "resolution_plan": {
                 "mode": "known_identifier_crosswalk" if binding else "declared_reference_resolution",
                 "geography_binding": binding,
@@ -919,6 +948,17 @@ def create_conversion_job(payload: dict[str, Any], *, inline_limit: int | None =
         output_format=output_format,
         output_name=str(payload.get("output_name") or "daedalmap-conversion"),
     )
+    successful_distinct = sum(1 for item in resolution_cache.values() if item.get("ok"))
+    charge_units = _conversion_charge_units(successful_distinct)
+    meter_receipt = {
+        "tool_name": "create_conversion_job",
+        "requested_items": len(items),
+        "distinct_items_resolved": len(resolution_cache),
+        "successful_distinct_items": successful_distinct,
+        "duplicate_items_collapsed": max(0, len(items) - len(resolution_cache)),
+        "charge_units": charge_units,
+        "quote": _charge_quote("create_conversion_job", charge_units),
+    }
     return _new_job(
         "conversion_job",
         payload,
@@ -932,6 +972,7 @@ def create_conversion_job(payload: dict[str, Any], *, inline_limit: int | None =
             "converted_count": sum(1 for item in results if item.get("ok")),
             "error_count": sum(1 for item in results if not item.get("ok")),
             "identifier_check": identifier_check,
+            "meter_receipt": meter_receipt,
             "resolution_plan": {
                 "mode": "known_identifier_crosswalk" if isinstance(payload.get("geography_binding"), dict) else "declared_reference_resolution",
                 "geography_binding": payload.get("geography_binding") if isinstance(payload.get("geography_binding"), dict) else None,

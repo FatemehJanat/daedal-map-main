@@ -399,7 +399,7 @@ PACK_REGISTRY: dict[str, dict] = {
             {"name": "estimate_geometry_package", "summary": "dry-run selected geometry export count/bytes/price/delivery estimate"},
             {"name": "create_geometry_export", "summary": "create a real synchronous geometry artifact within the effective operational limit"},
             {"name": "estimate_conversion_job", "summary": "dry-run user-data conversion row/error/cost estimate"},
-            {"name": "create_conversion_job", "summary": "convert and preserve up to 100 user rows as JSON rows, CSV, JSONL, or Parquet"},
+            {"name": "create_conversion_job", "summary": "convert and preserve up to the adjustable hosted limit (7,500 rows by default) as JSON rows, CSV, JSONL, or Parquet"},
             {"name": "get_job_status", "summary": "retrieve completed bounded geometry and conversion jobs"},
         ),
     },

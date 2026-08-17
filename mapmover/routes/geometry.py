@@ -9,11 +9,17 @@ from fastapi.responses import JSONResponse
 
 from mapmover import logger
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
-from mapmover.api_query_commercial import get_trusted_artifact_token
+from mapmover.api_query_commercial import (
+    commercial_access_enabled,
+    commercial_access_response,
+    get_trusted_artifact_token,
+    settle_commercial_access,
+    settlement_headers,
+)
 from mapmover.caller_identity import request_caller_identity
-from mapmover.routes.mcp import _access_lane
+from mapmover.routes.mcp import _access_lane, _commercial_access_decision, _tool_paid_bulk_enforced
 from mapmover.security import get_client_ip
-from tool_access_shared import tool_quote
+from tool_access_shared import tool_effective_item_limit, tool_payment_required_payload, tool_quote
 from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
@@ -42,17 +48,13 @@ MAX_SELECTION_LOC_IDS = 1_000
 
 
 def _point_lookup_batch_limit() -> int:
-    try:
-        return max(1, int(str(os.getenv("POINT_LOOKUP_BATCH_LIMIT", "25")).strip() or "25"))
-    except ValueError:
-        return 25
+    return int(tool_effective_item_limit("resolve_point", lane="free", default=25) or 25)
 
 
 def _point_lookup_paid_batch_limit() -> int:
-    try:
-        return max(_point_lookup_batch_limit(), int(str(os.getenv("POINT_LOOKUP_PAID_BATCH_LIMIT", "10000")).strip() or "10000"))
-    except ValueError:
-        return 10000
+    free_limit = _point_lookup_batch_limit()
+    paid_limit = int(tool_effective_item_limit("resolve_point", lane="paid", default=free_limit) or free_limit)
+    return max(free_limit, paid_limit)
 
 
 def _point_bulk_shape_error(*, point_count: int, country_scope: str | None, target_admin_level: int | None, bulk_preset: str | None = None, threshold: int) -> dict | None:
@@ -70,6 +72,13 @@ def _onboarding_context(body: dict) -> dict:
 
     These describe how the caller arrived at the request rather than what it
     asks for, so they stay analytics-only and never affect resolution.
+
+    ``visitor_id`` and the first-touch fields come from the client-issued
+    ``dm_vid`` cookie. They are forgeable by construction, which is acceptable
+    for counting funnels and unacceptable anywhere else: nothing in this
+    request path may read them to decide access, quota, pricing, or
+    settlement. Caller identity for those decisions comes from
+    ``request_caller_identity`` and nowhere else.
     """
 
     def _clean(key: str, limit: int) -> str | None:
@@ -80,36 +89,24 @@ def _onboarding_context(body: dict) -> dict:
         "session_id": _clean("session_id", 120),
         "dataset_id": _clean("dataset_id", 120),
         "input_method": _clean("input_method", 40),
+        "visitor_id": _clean("visitor_id", 80),
+        "first_touch_source": _clean("first_touch_source", 60),
+        "first_touch_medium": _clean("first_touch_medium", 40),
+        "first_touch_campaign": _clean("first_touch_campaign", 60),
+        "first_touch_landing": _clean("first_touch_landing", 120),
+        "first_touch_date": _clean("first_touch_date", 10),
     }
 
 
 def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None, point_count: int, free_limit: int, paid_limit: int) -> dict:
-    # Price comes from the per-tool registry so it stays one lever, and the
-    # only ceiling is the data-size limit (paid_item_limit). A separate money
-    # cap used to bind first, which meant the largest jobs were served free.
-    quote = tool_quote("resolve_point", point_count, free_limit=free_limit)
-    extra_points = quote["billable_quantity"]
-    estimated_usd = quote["estimated_price_usd"]
-    return {
-        "request_id": request_id,
-        "batch_id": batch_id,
-        "payment_required": True,
-        "quote": {
-            "capability_id": "point_lookup_batch",
-            "quantity": point_count,
-            "free_quantity": free_limit,
-            "billable_quantity": extra_points,
-            "estimated_price_usd": estimated_usd,
-            "price_display": f"${estimated_usd:.4f}",
-            "base_usd": quote["base_usd"],
-            "per_item_usd": quote["per_item_usd"],
-            "payment_rails": ["account_credit", "x402"],
-            "status": "quote_only",
-        },
-        "limits": {"free_batch_limit": free_limit, "paid_batch_limit": paid_limit},
-        "retry_hint": "Fund account credits or satisfy the x402 payment challenge, then retry the same request.",
-        "error": {"code": "payment_required", "message": f"{point_count} points exceeds the free preview limit of {free_limit}."},
-    }
+    return tool_payment_required_payload(
+        "resolve_point",
+        point_count,
+        free_limit=free_limit,
+        paid_limit=paid_limit,
+        request_id=request_id,
+        batch_id=batch_id,
+    )
 
 
 def _trusted_artifact_access(request: Request) -> tuple[str | None, str | None]:
@@ -394,6 +391,7 @@ async def resolve_points_json_endpoint(req: Request):
             "recommended_tools": ["estimate_conversion_job", "create_conversion_job", "get_job_status"],
         }
         return JSONResponse(payload, status_code=402)
+    commercial_context = None
     if len(points) > included_limit and trusted_token is None:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
         batch_id = str(body.get("batch_id") or "").strip()[:120] or None
@@ -404,6 +402,35 @@ async def resolve_points_json_endpoint(req: Request):
             free_limit=limit,
             paid_limit=paid_limit,
         )
+        request_id = str(body.get("request_id") or batch_id or f"point-batch-{int(time.time() * 1000)}")
+        if commercial_access_enabled() and _tool_paid_bulk_enforced("resolve_point"):
+            decision, verifier_payload = await _commercial_access_decision(
+                req,
+                tool_name="resolve_point",
+                capability_id="point_lookup",
+                units=len(points),
+                pricing_quote=quote_payload["quote"],
+                request_id=request_id,
+                resource_path="/api/v1/resolve/points",
+                credit_authorized=caller_identity.can_spend_credits,
+            )
+            if decision == "allow":
+                context = verifier_payload.get("context") if isinstance(verifier_payload.get("context"), dict) else {}
+                settlement = verifier_payload.get("settlement") if isinstance(verifier_payload.get("settlement"), dict) else {}
+                commercial_context = {
+                    "request_id": request_id,
+                    "settlement_id": str(settlement.get("settlement_id") or "").strip(),
+                    "request_fingerprint": str(context.get("request_fingerprint") or "").strip(),
+                    "caller_binding": str(context.get("caller_binding") or "").strip(),
+                    "free_limit": limit,
+                }
+            else:
+                response = commercial_access_response(request_id, verifier_payload, source_id="resolve_points")
+                if decision == "unavailable" and response.status_code == 402:
+                    response.status_code = 503
+                return response
+        else:
+            commercial_context = None
         metadata = {
             "surface": "test_data" if source == "try_dataset" else source,
             "event": "point_lookup_batch",
@@ -423,21 +450,22 @@ async def resolve_points_json_endpoint(req: Request):
                 capability_id="point_lookup_batch",
                 pack_id="geography_tools",
                 source_id="resolve_points",
-                decision="challenge",
+                decision="allow" if commercial_context is not None else "challenge",
                 payment_rail="commercial_access",
                 auth_user_id=caller_identity.auth_user_id,
                 ip_hash=hash_ip_for_analytics(get_client_ip(req)),
                 user_agent=req.headers.get("user-agent", "").strip() or None,
                 execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
                 row_count=len(points),
-                status_code=402,
-                error_code="payment_required",
+                status_code=200 if commercial_context is not None else 402,
+                error_code=None if commercial_context is not None else "payment_required",
                 query_granularity=f"bulk_{len(points)}",
                 metadata=metadata,
             )
         except Exception as exc:
             logger.warning(f"Point lookup batch challenge analytics failed: {exc}")
-        return JSONResponse(quote_payload, status_code=402)
+        if commercial_context is None:
+            return JSONResponse(quote_payload, status_code=402)
 
     include_geometry = False
     source = str(body.get("source") or "").strip()[:80] or "unknown"
@@ -503,6 +531,52 @@ async def resolve_points_json_endpoint(req: Request):
         "results": results,
     }
 
+    settlement_payload = None
+    response_headers = {}
+    if commercial_context is not None:
+        import asyncio
+
+        successful_coordinates = {
+            (point["lon"], point["lat"])
+            for point in valid_points
+            if not (by_index.get(point["index"]) or {}).get("error")
+            and (
+                (by_index.get(point["index"]) or {}).get("deepest_resolved_loc_id")
+                or ((by_index.get(point["index"]) or {}).get("matched") or {}).get("loc_id")
+            )
+        }
+        actual_quote = tool_quote("resolve_point", len(successful_coordinates), free_limit=limit)
+        meter_receipt = {
+            "requested_items": len(points),
+            "distinct_items_resolved": len(successful_coordinates),
+            "successful_items": resolved_count,
+            "unresolved_items": unresolved_count,
+        }
+        settled, settlement_payload = await asyncio.to_thread(
+            settle_commercial_access,
+            commercial_context["request_id"],
+            commercial_context["settlement_id"],
+            success=True,
+            request_fingerprint=commercial_context["request_fingerprint"],
+            caller_binding=commercial_context["caller_binding"],
+            actual_pricing=actual_quote,
+            meter_receipt=meter_receipt,
+        )
+        if not settled:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": str((settlement_payload or {}).get("code") or "commercial_access_settlement_failed"),
+                        "message": str((settlement_payload or {}).get("message") or "Paid point lookup could not be settled."),
+                    },
+                },
+                status_code=502,
+            )
+        payload["meter_receipt"] = meter_receipt
+        payload["settlement_receipt"] = settlement_payload.get("context") if isinstance(settlement_payload, dict) else None
+        response_headers = settlement_headers(settlement_payload)
+
     req.state.analytics_request_id = batch_id
     req.state.analytics_pack_id = "geography_tools"
     req.state.analytics_source_id = "resolve_points"
@@ -517,7 +591,7 @@ async def resolve_points_json_endpoint(req: Request):
         "paid_batch_limit": paid_limit,
         "included_batch_limit": included_limit,
         "included_account_bulk": caller_identity.can_use_included_bulk,
-        "access_lane": _access_lane(trusted_token),
+        "access_lane": "commercial_access" if commercial_context is not None else _access_lane(trusted_token),
         "artifact_token_id": trusted_token_id,
         "target_admin_level": f"admin_{target_admin_level}" if target_admin_level is not None else "deepest",
         "country_scope": country_scope,
@@ -532,7 +606,7 @@ async def resolve_points_json_endpoint(req: Request):
             pack_id="geography_tools",
             source_id="resolve_points",
             decision="allow",
-            payment_rail=_access_lane(trusted_token),
+            payment_rail="commercial_access" if commercial_context is not None else _access_lane(trusted_token),
             artifact_token_id=trusted_token_id,
             auth_user_id=caller_identity.auth_user_id,
             ip_hash=hash_ip_for_analytics(get_client_ip(req)),
@@ -546,7 +620,7 @@ async def resolve_points_json_endpoint(req: Request):
     except Exception as exc:
         logger.warning(f"Point lookup batch analytics failed: {exc}")
 
-    return JSONResponse(payload, status_code=status_code)
+    return JSONResponse(payload, status_code=status_code, headers=response_headers)
 
 
 def _internal_json_allowed(req: Request):
