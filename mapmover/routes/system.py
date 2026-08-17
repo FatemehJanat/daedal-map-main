@@ -1656,7 +1656,10 @@ def _mcp_pricing_payload(pack_id: str | None = None) -> dict:
         "base_price_usd": 0.01,
         "base_rows_included": 100,
         "per_row_usd": 0.0001,
-        "max_price_usd": 0.50,
+        # No money ceiling. The only cap is the per-tool item limit, so a larger
+        # request costs proportionally more rather than being served free above
+        # a fixed price. Per-tool rates live in tool_access_shared.TOOL_ACCESS_REGISTRY.
+        "max_items_per_call": "see per-tool item_limit in the tool catalog",
         "currency": "USDC",
         "network": "Base",
         "payment_protocol": "x402",

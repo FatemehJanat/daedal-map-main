@@ -13,6 +13,7 @@ from mapmover.api_query_commercial import get_trusted_artifact_token
 from mapmover.caller_identity import request_caller_identity
 from mapmover.routes.mcp import _access_lane
 from mapmover.security import get_client_ip
+from tool_access_shared import tool_quote
 from mapmover.routes.system import _require_local_or_admin
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
@@ -83,11 +84,12 @@ def _onboarding_context(body: dict) -> dict:
 
 
 def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None, point_count: int, free_limit: int, paid_limit: int) -> dict:
-    base_usd = float(os.getenv("POINT_LOOKUP_PAID_BASE_USD", "0.01") or "0.01")
-    per_point_usd = float(os.getenv("POINT_LOOKUP_PAID_PER_POINT_USD", "0.0002") or "0.0002")
-    max_usd = float(os.getenv("POINT_LOOKUP_PAID_MAX_USD", "0.50") or "0.50")
-    extra_points = max(0, point_count - free_limit)
-    estimated_usd = min(max_usd, base_usd + extra_points * per_point_usd)
+    # Price comes from the per-tool registry so it stays one lever, and the
+    # only ceiling is the data-size limit (paid_item_limit). A separate money
+    # cap used to bind first, which meant the largest jobs were served free.
+    quote = tool_quote("resolve_point", point_count, free_limit=free_limit)
+    extra_points = quote["billable_quantity"]
+    estimated_usd = quote["estimated_price_usd"]
     return {
         "request_id": request_id,
         "batch_id": batch_id,
@@ -97,8 +99,10 @@ def _point_lookup_quote_payload(*, request_id: str | None, batch_id: str | None,
             "quantity": point_count,
             "free_quantity": free_limit,
             "billable_quantity": extra_points,
-            "estimated_price_usd": round(estimated_usd, 6),
+            "estimated_price_usd": estimated_usd,
             "price_display": f"${estimated_usd:.4f}",
+            "base_usd": quote["base_usd"],
+            "per_item_usd": quote["per_item_usd"],
             "payment_rails": ["account_credit", "x402"],
             "status": "quote_only",
         },

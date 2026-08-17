@@ -45,6 +45,7 @@ from tool_access_shared import (
     tool_is_paid_bulk,
     tool_legacy_limit_env,
     tool_paid_item_limit,
+    tool_quote,
     tool_sub_limit,
 )
 
@@ -472,11 +473,12 @@ def _point_lookup_quote_payload(
         except ValueError:
             return float(default)
 
-    base_usd = _money_env("POINT_LOOKUP_PAID_BASE_USD", "0.01")
-    per_point_usd = _money_env("POINT_LOOKUP_PAID_PER_POINT_USD", "0.0002")
-    max_usd = _money_env("POINT_LOOKUP_PAID_MAX_USD", "0.50")
-    extra_points = max(0, point_count - free_limit)
-    estimated_usd = min(max_usd, base_usd + extra_points * per_point_usd)
+    # Same registry-backed price as the REST lane, and the same single ceiling:
+    # data size, not money. Keeping both surfaces on tool_quote is what makes
+    # per-tool pricing one lever instead of two drifting ones.
+    _quote = tool_quote("resolve_point", point_count, free_limit=free_limit)
+    extra_points = _quote["billable_quantity"]
+    estimated_usd = _quote["estimated_price_usd"]
     return {
         "request_id": request_id,
         "batch_id": batch_id,
@@ -486,8 +488,10 @@ def _point_lookup_quote_payload(
             "quantity": point_count,
             "free_quantity": free_limit,
             "billable_quantity": extra_points,
-            "estimated_price_usd": round(estimated_usd, 6),
+            "estimated_price_usd": estimated_usd,
             "price_display": f"${estimated_usd:.4f}",
+            "base_usd": _quote["base_usd"],
+            "per_item_usd": _quote["per_item_usd"],
             "payment_rails": ["account_credit", "x402"],
             "status": "quote_only",
         },

@@ -30,6 +30,8 @@ county-map-private/docs/future/API/mcp_publishing.md section 15.
 
 from __future__ import annotations
 
+import os
+
 
 # Only pricing values starting with "paid" are enforced as paid, matching the
 # pack registry convention. Default is free.
@@ -67,6 +69,14 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "paid_item_limit": 10000,
         "legacy_limit_env": ("POINT_LOOKUP_BATCH_LIMIT",),
         "legacy_paid_limit_env": ("POINT_LOOKUP_PAID_BATCH_LIMIT",),
+        # Commodity lane: coordinate to admin chain has real free substitutes
+        # (Geocodio at $1/1k, a no-API-key Census MCP for the US), so it is
+        # priced at the bottom of the geocoding band and earns on volume.
+        "price": {"base_usd": 0.01, "per_item_usd": 0.0002},
+        "legacy_price_env": {
+            "base_usd": ("POINT_LOOKUP_PAID_BASE_USD",),
+            "per_item_usd": ("POINT_LOOKUP_PAID_PER_POINT_USD",),
+        },
     },
     "check_geometry": {
         "family": FAMILY_GEOGRAPHY,
@@ -109,11 +119,14 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
     "resolve_reference": {
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "reference_resolution",
-        "pricing": PRICING_FREE,
+        "pricing": PRICING_PAID_BULK,
         "item_field": "items",
         "free_item_limit": 100,
         "paid_item_limit": 2500,
         "legacy_limit_env": ("REFERENCE_RESOLVE_BATCH_LIMIT",),
+        # Enrichment lane: external code to canonical loc_id. Weak substitutes,
+        # so priced above the commodity point lane.
+        "price": {"base_usd": 0.01, "per_item_usd": 0.001},
     },
     "identify_reference_system": {
         "family": FAMILY_GEOGRAPHY,
@@ -127,7 +140,11 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
     "convert_reference": {
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "reference_conversion",
-        "pricing": PRICING_FREE,
+        # Highest-value lane: family and vintage translation through loc_id has
+        # no global substitute in the competitive set, so it carries the top
+        # per-item price rather than riding the commodity rate.
+        "price": {"base_usd": 0.01, "per_item_usd": 0.002},
+        "pricing": PRICING_PAID_BULK,
         "item_field": "items",
         "free_item_limit": 100,
         "paid_item_limit": 2500,
@@ -281,6 +298,63 @@ def tool_free_item_limit(tool_name: str) -> int | None:
 def tool_paid_item_limit(tool_name: str) -> int | None:
     value = tool_profile(tool_name).get("paid_item_limit")
     return int(value) if isinstance(value, int) else None
+
+
+def _price_env_names(tool_name: str, field: str) -> tuple[str, ...]:
+    """Env override names for one tool's price field, most specific first."""
+    suffix = str(tool_name or "").strip().upper()
+    generic = f"MCP_TOOL_PRICE_{field.upper()}_{suffix}"
+    legacy = tool_profile(tool_name).get("legacy_price_env") or {}
+    legacy_names = legacy.get(field) if isinstance(legacy, dict) else ()
+    return (generic, *(str(name) for name in legacy_names or ()))
+
+
+def tool_price(tool_name: str) -> dict:
+    """Resolve one tool's price. Registry value is the default; env wins.
+
+    Pricing is a lever, not a constant: every field can be retuned per tool
+    through the environment without a deploy, and a tool with no authored price
+    resolves to zero so an unpriced tool can never silently start charging.
+    """
+    authored = tool_profile(tool_name).get("price")
+    authored = authored if isinstance(authored, dict) else {}
+    out: dict[str, float] = {}
+    for field in ("base_usd", "per_item_usd"):
+        value = float(authored.get(field) or 0.0)
+        for env_name in _price_env_names(tool_name, field):
+            raw = str(os.getenv(env_name, "") or "").strip()
+            if raw:
+                try:
+                    value = float(raw)
+                except ValueError:
+                    continue
+                break
+        out[field] = value
+    return out
+
+
+def tool_quote(tool_name: str, item_count: int, free_limit: int | None = None) -> dict:
+    """Exact price for one call.
+
+    The billable quantity is bounded by ``paid_item_limit`` rather than by a
+    money ceiling. Binding the cap to data size keeps one lever instead of two
+    and means raising throughput does not silently give the extra work away.
+    """
+    free = tool_free_item_limit(tool_name) if free_limit is None else free_limit
+    free = int(free or 0)
+    price = tool_price(tool_name)
+    billable = max(0, int(item_count) - free)
+    total = price["base_usd"] + billable * price["per_item_usd"] if billable else 0.0
+    return {
+        "capability_id": tool_capability_id(tool_name),
+        "quantity": int(item_count),
+        "free_quantity": free,
+        "billable_quantity": billable,
+        "base_usd": price["base_usd"],
+        "per_item_usd": price["per_item_usd"],
+        "estimated_price_usd": round(total, 6),
+        "item_limit": tool_paid_item_limit(tool_name),
+    }
 
 
 def tool_inline_item_limit(tool_name: str) -> int | None:
