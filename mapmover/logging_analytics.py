@@ -317,6 +317,13 @@ def log_api_query_event(
             revenue_attributed_usdc_base_units=revenue_attributed_usdc_base_units,
             mcp_client_name=str(_meta.get("mcp_client_name") or "")[:100] or None,
             mcp_client_version=str(_meta.get("mcp_client_version") or "")[:50] or None,
+            # Promoted out of metadata into first-class indexed columns so a
+            # visitor's browser events, runtime calls, and downloads can be
+            # joined without a JSONB scan. Analytics attribution only: these
+            # come from a forgeable client cookie and must never be read as
+            # identity, authorization, or a billing input.
+            visitor_id=str(_meta.get("visitor_id") or "")[:80] or None,
+            first_touch_source=str(_meta.get("first_touch_source") or "")[:60] or None,
             metadata=event,
         )
 

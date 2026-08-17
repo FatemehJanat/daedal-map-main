@@ -156,6 +156,74 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(metadata["dataset_id"], "tdd-def")
         self.assertEqual(metadata["input_method"], "upload")
 
+    def test_point_lookup_batch_endpoint_records_visitor_attribution(self) -> None:
+        """Visitor context reaches analytics without touching resolution.
+
+        These fields come from a client cookie and are forgeable, so the test
+        also pins the rule that matters: they are analytics metadata only and
+        never appear as caller identity.
+        """
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": f"TEST-{point['row_index']}"}} for point in points]
+
+        with mock.patch(
+            "mapmover.routes.geometry.resolve_points_to_locations",
+            side_effect=fake_resolve,
+        ), mock.patch(
+            "mapmover.routes.geometry.log_api_query_event",
+        ) as analytics_mock:
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={
+                    "source": "try_dataset",
+                    "batch_id": "test-visitor-1",
+                    "session_id": "tds-abc",
+                    "visitor_id": "v1.0123456789abcdef",
+                    "first_touch_source": "reddit",
+                    "first_touch_medium": "social",
+                    "first_touch_campaign": "launch",
+                    "first_touch_landing": "/try-dataset",
+                    "first_touch_date": "2026-08-16",
+                    "points": [{"row_index": 0, "lon": -123.1, "lat": 49.2}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        kwargs = analytics_mock.call_args.kwargs
+        metadata = kwargs["metadata"]
+        self.assertEqual(metadata["visitor_id"], "v1.0123456789abcdef")
+        self.assertEqual(metadata["first_touch_source"], "reddit")
+        self.assertEqual(metadata["first_touch_campaign"], "launch")
+        self.assertEqual(metadata["first_touch_landing"], "/try-dataset")
+        # A caller-supplied visitor id must never become caller identity.
+        self.assertIsNone(kwargs.get("auth_user_id"))
+
+    def test_point_lookup_batch_endpoint_bounds_visitor_attribution(self) -> None:
+        """Oversized attribution is truncated, not trusted, and never rejects."""
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [{"matched": {"loc_id": "TEST-0"}} for _ in points]
+
+        with mock.patch(
+            "mapmover.routes.geometry.resolve_points_to_locations",
+            side_effect=fake_resolve,
+        ), mock.patch(
+            "mapmover.routes.geometry.log_api_query_event",
+        ) as analytics_mock:
+            response = self.client.post(
+                "/api/v1/resolve/points",
+                json={
+                    "source": "try_dataset",
+                    "visitor_id": "v" * 500,
+                    "first_touch_source": "s" * 500,
+                    "points": [{"row_index": 0, "lon": -123.1, "lat": 49.2}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        metadata = analytics_mock.call_args.kwargs["metadata"]
+        self.assertEqual(len(metadata["visitor_id"]), 80)
+        self.assertEqual(len(metadata["first_touch_source"]), 60)
+
     def test_point_lookup_batch_endpoint_omits_absent_onboarding_context(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):
             return [{"matched": {"loc_id": "TEST-0"}} for _ in points]

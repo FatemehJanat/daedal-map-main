@@ -42,6 +42,17 @@
   <link rel="stylesheet" href="/static/styles/map.css">
   <!-- Chat panel styles (sidebar, messages, orders, settings) -->
   <link rel="stylesheet" href="/static/styles/chat.css">
+
+  <!-- Shared visitor identity and first-touch attribution across www, app, and
+       downloads. Also owns the ?noga=1 owner/dev kill-switch, which moved from
+       per-origin localStorage to a cookie on the shared parent domain so an
+       opted-out browser stays opted out on every host. Blocking, and before
+       the boot script, because gtag config below reads from it.
+
+       GENERATED: synced from county-map-private by
+       build/sync_shared_frontend_assets.py. Do not edit static/js/dm-visitor.js
+       directly. -->
+  <script src="/static/js/dm-visitor.js"></script>
   <script>
     window.DAEDALMAP_VENDOR = {
       maplibreCss: '/static/vendor/maplibre-gl/maplibre-gl.css',
@@ -93,30 +104,29 @@
     }
 
     window.DAEDALMAP_BOOT = (async () => {
-      // Owner/dev GA opt-out: skip GA on localhost, or on any browser that has
-      // visited with ?noga=1 (durable localStorage flag, IP-independent so it
-      // survives VPNs and dynamic home IPs). Visit with ?noga=0 to re-enable.
-      function dmGaSuppressed() {
-        try {
-          const p = new URLSearchParams(window.location.search);
-          if (p.get('noga') === '1') localStorage.setItem('dm_no_ga', '1');
-          if (p.get('noga') === '0') localStorage.removeItem('dm_no_ga');
-          if (localStorage.getItem('dm_no_ga') === '1') return true;
-        } catch (e) {}
-        const h = String(window.location.hostname || '').toLowerCase();
-        return ['localhost', '127.0.0.1', '0.0.0.0'].includes(h);
-      }
-
       // Analytics must never gate app boot. Define the gtag queue synchronously
       // so early events are buffered, then let the tag script land whenever it
       // lands. This block is deliberately not awaited.
-      if (!dmGaSuppressed()) {
+      //
+      // The measurement ID is the same one www and downloads use. The app
+      // previously had its own (G-NLHFVYWW9T), which meant a visitor clicking
+      // from the marketing site into the app started a brand new session and
+      // showed up as a daedalmap.com self-referral. One ID plus the linker
+      // domains below keeps that one session; the hostName dimension is what
+      // separates the surfaces again in reporting.
+      //
+      // dm_no_ga / visitor identity live in dm-visitor.js, which is loaded in
+      // <head> and is a generated copy of the private site's canonical file.
+      if (window.dmVisitor && !window.dmVisitor.suppressed()) {
         window.dataLayer = window.dataLayer || [];
         window.gtag = function gtag(){ window.dataLayer.push(arguments); };
         window.gtag('js', new Date());
-        window.gtag('config', 'G-NLHFVYWW9T');
+        window.gtag('set', window.dmVisitor.gaParams());
+        window.gtag('config', 'G-WTF95W3759', {
+          linker: { domains: ['daedalmap.com', 'www.daedalmap.com', 'app.daedalmap.com', 'downloads.daedalmap.com'], accept_incoming: true }
+        });
         loadScriptWithFallback(
-          'https://www.googletagmanager.com/gtag/js?id=G-NLHFVYWW9T',
+          'https://www.googletagmanager.com/gtag/js?id=G-WTF95W3759',
           null
         );
       }
