@@ -1520,13 +1520,35 @@ def resolve_points_to_locations(
             continue
         normalized_points.append({"index": index, "lon": lon, "lat": lat})
 
+    # Collapse exact duplicate coordinates before resolution. Event data repeats
+    # the same point constantly (one storm cell, many rows), and each duplicate
+    # previously paid full containment cost. create_conversion_job already
+    # deduplicates by identifier; this is the same saving for coordinates.
+    original_point_count = len(normalized_points)
+    duplicate_targets: dict[int, list[int]] = {}
+    seen_coords: dict[tuple[float, float], int] = {}
+    deduped_points: list[dict] = []
+    for item in normalized_points:
+        if item.get("error"):
+            deduped_points.append(item)
+            continue
+        key = (item["lon"], item["lat"])
+        first = seen_coords.get(key)
+        if first is None:
+            seen_coords[key] = item["index"]
+            deduped_points.append(item)
+        else:
+            duplicate_targets.setdefault(first, []).append(item["index"])
+    distinct_point_count = len(seen_coords)
+    normalized_points = deduped_points
+
     stage_started = time.perf_counter()
     country_df = load_global_countries_frame()
     _add_timing_ms(timing_ms, "global_country_load_ms", stage_started)
     if country_df is None or country_df.empty:
         return [{"error": "No global geometry available", "point": {"lon": item.get("lon"), "lat": item.get("lat")}} for item in normalized_points]
 
-    results: list[dict | None] = [None] * len(normalized_points)
+    results: list[dict | None] = [None] * original_point_count
     by_country: dict[str, list[dict]] = {}
     stage_started = time.perf_counter()
     if scope_iso3:
@@ -1570,7 +1592,8 @@ def resolve_points_to_locations(
         stage_started = time.perf_counter()
         for item in country_items:
             query_match = resolve_admin_spine_query_point(
-                iso3, float(item["lon"]), float(item["lat"])
+                iso3, float(item["lon"]), float(item["lat"]),
+                target_admin_level=target_admin_level,
             )
             if query_match is None:
                 unresolved_items.append(item)
@@ -1822,6 +1845,14 @@ def resolve_points_to_locations(
                 result["geojson"] = get_selection_geometries([deepest_loc_id])
             results[item["index"]] = result
 
+    # Fan the representative result back out to the duplicates it stood in for.
+    for source_index, target_indexes in duplicate_targets.items():
+        source_result = results[source_index]
+        for target_index in target_indexes:
+            results[target_index] = dict(source_result) if isinstance(source_result, dict) else source_result
+    if timing_ms is not None:
+        timing_ms["distinct_points_resolved"] = distinct_point_count
+        timing_ms["duplicate_points_collapsed"] = sum(len(v) for v in duplicate_targets.values())
     return [result or {"error": "point did not resolve"} for result in results]
 
 
