@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
+from shapely import to_wkb
+from shapely.geometry import box
 
 from mapmover.geometry_handlers import (
     _load_deep_geometry_index_rows,
@@ -56,6 +58,16 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
             payload["features"][0]["properties"]["geometry_source"],
             "U.S. Census Bureau TIGER/Line 2024 TABBLOCK20",
         )
+
+    def test_geojson_conversion_decodes_duckdb_bytearray_wkb(self):
+        frame = pd.DataFrame(
+            [{"loc_id": "USA-VA", "geometry": bytearray(to_wkb(box(-80, 36, -79, 37)))}]
+        )
+
+        payload = df_to_geojson(frame, polygon_only=True)
+
+        self.assertEqual(len(payload["features"]), 1)
+        self.assertEqual(payload["features"][0]["geometry"]["type"], "Polygon")
 
     def test_deep_selection_passes_exact_ids_to_partition_reader(self):
         requested = ["USA-DE-001-000101-1-1000", "USA-DE-001-000101-1-1001"]

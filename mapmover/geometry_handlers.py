@@ -1916,8 +1916,20 @@ def df_to_geojson(df, polygon_only=False):
             continue
 
         try:
-            geometry = fast_json_loads(geom_str) if isinstance(geom_str, str) else geom_str
+            if isinstance(geom_str, str):
+                geometry = fast_json_loads(geom_str)
+            elif isinstance(geom_str, (bytes, bytearray, memoryview)):
+                from shapely import from_wkb
+                from shapely.geometry import mapping
+                geometry = mapping(from_wkb(bytes(geom_str)))
+            elif hasattr(geom_str, "__geo_interface__"):
+                geometry = geom_str.__geo_interface__
+            else:
+                geometry = geom_str
         except (ValueError, TypeError):
+            continue
+
+        if not isinstance(geometry, dict):
             continue
 
         # Skip Point geometries if polygon_only
