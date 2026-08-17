@@ -17,6 +17,7 @@ class MarineGeometryRuntimeTests(unittest.TestCase):
         self.assertTrue(is_marine_loc_id("EEZ-USA"))
         self.assertTrue(is_marine_loc_id("EEZ-MRGID-21801"))
         self.assertTrue(is_marine_loc_id("XSG"))
+        self.assertTrue(is_marine_loc_id("XLS"))
         self.assertTrue(is_marine_loc_id("IHO1953-123"))
         self.assertTrue(is_named_water_loc_id("IHO1953-123"))
         self.assertFalse(is_marine_loc_id("USA"))
@@ -27,6 +28,7 @@ class MarineGeometryRuntimeTests(unittest.TestCase):
         self.assertEqual(marine_bank_for_loc_id("EEZ-USA"), EEZ_PATH)
         self.assertEqual(marine_bank_for_loc_id("EEZ-ASM"), EEZ_PATH)
         self.assertEqual(marine_bank_for_loc_id("XOP"), WATER_BODIES_PATH)
+        self.assertEqual(marine_bank_for_loc_id("XLM"), WATER_BODIES_PATH)
         self.assertIsNone(marine_bank_for_loc_id("USA"))
 
     def test_resolve_source(self):
@@ -36,10 +38,11 @@ class MarineGeometryRuntimeTests(unittest.TestCase):
 
     @unittest.skipUnless(has_marine_geometry(), "marine geometry banks not present locally")
     def test_load_geometry_for_loc_ids(self):
-        df = load_marine_geometry(["EEZ-USA", "XSG"])
+        df = load_marine_geometry(["EEZ-USA", "XSG", "XLG", "XLS", "XLM", "XLH", "XLE", "XLO"])
         ids = set(df["loc_id"])
         self.assertIn("EEZ-USA", ids)
         self.assertIn("XSG", ids)
+        self.assertTrue({"XLG", "XLS", "XLM", "XLH", "XLE", "XLO"}.issubset(ids))
         self.assertTrue((df["geometry"].astype(str).str.len() > 0).all())
 
     @unittest.skipUnless(has_marine_geometry(), "marine geometry banks not present locally")
