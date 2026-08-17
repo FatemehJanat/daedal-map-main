@@ -92,6 +92,15 @@ const COLORS = {
     stroke: '#3da06d',
     strokeWidth: 1.5
   },
+  // Overture comparison layer. Deliberately pink and mostly unfilled so the
+  // blue admin spine stays readable underneath and the two outlines can be
+  // compared where they disagree.
+  overture: {
+    fill: '#ff2f92',        // Hot pink
+    fillOpacity: 0.08,
+    stroke: '#ff2f92',
+    strokeWidth: 2
+  },
   default: {
     fill: '#ffcc00',
     fillOpacity: 0.35,

@@ -32,7 +32,10 @@ const TYPE_TO_MODEL = {
   wildfire: 'point-radius',
   flood: 'point-radius',
   ash_cloud: 'polygon',
-  drought_area: 'polygon'
+  drought_area: 'polygon',
+
+  // Reference boundaries rather than events. Always polygons.
+  overture: 'polygon'
 };
 
 const RENDERING_MODEL_TO_MODEL = {

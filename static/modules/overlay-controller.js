@@ -422,6 +422,14 @@ const OVERLAY_ENDPOINTS = {
     yearField: 'year',
     maxYear: 2019  // Flood data ends at 2019
   },
+  // WIP boundary-comparison layer. Reference geometry, not events, so it has
+  // no year field and is served local-or-admin only.
+  overture_divisions: {
+    baseUrl: '/api/overture/geojson',
+    params: {},
+    eventType: 'overture',
+    yearField: null
+  },
   landslides: {
     baseUrl: '/api/landslides/geojson',
     params: { min_deaths: '1', require_coords: 'true' },

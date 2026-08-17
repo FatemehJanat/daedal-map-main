@@ -32,6 +32,7 @@ from mapmover.geometry_handlers import (
     get_viewport_geometry as get_viewport_geometry_handler,
     resolve_points_to_locations,
 )
+from mapmover.paths import COUNTRIES_DIR
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
 from mapmover.runtime.reference_exchange import (
     convert_reference,
@@ -213,6 +214,64 @@ async def get_geometry_index_endpoint(parent_loc_id: str = None, admin_level: in
         return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/index: {e}")
+        return msgpack_error(str(e), 500)
+
+
+@router.get("/api/overture/geojson")
+async def get_overture_divisions_geojson(req: Request, admin_level: int = None, iso3: str = "USA"):
+    """WIP comparison overlay: Overture divisions beside the DaedalMap spine.
+
+    Local-or-admin gated because `overture_divisions` is a WIP source with
+    `catalog_surfaces: []`. Catalog visibility is never authorization.
+
+    Each row already carries our `loc_id` from the loc_id-to-GERS bridge, so
+    one id yields both outlines and the two systems can be compared directly.
+    """
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    try:
+        import json as json_lib
+        import pandas as pd
+
+        source_path = COUNTRIES_DIR / iso3 / "overture_divisions" / f"{iso3}.parquet"
+        if not source_path.exists():
+            return msgpack_error(f"overture_divisions not built for {iso3}", 404)
+
+        df = pd.read_parquet(source_path)
+        if admin_level is not None:
+            df = df[df["admin_level"] == admin_level]
+
+        features = []
+        for row in df.itertuples(index=False):
+            geometry = getattr(row, "geometry", None)
+            if not geometry:
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": json_lib.loads(geometry),
+                "properties": {
+                    "loc_id": row.loc_id,
+                    "name": row.overture_name,
+                    "overture_name": row.overture_name,
+                    "daedalmap_name": row.daedalmap_name,
+                    "admin_level": int(row.admin_level),
+                    "overture_subtype": row.overture_subtype,
+                    "gers_division_id": row.gers_division_id,
+                    "our_area_share": row.our_area_share,
+                    "their_area_share": row.their_area_share,
+                    "matched": bool(row.matched),
+                },
+            })
+
+        return msgpack_response({
+            "type": "FeatureCollection",
+            "features": features,
+            "count": len(features),
+            "attribution": "(c) OpenStreetMap contributors, Overture Maps Foundation",
+        })
+    except Exception as e:
+        logger.error(f"Error in /api/overture/geojson: {e}")
         return msgpack_error(str(e), 500)
 
 
