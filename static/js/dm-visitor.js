@@ -241,6 +241,29 @@
     return record.src ? record : null;
   }
 
+  /* Remove Google linker transport parameters after attribution has had a
+   * chance to inspect the landing URL. DaedalMap surfaces share one parent
+   * domain and do not need cross-domain decoration; old decorated links should
+   * still settle to a clean canonical URL in the address bar. */
+  function stripGoogleLinkerParams() {
+    try {
+      if (!global.history || !global.history.replaceState) return;
+      var url = new global.URL(global.location.href);
+      var changed = false;
+      var keys = [];
+      url.searchParams.forEach(function (_value, key) { keys.push(key); });
+      for (var i = 0; i < keys.length; i += 1) {
+        if (keys[i] === "_gl" || keys[i] === "_ga" || keys[i].indexOf("_ga_") === 0) {
+          url.searchParams.delete(keys[i]);
+          changed = true;
+        }
+      }
+      if (changed) {
+        global.history.replaceState(global.history.state, "", url.pathname + url.search + url.hash);
+      }
+    } catch (e) {}
+  }
+
   var state = {
     suppressed: true,
     visitorId: "",
@@ -253,6 +276,7 @@
       // Deliberately do not mint an id for a suppressed browser. An owner
       // browsing with ?noga=1 should leave no analytics identity behind at
       // all, not merely be filtered out downstream.
+      stripGoogleLinkerParams();
       return;
     }
     state.visitorId = readCookie(VISITOR_COOKIE);
@@ -268,6 +292,7 @@
       state.firstTouch = computeFirstTouch();
       writeCookie(FIRST_TOUCH_COOKIE, encodeFirstTouch(state.firstTouch), MAX_AGE_SECONDS);
     }
+    stripGoogleLinkerParams();
   }
 
   init();

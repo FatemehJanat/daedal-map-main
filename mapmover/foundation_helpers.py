@@ -48,7 +48,10 @@ FOUNDATION_HELPER_REGISTRY = {
     ],
     "country_crosswalks": "geometry/countries/{ISO3}/crosswalk.json",
     "country_json_assets": "countries/{ISO3}/{filename}",
-    "global_country_geometry": "geometry/global.csv",
+    "global_country_geometry": {
+        "display": "geometry/display/admin_0.parquet",
+        "exact_fallback": "geometry/global.csv",
+    },
     "world_factbook_static": "global/world_factbook_static/all_countries.parquet",
     "orchestrator_specs": "mapmover/orchestrator_specs.py",
     "runtime_result_cap": "mapmover/runtime/result_cap.py",
@@ -81,6 +84,7 @@ _REFERENCE_JSON_CACHE: dict[str, Any] = {}
 _COUNTRY_CROSSWALK_CACHE: dict[tuple[str, str], dict | None] = {}
 _COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str, str], Any] = {}
 _GLOBAL_COUNTRIES_CACHE = None
+_GLOBAL_COUNTRY_DISPLAY_CACHE = None
 _WORLD_FACTBOOK_STATIC_CACHE = None
 
 def _parquet_accessible(path: Path) -> bool:
@@ -362,7 +366,7 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
 
 
 def load_global_countries_frame():
-    """Load the shared global country geometry helper file."""
+    """Load the exact global country geometry used by query paths."""
     global _GLOBAL_COUNTRIES_CACHE
     if _GLOBAL_COUNTRIES_CACHE is not None:
         return _GLOBAL_COUNTRIES_CACHE
@@ -402,6 +406,43 @@ def load_global_countries_frame():
 
     logger.warning(f"global.csv not found at {global_file}")
     return None
+
+
+def load_global_country_display_frame():
+    """Load the bounded Admin0 Display artifact used by interactive maps.
+
+    Exact global geometry is a compatibility fallback only. Keeping this loader
+    separate prevents display simplification from leaking into spatial queries.
+    """
+    global _GLOBAL_COUNTRY_DISPLAY_CACHE
+    if _GLOBAL_COUNTRY_DISPLAY_CACHE is not None:
+        return _GLOBAL_COUNTRY_DISPLAY_CACHE
+
+    display_file = GEOMETRY_DIR / "display" / "admin_0.parquet"
+    try:
+        if display_file.exists():
+            base = pd.read_parquet(display_file)
+        elif is_cloud_mode():
+            raw = read_artifact_bytes("geometry/display/admin_0.parquet", lane="published")
+            base = pd.read_parquet(BytesIO(raw))
+        else:
+            base = None
+
+        if base is not None:
+            existing_loc_ids = set(base["loc_id"].dropna().astype(str).str.strip().str.upper()) if "loc_id" in base.columns else set()
+            supplemental = _load_supplemental_admin0_frame(list(base.columns), existing_loc_ids)
+            _GLOBAL_COUNTRY_DISPLAY_CACHE = pd.concat([base, supplemental], ignore_index=True) if not supplemental.empty else base
+            logger.info(
+                "Loaded %d countries from Admin0 Display bootstrap plus %d supplemental rows",
+                len(_GLOBAL_COUNTRY_DISPLAY_CACHE),
+                len(supplemental),
+            )
+            return _GLOBAL_COUNTRY_DISPLAY_CACHE
+    except Exception as e:
+        logger.warning("Failed to load Admin0 Display bootstrap: %s", e)
+
+    logger.warning("Admin0 Display bootstrap unavailable; falling back to exact global geometry")
+    return load_global_countries_frame()
 
 
 def load_world_factbook_static_frame():

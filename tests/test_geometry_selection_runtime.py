@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,8 @@ from mapmover.geometry_handlers import (
     _load_subcounty_rows_by_loc_ids,
     _direct_family_bank_path,
     df_to_geojson,
+    get_countries_in_bbox,
+    get_geometry_index,
     get_selection_geometries,
     load_subcounty_geometry,
     load_geometry_rows_by_loc_ids,
@@ -19,6 +22,50 @@ from mapmover.geometry_handlers import (
 
 
 class GeometrySelectionRuntimeTests(unittest.TestCase):
+    def test_country_shortlist_checks_near_global_bounds_against_display_shape(self):
+        display = pd.DataFrame([{
+            "loc_id": "RUS",
+            "geometry": json.dumps(box(30.0, 45.0, 180.0, 80.0).__geo_interface__),
+        }])
+        with patch(
+            "mapmover.geometry_handlers.load_country_bounds",
+            return_value={"RUS": (-180.0, 41.0, 180.0, 82.0)},
+        ), patch(
+            "mapmover.geometry_handlers.load_global_country_display_frame",
+            return_value=display,
+        ):
+            result = get_countries_in_bbox(-140.0, 45.0, -60.0, 75.0)
+
+        self.assertEqual([], result)
+
+    def test_admin_index_keeps_country_rows_without_bbox_metadata(self):
+        canada = pd.DataFrame([
+            {"loc_id": "CAN-ON", "parent_id": "CAN", "admin_level": 1},
+        ])
+        outside = pd.DataFrame([{
+            "loc_id": "USA-CA",
+            "parent_id": "USA",
+            "admin_level": 1,
+            "bbox_min_lon": -125.0,
+            "bbox_min_lat": 32.0,
+            "bbox_max_lon": -114.0,
+            "bbox_max_lat": 42.0,
+        }])
+
+        def viewport_rows(iso3, *_args, **_kwargs):
+            return canada if iso3 == "CAN" else outside
+
+        with patch(
+            "mapmover.geometry_handlers.get_countries_in_bbox",
+            return_value=["CAN", "USA"],
+        ), patch(
+            "mapmover.geometry_handlers.load_country_parquet_viewport",
+            side_effect=viewport_rows,
+        ):
+            result = get_geometry_index(admin_level=1, bbox=(-90.0, 45.0, -70.0, 60.0))
+
+        self.assertEqual(["CAN-ON"], [row["loc_id"] for row in result["rows"]])
+
     def test_deep_partition_reads_canonical_country_geometry_root(self):
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

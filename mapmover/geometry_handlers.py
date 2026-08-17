@@ -33,6 +33,7 @@ from .paths import COUNTRY_GEOMETRY_DIR, GEOMETRY_DIR, DATA_ROOT, COUNTRIES_DIR
 from .duckdb_helpers import is_cloud_mode, parquet_columns, select_rows
 from .foundation_helpers import (
     load_country_crosswalk,
+    load_global_country_display_frame,
     load_global_countries_frame,
     load_reference_json,
     load_world_factbook_static_frame,
@@ -1039,7 +1040,7 @@ def load_country_bounds():
 
     _country_bounds_cache = {}
 
-    df = load_global_countries_frame()
+    df = load_global_country_display_frame()
     if df is None:
         return _country_bounds_cache
 
@@ -1099,7 +1100,7 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
     else:
         target_level = admin_level if admin_level is not None else 0
         if target_level == 0:
-            df = load_global_countries_frame()
+            df = load_global_country_display_frame()
         elif target_level >= 3 and bbox is not None:
             countries = get_countries_in_bbox(*bbox)
             frames = []
@@ -1134,21 +1135,27 @@ def get_geometry_index(parent_loc_id: str | None = None, admin_level: int | None
     if bbox is not None and df is not None and not df.empty:
         min_lon, min_lat, max_lon, max_lat = bbox
         if all(col in df.columns for col in ["bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat"]):
-            mask = (
+            has_bbox = df[["bbox_min_lon", "bbox_max_lon", "bbox_min_lat", "bbox_max_lat"]].notna().all(axis=1)
+            intersects = (
                 (df["bbox_max_lon"] >= min_lon) &
                 (df["bbox_min_lon"] <= max_lon) &
                 (df["bbox_max_lat"] >= min_lat) &
                 (df["bbox_min_lat"] <= max_lat)
             )
-            df = df[mask]
+            # Country Display banks are not yet schema-identical. Some (for
+            # example CAN) intentionally omit bbox metadata. After frames are
+            # concatenated, those rows carry NaNs and must stay eligible;
+            # treating NaN as non-intersection silently removed the country.
+            df = df[~has_bbox | intersects]
         elif "centroid_lon" in df.columns and "centroid_lat" in df.columns:
-            mask = (
+            has_centroid = df[["centroid_lon", "centroid_lat"]].notna().all(axis=1)
+            inside = (
                 (df["centroid_lon"] >= min_lon) &
                 (df["centroid_lon"] <= max_lon) &
                 (df["centroid_lat"] >= min_lat) &
                 (df["centroid_lat"] <= max_lat)
             )
-            df = df[mask]
+            df = df[~has_centroid | inside]
 
     index_columns = GEOMETRY_INDEX_COLUMNS
     available = [col for col in index_columns if col in df.columns]
@@ -1168,11 +1175,33 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
     """
     bounds = load_country_bounds()
     result = []
+    broad_country_rows = None
+    viewport_polygon = None
 
     for iso3, (c_min_lon, c_min_lat, c_max_lon, c_max_lat) in bounds.items():
         # Check bbox intersection
         if (c_max_lon >= min_lon and c_min_lon <= max_lon and
             c_max_lat >= min_lat and c_min_lat <= max_lat):
+            # Multi-part countries spanning the antimeridian or distant
+            # territories can have an almost-worldwide bounding box. Confirm
+            # those coarse candidates against the Display polygon so Russia,
+            # France, or the USA do not make every mid-latitude viewport load
+            # unrelated country banks.
+            if c_max_lon - c_min_lon >= 300:
+                try:
+                    from shapely.geometry import box, shape
+
+                    if broad_country_rows is None:
+                        broad_country_rows = load_global_country_display_frame()
+                        viewport_polygon = box(min_lon, min_lat, max_lon, max_lat)
+                    row = broad_country_rows[broad_country_rows["loc_id"] == iso3]
+                    if not row.empty:
+                        raw_geometry = row.iloc[0].get("geometry")
+                        geometry = shape(json.loads(raw_geometry) if isinstance(raw_geometry, str) else raw_geometry)
+                        if not geometry.intersects(viewport_polygon):
+                            continue
+                except Exception:
+                    logger.debug("Display-polygon country shortlist failed for %s", iso3, exc_info=True)
             result.append(iso3)
 
     return result
@@ -2311,9 +2340,9 @@ def get_location_info(loc_id: str):
         "family": family,
     }
 
-    # For country level, check global.csv first
+    # Country metadata is available in the bounded Display bootstrap.
     if len(parts) == 1:
-        df = load_global_countries_frame()
+        df = load_global_country_display_frame()
         if df is not None:
             location = df[df["loc_id"] == loc_id]
             if len(location) > 0:
@@ -3215,9 +3244,9 @@ def get_viewport_geometry(admin_level: int, bbox: tuple, debug: bool = False):
         max_lat + buffer_lat
     )
 
-    # For level 0 (countries), just return from global.csv
+    # Level 0 is an interactive map payload, so use Display geometry.
     if admin_level == 0:
-        df = load_global_countries_frame()
+        df = load_global_country_display_frame()
         if df is None:
             return {"type": "FeatureCollection", "features": []}
 
@@ -3376,7 +3405,7 @@ def clear_cache():
 
 
 def prewarm_geometry() -> None:
-    """Pre-warm the global countries CSV into memory.
+    """Pre-warm the global country Display geometry into memory.
 
     The global country layer is always warm.  In cloud mode the USA county
     bank is also warmed because live NWS frames repeatedly resolve county ids;
@@ -3389,14 +3418,14 @@ def prewarm_geometry() -> None:
 
     t0 = _time.monotonic()
     try:
-        df = load_global_countries_frame()
+        df = load_global_country_display_frame()
         elapsed = _time.monotonic() - t0
         if df is not None and not df.empty:
-            logger.info("prewarm geometry global CSV: %d rows in %.1fs", len(df), elapsed)
+            logger.info("prewarm geometry Admin0 Display: %d rows in %.1fs", len(df), elapsed)
         else:
-            logger.warning("prewarm geometry global CSV: empty result in %.1fs", elapsed)
+            logger.warning("prewarm geometry Admin0 Display: empty result in %.1fs", elapsed)
     except Exception as exc:
-        logger.warning("prewarm geometry global CSV failed: %s", exc)
+        logger.warning("prewarm geometry Admin0 Display failed: %s", exc)
 
     # NWS is the only current live feed with a bounded, repeatedly reused
     # national administrative geometry set.  Loading the exact county bank
@@ -3461,9 +3490,23 @@ def get_selection_geometries(loc_ids: list):
             marine_geojson = df_to_geojson(marine_df, polygon_only=True)
             features.extend(marine_geojson.get("features", []))
 
-    # Group by country (first part of loc_id) for efficient loading
+    # Resolve all country roots in one pass. The world-view Admin Layers load
+    # requests every Admin0 id together; filtering and converting the shared
+    # display frame once avoids repeating that work for each country.
+    country_level_ids = [loc_id for loc_id in remaining_ids if "-" not in loc_id]
+    if country_level_ids:
+        global_df = load_global_country_display_frame()
+        if global_df is not None:
+            country_rows = global_df[global_df["loc_id"].isin(country_level_ids)]
+            if len(country_rows) > 0:
+                country_geojson = df_to_geojson(country_rows, polygon_only=True)
+                features.extend(country_geojson.get("features", []))
+
+    # Group sub-country ids by country for efficient display-bank loading.
     by_country = {}
     for loc_id in remaining_ids:
+        if loc_id in country_level_ids:
+            continue
         parts = loc_id.split("-")
         iso3 = parts[0]
         if iso3 not in by_country:
@@ -3472,9 +3515,7 @@ def get_selection_geometries(loc_ids: list):
 
     # For each country, load parquet and filter to requested loc_ids
     for iso3, country_loc_ids in by_country.items():
-        # Check if any are country-level (just the ISO3 code)
-        country_level_ids = [lid for lid in country_loc_ids if lid == iso3]
-        sub_level_ids = [lid for lid in country_loc_ids if lid != iso3]
+        sub_level_ids = list(country_loc_ids)
         deep_level_ids = []
         regular_sub_level_ids = []
         if sub_level_ids:
@@ -3489,15 +3530,6 @@ def get_selection_geometries(loc_ids: list):
                     deep_level_ids.append(lid)
                 else:
                     regular_sub_level_ids.append(lid)
-
-        # Fetch country-level from global.csv
-        if country_level_ids:
-            global_df = load_global_countries_frame()
-            if global_df is not None:
-                country_rows = global_df[global_df["loc_id"].isin(country_level_ids)]
-                if len(country_rows) > 0:
-                    country_geojson = df_to_geojson(country_rows, polygon_only=True)
-                    features.extend(country_geojson.get("features", []))
 
         # Fetch canonical deep sub-country levels from the existing subcounty geometry system.
         if deep_level_ids:

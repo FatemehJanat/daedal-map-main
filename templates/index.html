@@ -111,9 +111,11 @@
       // The measurement ID is the same one www and downloads use. The app
       // previously had its own (G-NLHFVYWW9T), which meant a visitor clicking
       // from the marketing site into the app started a brand new session and
-      // showed up as a daedalmap.com self-referral. One ID plus the linker
-      // domains below keeps that one session; the hostName dimension is what
-      // separates the surfaces again in reporting.
+      // showed up as a daedalmap.com self-referral. The shared measurement ID
+      // and parent-domain GA cookie preserve sessions across these subdomains.
+      // Do not configure the cross-domain linker here: these hosts share the
+      // same registrable domain, and linker decoration leaks GA's _gl value
+      // into otherwise clean app URLs.
       //
       // dm_no_ga / visitor identity live in dm-visitor.js, which is loaded in
       // <head> and is a generated copy of the private site's canonical file.
@@ -122,9 +124,7 @@
         window.gtag = function gtag(){ window.dataLayer.push(arguments); };
         window.gtag('js', new Date());
         window.gtag('set', window.dmVisitor.gaParams());
-        window.gtag('config', 'G-WTF95W3759', {
-          linker: { domains: ['daedalmap.com', 'www.daedalmap.com', 'app.daedalmap.com', 'downloads.daedalmap.com'], accept_incoming: true }
-        });
+        window.gtag('config', 'G-WTF95W3759');
         loadScriptWithFallback(
           'https://www.googletagmanager.com/gtag/js?id=G-WTF95W3759',
           null

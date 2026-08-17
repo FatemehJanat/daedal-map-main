@@ -33,6 +33,7 @@ export function setDependencies(deps) {
 
 export const ViewportLoader = {
   loadTimeout: null,
+  loadResolve: null,
   currentAdminLevel: 0,
   enabled: true,  // Always enabled - viewport is the only navigation mode
   orderMode: false,  // When true, viewport loading is suspended (order data is displayed)
@@ -266,12 +267,30 @@ export const ViewportLoader = {
    * Uses short debounce (300ms) to batch rapid viewport changes
    */
   async load(adminLevel) {
-    if (this.loadTimeout) clearTimeout(this.loadTimeout);
+    if (this.loadTimeout) {
+      clearTimeout(this.loadTimeout);
+      this.loadTimeout = null;
+      this.loadResolve?.(false);
+      this.loadResolve = null;
+    }
 
-    // Short debounce to batch rapid changes, but responsive enough to feel instant
-    this.loadTimeout = setTimeout(async () => {
-      await this.doLoad(adminLevel);
-    }, 300);
+    // Return the actual load promise. Overlay activation awaits this method
+    // before reporting how many shapes are visible; previously it awaited only
+    // the debounce setup and immediately announced "Loaded 0 items".
+    return new Promise((resolve) => {
+      this.loadResolve = resolve;
+      this.loadTimeout = setTimeout(async () => {
+        this.loadTimeout = null;
+        this.loadResolve = null;
+        try {
+          await this.doLoad(adminLevel);
+          resolve(true);
+        } catch (error) {
+          console.error('Viewport geometry load failed:', error);
+          resolve(false);
+        }
+      }, CONFIG.viewport.debounceMs || 300);
+    });
   },
 
   /**
@@ -282,19 +301,20 @@ export const ViewportLoader = {
     let missingLocIds = [];
     let requestKey = null;
 
-    // Only abort if the admin level is CHANGING (not just panning within same level)
-    // This prevents cancelling slow-loading levels like blocks when user pans
-    const levelChanged = this.lastRequestedLevel !== null && this.lastRequestedLevel !== adminLevel;
-    if (this.abortController && levelChanged) {
+    // A newer viewport always supersedes the old one, including a same-level
+    // pan. Letting both continue can download and decode hundreds of polygons
+    // for a viewport the user has already left.
+    if (this.abortController) {
       this.abortController.abort();
-      console.log(`Level changed ${this.lastRequestedLevel} -> ${adminLevel}, cancelling previous request`);
+      console.log(`Viewport changed, cancelling previous level ${this.lastRequestedLevel} request`);
     }
 
     // Track which level we're requesting
     this.lastRequestedLevel = adminLevel;
 
     // Create new abort controller for this request
-    this.abortController = new AbortController();
+    const requestController = new AbortController();
+    this.abortController = requestController;
     const thisRequestId = ++this.requestId;
 
     const bounds = MapAdapter.map.getBounds();
@@ -335,7 +355,7 @@ export const ViewportLoader = {
     try {
       const indexUrl = `/geometry/index?admin_level=${adminLevel}&bbox=${indexBbox}`;
       console.log(`[${thisRequestId}] Fetching geometry index level ${adminLevel}`);
-      const indexData = await fetchMsgpack(indexUrl, { signal: this.abortController.signal });
+      const indexData = await fetchMsgpack(indexUrl, { signal: requestController.signal });
       const requestedLocIds = (indexData.rows || [])
         .map((row) => row.loc_id)
         .filter(Boolean);
@@ -370,7 +390,7 @@ export const ViewportLoader = {
         const batchData = await postMsgpack(
           '/geometry/selection',
           { loc_ids: batch },
-          { signal: this.abortController.signal }
+          { signal: requestController.signal }
         );
         if (batchData.features?.length) features.push(...batchData.features);
         if (thisRequestId !== this.requestId || adminLevel !== this.currentAdminLevel) break;

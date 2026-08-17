@@ -1,4 +1,12 @@
 export const SURFACE_MESSAGE_PROFILES = {
+  admin_layers: {
+    label: 'Admin Layers',
+    singular: 'boundary',
+    plural: 'boundaries',
+    exploreActiveDescription: 'published administrative geometry for this viewport',
+    exploreHints: 'Move or zoom the map to cross between global and country-level detail.',
+    exploreExamples: ['show administrative boundaries in Canada', 'zoom into local boundaries'],
+  },
   earthquakes: {
     label: 'Earthquakes',
     singular: 'earthquake',

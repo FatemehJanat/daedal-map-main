@@ -154,6 +154,12 @@ export function setDependencies(deps) {
 }
 
 function getLoadedOverlayCount(overlayId) {
+  if (overlayId === 'admin_layers') {
+    const visibleCountText = globalThis.document?.getElementById?.('totalAreas')?.textContent;
+    const visibleCount = Number.parseInt(String(visibleCountText ?? '').replace(/,/g, ''), 10);
+    return Number.isFinite(visibleCount) && visibleCount >= 0 ? visibleCount : null;
+  }
+
   const featureCount = dataCache[overlayId]?.features?.length;
   if (Number.isFinite(featureCount)) {
     return featureCount;
