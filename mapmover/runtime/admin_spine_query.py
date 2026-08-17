@@ -106,8 +106,17 @@ def _row_dict(row: tuple) -> dict[str, Any]:
     return dict(zip(names, row))
 
 
-def resolve_point(iso3: str, lon: float, lat: float) -> dict[str, Any] | None:
-    """Resolve one point through the national Admin0-3 file and one owner file."""
+def resolve_point(
+    iso3: str, lon: float, lat: float, *, target_admin_level: int | None = None,
+) -> dict[str, Any] | None:
+    """Resolve one point through the national Admin0-3 file and one owner file.
+
+    ``target_admin_level`` bounds the work, it does not just filter the answer.
+    The national ``admin_0_3.parquet`` already covers Admin 0-3, so a request
+    that stops at or above Admin 3 never opens the deep per-Admin1 partition -
+    the expensive read in this path. Callers asking for country, state, or
+    county geography are the common case, and they now skip it entirely.
+    """
     iso3 = str(iso3 or "").strip().upper()
     if not layout_available(iso3):
         return None
@@ -126,7 +135,8 @@ def resolve_point(iso3: str, lon: float, lat: float) -> dict[str, Any] | None:
         admin1, admin3 = str(anchor[5] or ""), str(anchor[7] or "")
         deep: list[tuple[tuple, bytes, float]] = []
         deep_path = root / "deep" / f"{admin1}.parquet"
-        if admin3 and (is_cloud_mode() or deep_path.is_file()):
+        needs_deep = target_admin_level is None or int(target_admin_level) > 3
+        if needs_deep and admin3 and (is_cloud_mode() or deep_path.is_file()):
             deep_meta = _metadata(connection, deep_path, lon, lat, admin3)
             deep = _exact_rows(connection, deep_path, deep_meta, lon, lat)
             deep.sort(key=lambda item: (int(item[0][2]), -item[2], str(item[0][0])))
