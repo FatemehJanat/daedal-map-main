@@ -477,6 +477,10 @@ def estimate_geometry_package(
             "free_allowance": {"geometry_export_loc_ids": execution_limit, "unrestricted_local_runtime": execution_limit is None},
             "charge_units": max(1, math.ceil(available_count / 10)) if include_polygon else max(1, math.ceil(len(loc_ids) / 100)),
             "pricing_version": "geometry-tools-v0",
+            "quote": _charge_quote(
+                "create_geometry_export",
+                max(1, math.ceil(available_count / 10)) if include_polygon else max(1, math.ceil(len(loc_ids) / 100)),
+            ),
             "scope": scope_result,
             "create_call": {
                 "tool": "create_geometry_export",
@@ -495,6 +499,28 @@ def estimate_geometry_package(
             )["guidance"],
         }
     )
+
+
+def _charge_quote(tool_name: str, charge_units: int) -> dict[str, Any]:
+    """Attach a price to the charge-unit meter this module already computes.
+
+    The meter predates the price: charge_units has been reported since
+    geometry-tools-v0 with no rate behind it, so the heaviest tools were served
+    free. Rates live in tool_access_shared.TOOL_ACCESS_REGISTRY and are
+    environment-overridable, so this stays a lever.
+    """
+    from tool_access_shared import tool_quote
+
+    quote = tool_quote(tool_name, int(charge_units), free_limit=0)
+    return {
+        "charge_units": int(charge_units),
+        "base_usd": quote["base_usd"],
+        "per_unit_usd": quote["per_item_usd"],
+        "estimated_price_usd": quote["estimated_price_usd"],
+        "price_display": f"${quote['estimated_price_usd']:.4f}",
+        "pricing_version": "geometry-tools-v0",
+    }
+
 
 
 def _new_job(
@@ -819,6 +845,7 @@ def estimate_conversion_job(
             "execution_limit": execution_limit,
             "charge_units": max(1, math.ceil(row_count / 100)),
             "pricing_version": "geometry-tools-v0",
+            "quote": _charge_quote("create_conversion_job", max(1, math.ceil(row_count / 100))),
             "resolution_plan": {
                 "mode": "known_identifier_crosswalk" if binding else "declared_reference_resolution",
                 "geography_binding": binding,

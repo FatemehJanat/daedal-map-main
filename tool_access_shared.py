@@ -177,10 +177,15 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "pricing": PRICING_FREE,
         "notes": "Quotes must stay free; this is the measurable boundary before any charge.",
     },
+    # Charge-unit priced: geometry_tool_jobs already computes charge_units
+    # (one unit per 10 polygons, or per 100 metadata rows). These rates attach a
+    # price to that existing meter. Estimates stay free; only creation bills.
     "create_geometry_export": {
+        "price": {"base_usd": 0.01, "per_item_usd": 0.004},
+        "charge_unit": "charge_units",
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "geometry_export",
-        "pricing": PRICING_FREE,
+        "pricing": PRICING_PAID_BULK,
         "inline_item_limit": 250,
         "legacy_limit_env": ("GEOMETRY_EXPORT_INLINE_LIMIT",),
     },
@@ -191,9 +196,11 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "notes": "Quotes must stay free.",
     },
     "create_conversion_job": {
+        "price": {"base_usd": 0.01, "per_item_usd": 0.002},
+        "charge_unit": "charge_units",
         "family": FAMILY_GEOGRAPHY,
         "capability_id": "conversion_job",
-        "pricing": PRICING_FREE,
+        "pricing": PRICING_PAID_BULK,
         "inline_item_limit": 7500,
         "legacy_limit_env": ("CONVERSION_JOB_INLINE_LIMIT",),
     },
@@ -355,6 +362,16 @@ def tool_quote(tool_name: str, item_count: int, free_limit: int | None = None) -
         "estimated_price_usd": round(total, 6),
         "item_limit": tool_paid_item_limit(tool_name),
     }
+
+
+def tool_charge_unit(tool_name: str) -> str:
+    """Name of the response field this tool bills on, if it is unit-metered.
+
+    Export and conversion tools bill per charge unit (one per 10 polygons, or
+    per 100 rows) rather than per requested item, because their cost tracks
+    payload produced rather than arguments supplied.
+    """
+    return str(tool_profile(tool_name).get("charge_unit") or "").strip()
 
 
 def tool_inline_item_limit(tool_name: str) -> int | None:
