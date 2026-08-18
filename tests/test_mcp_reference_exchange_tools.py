@@ -11,7 +11,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from mapmover.runtime.reference_exchange import get_geometry_availability, get_geometry_references
-from mapmover.routes.mcp import _tool_rate_limit_for_tier, _tool_result, router as mcp_router
+from mapmover.routes.mcp import (
+    _jsonrpc_response,
+    _tool_rate_limit_for_tier,
+    _tool_result,
+    router as mcp_router,
+)
 
 
 def _mcp_call(client: TestClient, method: str, params: dict | None = None, *, path: str = "/mcp/geography", headers: dict | None = None) -> dict:
@@ -96,6 +101,39 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertIn("Large structured MCP result", text)
         self.assertIn("structuredContent", text)
         self.assertNotIn("x" * 200, text)
+
+    def test_non_finite_numbers_do_not_break_the_tool_result(self) -> None:
+        # Geometry banks carry rows with no measured centroid or bbox. Those
+        # arrive as NaN, and Starlette renders with allow_nan=False, so an
+        # unsanitized payload returned a 500 instead of the row.
+        payload = {
+            "request_id": "nan-test",
+            "name": "Australian Capital Territory",
+            "centroid": {"lon": float("nan"), "lat": float("nan")},
+            "bbox": [float("nan"), 1.5, float("inf"), float("-inf")],
+            "rows": [{"area": float("nan")}, {"area": 2.5}],
+            "children_count": 9,
+        }
+
+        result = _tool_result(payload)
+        structured = result["structuredContent"]
+
+        self.assertIsNone(structured["centroid"]["lon"])
+        self.assertIsNone(structured["centroid"]["lat"])
+        self.assertEqual(structured["bbox"], [None, 1.5, None, None])
+        self.assertEqual(structured["rows"], [{"area": None}, {"area": 2.5}])
+        self.assertEqual(structured["name"], "Australian Capital Territory")
+        self.assertEqual(structured["children_count"], 9)
+        # Both copies must survive a strict parser.
+        json.loads(json.dumps(structured, allow_nan=False))
+        json.loads(result["content"][0]["text"])
+
+    def test_jsonrpc_envelope_renders_non_finite_numbers(self) -> None:
+        response = _jsonrpc_response(_tool_result({"bbox": [float("nan")]}), "test-1")
+
+        decoded = json.loads(response.body)
+
+        self.assertEqual(decoded["result"]["structuredContent"]["bbox"], [None])
 
     def test_geometry_family_help_explains_workflows_and_per_tool_help(self) -> None:
         with mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock:

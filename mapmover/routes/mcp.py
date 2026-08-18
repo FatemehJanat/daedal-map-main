@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import numbers
 import time
 import uuid
 from typing import Any
@@ -1035,12 +1037,34 @@ def _mcp_origin_allowed(request: Request) -> bool:
     return origin in set(get_allowed_origins())
 
 
+def _json_safe(value: Any) -> Any:
+    """Replace non-finite floats so strict JSON encoding cannot fail.
+
+    Starlette renders with allow_nan=False, so a single NaN or infinity
+    anywhere in a payload raises and the caller sees a 500 instead of the
+    result. Geometry banks legitimately carry missing numerics - a row with no
+    measured land area, an identity with no centroid - so those become null
+    rather than failing the whole response. Non-float reals are normalized
+    through float() because numpy scalars are not JSON serializable either.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, numbers.Real) and not isinstance(value, (int, bool)):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+    return value
+
+
 def _jsonrpc_response(result: dict[str, Any], request_id: Any) -> JSONResponse:
     response = JSONResponse(
         {
             "jsonrpc": "2.0",
             "id": request_id,
-            "result": result,
+            "result": _json_safe(result),
         }
     )
     response.headers["MCP-Protocol-Version"] = MCP_PROTOCOL_VERSION
@@ -1051,7 +1075,7 @@ def _jsonrpc_response(result: dict[str, Any], request_id: Any) -> JSONResponse:
 def _jsonrpc_error(request_id: Any, code: int, message: str, *, data: dict[str, Any] | None = None, status_code: int = 200) -> JSONResponse:
     error: dict[str, Any] = {"code": code, "message": message}
     if data:
-        error["data"] = data
+        error["data"] = _json_safe(data)
     response = JSONResponse(
         {
             "jsonrpc": "2.0",
@@ -1131,6 +1155,10 @@ def _tool_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
     if isinstance(payload, dict) and not is_error and "provenance" not in payload:
         payload = {**payload, "provenance": _provenance_summary(payload)}
     payload = _with_agent_safety(payload, surface="tool_result") if not is_error else payload
+    # Sanitize before serializing so the text copy and structuredContent agree.
+    # json.dumps below allows NaN by default and would emit bare NaN tokens that
+    # no strict JSON parser accepts.
+    payload = _json_safe(payload)
     if isinstance(payload, (dict, list)):
         payload_bytes = _json_size_bytes(payload) or 0
         if payload_bytes > _mcp_text_inline_limit_bytes():
