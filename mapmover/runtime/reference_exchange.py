@@ -225,6 +225,43 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
     system["exchange_status"] = "no_bridge_artifact"
 
 
+def _resolve_eez_by_country(text: str) -> dict[str, Any] | None:
+    """Resolve a country name or ISO3 code to its maintained EEZ.
+
+    EEZ ids carry the owning ISO3, so the country crosswalk already answers
+    this; only the name-to-code step was missing. Returns the sovereign zone
+    and lists any dependency zones separately rather than guessing between
+    them - Australia owns five, and picking one silently would be wrong.
+    """
+    from .geography_reference import load_country_name_to_iso3_map
+
+    candidate = str(text or "").strip()
+    if not candidate:
+        return None
+    iso3 = candidate.upper() if len(candidate) == 3 and candidate.isalpha() else ""
+    if not iso3:
+        iso3 = str(load_country_name_to_iso3_map().get(candidate.casefold(), "")).upper()
+    if not iso3:
+        return None
+
+    catalog = load_geometry_catalog()
+    objects = {
+        str(entry.get("loc_id")): entry
+        for entry in catalog.get("named_reference_objects") or []
+        if isinstance(entry, dict) and str(entry.get("family")) == "marine_eez"
+    }
+    primary = objects.get(f"EEZ-{iso3}")
+    if not primary:
+        return None
+    return {
+        "loc_id": primary.get("loc_id"),
+        "label": primary.get("label"),
+        "family": "marine_eez",
+        "country_iso3": iso3,
+        "resolved_from": "country_iso3_crosswalk",
+    }
+
+
 def list_reference_systems() -> dict[str, Any]:
     """Return the currently discoverable reference systems and bridges."""
     catalog = load_geometry_catalog()
@@ -606,6 +643,33 @@ def resolve_reference(
                 "resolved_family": named.get("family") or classify_loc_id_family(named.get("loc_id")),
                 "match_type": "named_geometry",
                 "match": named,
+            })
+        if system == "marine_eez":
+            # EEZ ids are ISO3-suffixed, but the bank labels them "Australian
+            # Exclusive Economic Zone" with no aliases, so a country name never
+            # matches by name. Resolve the country first, then the zone.
+            eez = _resolve_eez_by_country(text)
+            if eez:
+                return _clean_json({
+                    "ok": True,
+                    "from_system": system,
+                    "input": value,
+                    "resolved_loc_id": eez["loc_id"],
+                    "resolved_family": "marine_eez",
+                    "match_type": "country_to_eez",
+                    "match": eez,
+                })
+            # Never echo the input back as a loc_id. A fabricated identifier is
+            # worse than a refusal because the caller cannot tell it apart from
+            # a real one until it fails downstream.
+            return _clean_json({
+                "ok": False,
+                "from_system": system,
+                "input": value,
+                "error": {
+                    "code": "marine_eez_not_found",
+                    "message": "no maintained EEZ matched that name, country, or ISO3 code",
+                },
             })
         return _clean_json(_direct_loc_id_result(text, request_system=system))
 
