@@ -240,6 +240,49 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
 
         self.assertEqual(artifacts, [artifact])
 
+    def test_listed_systems_declare_whether_they_are_actually_exchangeable(self) -> None:
+        listing = list_reference_systems()
+        systems = {row["system"]: row for row in listing["systems"]}
+        bridged = {str(row.get("source_system") or "") for row in listing["bridges"]}
+
+        for system in systems.values():
+            self.assertIn("exchangeable", system, f"{system['system']} must declare exchangeability")
+
+        self.assertTrue(systems[LOC_ID_SYSTEM]["exchangeable"])
+        self.assertEqual(systems[LOC_ID_SYSTEM]["exchange_via"], "reserve")
+        self.assertTrue(systems["us_census_geoid"]["exchangeable"])
+
+        for name in bridged:
+            if name in systems:
+                self.assertTrue(systems[name]["exchangeable"], f"{name} owns a bridge and must be exchangeable")
+                self.assertEqual(systems[name]["exchange_via"], "bridge_artifact")
+
+        # A family with no bridge and no self-resolving resolver cannot be
+        # converted, so it must not be advertised as if it could be.
+        for system in systems.values():
+            if system.get("exchangeable"):
+                continue
+            self.assertNotIn(system["system"], bridged)
+            self.assertIsNone(system["exchange_via"])
+            self.assertEqual(system["exchange_status"], "no_bridge_artifact")
+
+        self.assertEqual(
+            listing["exchangeable_count"] + listing["listed_only_count"],
+            listing["system_count"],
+        )
+
+    def test_self_resolving_families_stay_exchangeable_without_a_bridge(self) -> None:
+        listing = list_reference_systems()
+        systems = {row["system"]: row for row in listing["systems"]}
+        bridged = {str(row.get("source_system") or "") for row in listing["bridges"]}
+
+        for name in ("water_body", "admin_boundary"):
+            if name not in systems:
+                continue
+            self.assertNotIn(name, bridged)
+            self.assertTrue(systems[name]["exchangeable"])
+            self.assertEqual(systems[name]["exchange_via"], "self_resolving_geometry")
+
 
 class ReferenceExchangeRouteTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -184,6 +184,47 @@ def _normalize_source_loc_id(source_family: str, value: str, iso3: str) -> str:
     return text
 
 
+"""Resolvers that reach loc_id on their own, without a bridge artifact.
+
+A family carrying one of these answers name and point lookups directly, so it
+stays exchangeable even though it owns no bridge row. Every other geometry or
+reference-graph family needs a built bridge before a conversion can succeed.
+"""
+SELF_RESOLVING_RESOLVERS = frozenset({
+    "named geometry catalog",
+    "admin geometry name and point resolver",
+})
+
+_ALWAYS_EXCHANGEABLE_ROLES = frozenset({"reserve", "exact_identifier_system"})
+
+
+def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> None:
+    """Record whether a listed system can actually be converted through loc_id.
+
+    Listing a family the conversion tools will refuse sends agents into
+    guaranteed failures, so state the resolution path instead of implying one
+    exists for everything in the catalog.
+    """
+    role = str(system.get("role") or "")
+    resolver = str(system.get("resolver") or "").strip().lower()
+    name = str(system.get("system") or "")
+    if role in _ALWAYS_EXCHANGEABLE_ROLES:
+        system["exchangeable"] = True
+        system["exchange_via"] = "reserve" if role == "reserve" else "exact_identifier_crosswalk"
+        return
+    if name in bridged_systems:
+        system["exchangeable"] = True
+        system["exchange_via"] = "bridge_artifact"
+        return
+    if resolver in SELF_RESOLVING_RESOLVERS:
+        system["exchangeable"] = True
+        system["exchange_via"] = "self_resolving_geometry"
+        return
+    system["exchangeable"] = False
+    system["exchange_via"] = None
+    system["exchange_status"] = "no_bridge_artifact"
+
+
 def list_reference_systems() -> dict[str, Any]:
     """Return the currently discoverable reference systems and bridges."""
     catalog = load_geometry_catalog()
@@ -236,12 +277,14 @@ def list_reference_systems() -> dict[str, Any]:
         pass
 
     bridges = []
+    bridged_systems: set[str] = set()
     for artifact in catalog.get("bridge_artifacts") or []:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
             continue
         source = str(artifact.get("source_family") or "").strip()
         level = str(artifact.get("target_admin_level") or "").strip()
         if source:
+            bridged_systems.add(source)
             systems.setdefault(source, {
                 "system": source,
                 "label": source.replace("_", " ").title(),
@@ -259,7 +302,26 @@ def list_reference_systems() -> dict[str, Any]:
             "artifact_path": artifact.get("artifact_path"),
             "license": artifact.get("source_license"),
         })
-    return _clean_json({"ok": True, "reserve_system": LOC_ID_SYSTEM, "systems": list(systems.values()), "bridges": bridges})
+
+    for system in systems.values():
+        _mark_exchangeability(system, bridged_systems)
+    ordered = sorted(systems.values(), key=lambda row: (not row.get("exchangeable"), str(row.get("system") or "")))
+    exchangeable_count = sum(1 for row in ordered if row.get("exchangeable"))
+    return _clean_json({
+        "ok": True,
+        "reserve_system": LOC_ID_SYSTEM,
+        "systems": ordered,
+        "system_count": len(ordered),
+        "exchangeable_count": exchangeable_count,
+        "listed_only_count": len(ordered) - exchangeable_count,
+        "exchangeability_note": (
+            "A system is exchangeable only when it has a real resolution path: the loc_id reserve, an exact "
+            "identifier crosswalk, a self-resolving named or admin geometry resolver, or a complete bridge "
+            "artifact to loc_id. Systems with exchangeable=false are discoverable geometry or reference-graph "
+            "families with no built bridge; resolve_reference and convert_reference will refuse them."
+        ),
+        "bridges": bridges,
+    })
 
 
 def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
