@@ -283,6 +283,13 @@ def list_reference_systems() -> dict[str, Any]:
             continue
         source = str(artifact.get("source_family") or "").strip()
         level = str(artifact.get("target_admin_level") or "").strip()
+        # A family renamed by the area-depth migration answers to both names.
+        # Without this the canonical name looks unreachable even though its
+        # bridge exists and is complete.
+        for alias in artifact.get("source_family_aliases") or []:
+            alias_name = str(alias).strip()
+            if alias_name:
+                bridged_systems.add(alias_name)
         if source:
             bridged_systems.add(source)
             systems.setdefault(source, {

@@ -225,41 +225,60 @@ def where_is_geography_data() -> dict[str, Any]:
         "missing_files": list(_missing_graph_files(str(root), is_cloud_mode())),
     }
     if available:
-        metadata = _graph_json(root / "metadata.json") or {}
-        completion = _graph_json(root / "completion_report.json") or {}
+        # Report every discovered graph rather than one. A single release id
+        # would have to pick a country arbitrarily now that several are served.
+        countries: dict[str, Any] = {}
+        for country, country_root in reference_graph_roots().items():
+            manifest = _graph_json(country_root / "manifest.json") or {}
+            countries[country] = {
+                "release_id": manifest.get("release_id"),
+                "status": manifest.get("status"),
+                "publication_status": manifest.get("publication_status"),
+                "families": manifest.get("converted_families") or manifest.get("admitted_families"),
+                "totals": manifest.get("metrics"),
+            }
+        result["countries"] = countries
+        primary = countries.get(_country_for_root(root), {}) if root else {}
         result.update({
-            "release_id": metadata.get("release_id"),
-            "status": completion.get("status"),
-            "scope": metadata.get("scope"),
-            "totals": completion.get("totals"),
+            "release_id": primary.get("release_id"),
+            "status": primary.get("status"),
+            "scope": ",".join(sorted(countries)),
+            "totals": primary.get("totals"),
         })
-        candidate_pointer = DATA_ROOT / "geometry" / "countries" / "CAN" / "releases" / "candidates" / "current.json"
-        if not is_cloud_mode() and candidate_pointer.exists():
-            pointer = json.loads(candidate_pointer.read_text(encoding="utf-8"))
-            pointer_root = (DATA_ROOT / str(pointer.get("graph_root") or "")).resolve()
-            if pointer_root == root:
-                result["candidate_release_id"] = pointer.get("release_id")
-                result["publication_status"] = pointer.get("publication_status")
     return result
 
 
 def reference_graph_families() -> list[dict[str, Any]]:
-    if not reference_graph_available():
-        return []
-    root = active_reference_graph_root()
-    connection = _connection()
-    try:
-        rows = connection.execute(
-            f"""SELECT family, count(*) AS identity_count,
-                       count(*) FILTER (WHERE has_shape) AS shape_count
-                FROM read_parquet({_table_source('identities')}, union_by_name=True)
-                GROUP BY family ORDER BY family"""
-        ).fetchall()
-    finally:
-        connection.close()
+    """List the canonical families every discovered graph admits.
+
+    The names come from the partition index, not the payload rows. A payload
+    carries its implementation family (``usa_census_zcta``) while the index
+    carries the canonical one (``postal_area``), and the canonical name is what
+    callers convert against. Reading the index is also far cheaper than
+    grouping across every partition.
+    """
+    totals: dict[str, dict[str, int]] = {}
+    for root in reference_graph_roots().values():
+        index_path = root / PARTITION_INDEXES["identities"]
+        if not index_path.is_file():
+            continue
+        try:
+            rows = pq.read_table(index_path, columns=["family", "row_count"]).to_pydict()
+        except Exception:
+            continue
+        for family, count in zip(rows.get("family", []), rows.get("row_count", [])):
+            name = str(family or "")
+            if not name:
+                continue
+            try:
+                rows_count = int(count)
+            except (TypeError, ValueError):
+                rows_count = 0
+            entry = totals.setdefault(name, {"identity_count": 0})
+            entry["identity_count"] += rows_count
     return [
-        {"family": row[0], "identity_count": int(row[1]), "shape_count": int(row[2])}
-        for row in rows
+        {"family": name, "identity_count": values["identity_count"]}
+        for name, values in sorted(totals.items())
     ]
 
 
