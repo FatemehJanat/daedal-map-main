@@ -11,6 +11,8 @@ import json
 import os
 from datetime import date
 from functools import lru_cache
+
+import pyarrow.parquet as pq
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +23,35 @@ from .published_artifacts import read_artifact_json, relative_data_path
 
 
 ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
-DEFAULT_RELATIVE_ROOT = Path("geometry/countries/CAN/crosswalks/canada_reference_graph")
-REQUIRED_FILES = (
-    "identities.parquet", "identity_versions.parquet", "aliases.parquet",
-    "relationships.parquet", "metadata.json", "completion_report.json",
+
+#: Every country publishes its graph in the same place and the same shape.
+#: There is one format - a hash-pinned partition index - so this module never
+#: branches on generation. A country is discovered by its directory, not by a
+#: hardcoded default, which is what lets families and countries be added one at
+#: a time without touching the runtime.
+COUNTRY_GRAPH_GLOB = "geometry/countries/*/reference_graph"
+REQUIRED_FILES = ("identity_partitions.parquet", "endpoint_families.parquet", "manifest.json")
+
+#: Identity columns read from partitions. Partitions span countries and
+#: families with differing schemas, and some carry a GEOMETRY column DuckDB
+#: cannot return through ``SELECT *``. Naming the columns keeps the result
+#: stable; ``union_by_name`` fills a missing one with NULL.
+IDENTITY_COLUMNS = (
+    "loc_id", "family", "native_id", "name", "parent_loc_id", "admin_level",
+    "namespace_release", "valid_from", "valid_to", "has_shape", "geometry_bank",
+    "geometry_status", "source_system", "source_vintage", "geometry_loc_id",
+    "source_loc_id", "sibling_level", "sibling_anchor_loc_id",
+    "smallest_full_container_loc_id", "crosses_sibling_boundaries_at_or_above_anchor",
+    "source_area_sq_km", "assignment_method",
 )
+
+#: Index file naming the partitions for each logical table.
+PARTITION_INDEXES = {
+    "identities": "identity_partitions.parquet",
+    "identity_versions": "identity_partitions.parquet",
+    "aliases": "alias_partitions.parquet",
+    "relationships": "relationship_partitions.parquet",
+}
 
 
 def _sql_path(path: Path) -> str:
@@ -88,17 +114,100 @@ def _missing_graph_files(root_text: str, cloud_mode: bool) -> tuple[str, ...]:
     return tuple(missing)
 
 
-def active_reference_graph_root() -> Path:
-    configured = str(os.getenv(ENV_NAME, "")).strip()
-    if configured:
-        path = Path(configured)
-        return path.resolve() if path.is_absolute() else (DATA_ROOT / path).resolve()
-    return (DATA_ROOT / DEFAULT_RELATIVE_ROOT).resolve()
+@lru_cache(maxsize=4)
+def _discover_roots(data_root_text: str, override: str, cloud_mode: bool) -> tuple[tuple[str, str], ...]:
+    data_root = Path(data_root_text)
+    if override:
+        path = Path(override)
+        resolved = path.resolve() if path.is_absolute() else (data_root / path).resolve()
+        country = _country_for_root(resolved)
+        return ((country, str(resolved)),) if country else (("", str(resolved)),)
+    found: list[tuple[str, str]] = []
+    for candidate in sorted(data_root.glob(COUNTRY_GRAPH_GLOB)):
+        if _missing_graph_files(str(candidate.resolve()), cloud_mode):
+            continue
+        country = _country_for_root(candidate.resolve())
+        if country:
+            found.append((country, str(candidate.resolve())))
+    return tuple(found)
+
+
+def _country_for_root(root: Path) -> str:
+    manifest = _graph_json(root / "manifest.json") or {}
+    country = str(manifest.get("country") or "").strip().upper()
+    if country:
+        return country
+    # Fall back to the owning directory so a graph is still selectable when its
+    # manifest predates the country field.
+    parts = root.parts
+    return parts[parts.index("countries") + 1].upper() if "countries" in parts else ""
+
+
+def reference_graph_roots() -> dict[str, Path]:
+    """Return every discoverable country graph, keyed by ISO3."""
+    override = str(os.getenv(ENV_NAME, "")).strip()
+    return {
+        country: Path(path)
+        for country, path in _discover_roots(str(DATA_ROOT), override, is_cloud_mode())
+    }
+
+
+def graph_root_for_loc_id(loc_id: str | None) -> Path | None:
+    """Pick the graph owning a loc_id, using its country prefix."""
+    roots = reference_graph_roots()
+    if not roots:
+        return None
+    if loc_id:
+        country = str(loc_id).split("-", 1)[0].strip().upper()
+        if country in roots:
+            return roots[country]
+    return None
+
+
+def active_reference_graph_root() -> Path | None:
+    """Kept for callers that still expect a single root."""
+    roots = reference_graph_roots()
+    return next(iter(roots.values()), None)
+
+
+def _partition_paths(root: Path, table: str) -> list[Path]:
+    """Resolve one logical table to the partition files backing it."""
+    index_name = PARTITION_INDEXES.get(table)
+    if not index_name:
+        return []
+    index_path = root / index_name
+    if not index_path.is_file():
+        return []
+    try:
+        rows = pq.read_table(index_path, columns=["path"]).to_pydict().get("path", [])
+    except Exception:
+        return []
+    return [DATA_ROOT / str(value) for value in rows if value]
+
+
+def _table_source(table: str, *, loc_id: str | None = None) -> str:
+    """Build the DuckDB read_parquet argument spanning the relevant graphs.
+
+    A loc_id narrows to its owning country; without one every discovered graph
+    is searched, so a lookup still works before the country is known.
+    """
+    selected = graph_root_for_loc_id(loc_id)
+    roots = [selected] if selected else list(reference_graph_roots().values())
+    paths: list[str] = []
+    for root in roots:
+        paths.extend(_sql_path(path) for path in _partition_paths(root, table) if path.is_file())
+    if not paths:
+        return ""
+    joined = ", ".join(f"'{path}'" for path in paths)
+    return f"[{joined}]"
+
+
+def _identity_columns() -> str:
+    return ", ".join(IDENTITY_COLUMNS)
 
 
 def reference_graph_available() -> bool:
-    root = active_reference_graph_root()
-    return not _missing_graph_files(str(root), is_cloud_mode())
+    return bool(reference_graph_roots())
 
 
 def where_is_geography_data() -> dict[str, Any]:
@@ -109,7 +218,8 @@ def where_is_geography_data() -> dict[str, Any]:
         "ok": available,
         "mode": "explicit_runtime_selection" if configured else "default_runtime_selection",
         "data_root": str(DATA_ROOT),
-        "graph_root": str(root),
+        "graph_root": str(root) if root else None,
+        "country_graph_roots": {country: str(path) for country, path in reference_graph_roots().items()},
         "selection_variable": ENV_NAME,
         "local_data_uploaded": False,
         "missing_files": list(_missing_graph_files(str(root), is_cloud_mode())),
@@ -142,7 +252,7 @@ def reference_graph_families() -> list[dict[str, Any]]:
         rows = connection.execute(
             f"""SELECT family, count(*) AS identity_count,
                        count(*) FILTER (WHERE has_shape) AS shape_count
-                FROM read_parquet('{_sql_path(root / 'identities.parquet')}')
+                FROM read_parquet({_table_source('identities')}, union_by_name=True)
                 GROUP BY family ORDER BY family"""
         ).fetchall()
     finally:
@@ -160,7 +270,7 @@ def identity(loc_id: str) -> dict[str, Any] | None:
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"SELECT * FROM read_parquet('{_sql_path(root / 'identities.parquet')}') WHERE loc_id = ? LIMIT 1",
+            f"SELECT {_identity_columns()} FROM read_parquet({_table_source('identities', loc_id=loc_id)}, union_by_name=True) WHERE loc_id = ? LIMIT 1",
             [str(loc_id)],
         )
         row = cursor.fetchone()
@@ -187,7 +297,7 @@ def identity_at(loc_id: str, as_of: date | None = None) -> dict[str, Any] | None
     try:
         cursor = connection.execute(
             f"""SELECT *
-                FROM read_parquet('{_sql_path(root / 'identity_versions.parquet')}')
+                FROM read_parquet({_table_source('identity_versions')}, union_by_name=True)
                 WHERE loc_id = ?
                   AND (valid_from IS NULL OR valid_from = '' OR CAST(valid_from AS DATE) <= ?)
                   AND (valid_to IS NULL OR valid_to = '' OR CAST(valid_to AS DATE) > ?)
@@ -202,7 +312,7 @@ def identity_at(loc_id: str, as_of: date | None = None) -> dict[str, Any] | None
             # temporal mismatch instead of treating the loc_id as unknown.
             cursor = connection.execute(
                 f"""SELECT *
-                    FROM read_parquet('{_sql_path(root / 'identity_versions.parquet')}')
+                    FROM read_parquet({_table_source('identity_versions')}, union_by_name=True)
                     WHERE loc_id = ?
                     ORDER BY valid_from DESC NULLS LAST, namespace_release DESC
                     LIMIT 1""",
@@ -226,7 +336,7 @@ def identities(loc_ids: list[str]) -> list[dict[str, Any]]:
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"SELECT * FROM read_parquet('{_sql_path(root / 'identities.parquet')}') "
+            f"SELECT {_identity_columns()} FROM read_parquet({_table_source('identities')}, union_by_name=True) "
             f"WHERE loc_id IN ({placeholders})",
             requested,
         )
@@ -244,7 +354,7 @@ def aliases_for_loc_id(loc_id: str, *, limit: int = 100) -> list[dict[str, Any]]
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
+            f"""SELECT * FROM read_parquet({_table_source('aliases')}, union_by_name=True)
                 WHERE loc_id = ? ORDER BY reference_system, external_id LIMIT ?""",
             [str(loc_id), max(1, int(limit))],
         )
@@ -261,7 +371,7 @@ def resolve_alias(reference_system: str, external_id: str, *, limit: int = 25) -
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
+            f"""SELECT * FROM read_parquet({_table_source('aliases')}, union_by_name=True)
                 WHERE lower(reference_system) = lower(?) AND external_id = ?
                 ORDER BY loc_id LIMIT ?""",
             [str(reference_system), str(external_id), max(1, int(limit))],
@@ -282,7 +392,7 @@ def identify_aliases(external_ids: list[str], *, limit: int = 500) -> list[dict[
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"""SELECT * FROM read_parquet('{_sql_path(root / 'aliases.parquet')}')
+            f"""SELECT * FROM read_parquet({_table_source('aliases')}, union_by_name=True)
                 WHERE external_id IN ({placeholders})
                 ORDER BY reference_system, external_id, loc_id LIMIT ?""",
             [*requested, max(1, int(limit))],
@@ -303,11 +413,11 @@ def relationships_for_loc_id(
     connection = _connection()
     try:
         requested_limit = max(1, int(limit))
-        path = _sql_path(root / "relationships.parquet")
+        path = _table_source("relationships", loc_id=loc_id)
 
         def selected_rows(column: str) -> list[dict[str, Any]]:
             cursor = connection.execute(
-                f"SELECT * FROM read_parquet('{path}') WHERE {column} = ? LIMIT ?",
+                f"SELECT * FROM read_parquet({path}, union_by_name=True) WHERE {column} = ? LIMIT ?",
                 [str(loc_id), requested_limit],
             )
             columns = [item[0] for item in cursor.description]

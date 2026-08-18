@@ -43,7 +43,13 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ambiguous")
         self.assertIsNone(payload["recommended_binding"])
         systems = {candidate["system"] for candidate in payload["candidates"]}
-        self.assertEqual(systems, {"us_census_geoid", "overlay_zcta"})
+        # The runtime discovers every country graph, so a five-digit code also
+        # matches the USA graph's own ZCTA alias system. More candidates is the
+        # point of unifying the graphs; it stays ambiguous with no binding.
+        self.assertEqual(
+            systems,
+            {"us_census_geoid", "overlay_zcta", "usa.census.2020.zcta5.geoid"},
+        )
         self.assertEqual(payload["warnings"][-1]["code"], "ambiguous_identifier_system")
         question = payload["clarification"]["questions"][0]
         self.assertEqual(question["id"], "reference_system")
@@ -60,7 +66,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertIsNone(payload["recommended_binding"])
         self.assertEqual(
             {candidate["system"] for candidate in payload["candidates"]},
-            {"us_census_geoid", "overlay_zcta"},
+            {"us_census_geoid", "overlay_zcta", "usa.census.2020.zcta5.geoid"},
         )
 
     def test_resolve_census_geoid_is_exact_and_shape_backed(self) -> None:
