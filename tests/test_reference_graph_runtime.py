@@ -63,11 +63,38 @@ class ReferenceGraphRuntimeTests(unittest.TestCase):
             "target_release": "test_2026", "has_source_shape": True,
             "has_target_shape": False, "review_status": "generated_verified",
         }]).to_parquet(self.root / "relationships.parquet", index=False)
-        (self.root / "metadata.json").write_text(json.dumps({
-            "release_id": "test_candidate", "scope": "TST", "status": "complete",
-        }), encoding="utf-8")
-        (self.root / "completion_report.json").write_text(json.dumps({
-            "status": "PASS", "totals": {"identities": 2, "relationships": 1},
+        pd.DataFrame([{
+            "partition_id": "test_sidechain", "family": "test_sidechain",
+            "kind": "sidechain_identity", "path": str(self.root / "identities.parquet"),
+            "sha256": "test", "row_count": 2, "selector": "",
+            "strict_parent_source": False,
+        }]).to_parquet(self.root / "identity_partitions.parquet", index=False)
+        pd.DataFrame([{
+            "partition_id": "test_sidechain", "family": "test_sidechain",
+            "path": str(self.root / "aliases.parquet"), "sha256": "test", "row_count": 1,
+        }]).to_parquet(self.root / "alias_partitions.parquet", index=False)
+        pd.DataFrame([{
+            "partition_id": "test_relationships", "semantic_type": "measured_spatial_overlap",
+            "evidence_class": "test", "source_family": "test_sidechain",
+            "target_family": "test_sidechain", "path": str(self.root / "relationships.parquet"),
+            "sha256": "test", "index_path": "", "index_sha256": "", "row_count": 1,
+            "payload_mode": "materialized_partition", "strict_parent": False, "succession": False,
+        }]).to_parquet(self.root / "relationship_partitions.parquet", index=False)
+        pd.DataFrame(columns=["partition_id", "family", "path", "sha256", "row_count"]).to_parquet(
+            self.root / "shape_partitions.parquet", index=False
+        )
+        pd.DataFrame([{
+            "family": "test_sidechain", "status": "identity_admitted", "identity_admitted": True,
+        }]).to_parquet(self.root / "endpoint_families.parquet", index=False)
+        pd.DataFrame([{
+            "role": "test", "package_id": "test", "path": "test",
+            "sha256": "test", "bytes": 0,
+        }]).to_parquet(self.root / "source_manifests.parquet", index=False)
+        (self.root / "manifest.json").write_text(json.dumps({
+            "schema_version": "0.2.0", "graph_scope": "country", "country": "TST",
+            "release_id": "test_candidate", "status": "PASS",
+            "publication_status": "test", "completeness_status": "complete_declared_scope",
+            "metrics": {"identities": 2, "relationships": 1},
         }), encoding="utf-8")
         self.env = mock.patch.dict(os.environ, {
             "GEOGRAPHY_REFERENCE_GRAPH_ROOT": str(self.root),
@@ -138,6 +165,20 @@ class ReferenceGraphRuntimeTests(unittest.TestCase):
             self.assertEqual(
                 reference_graph._sql_path(self.root / "identities.parquet"),
                 "s3://bucket/published/graph.parquet",
+            )
+
+    def test_country_graph_precedes_global_fallback(self) -> None:
+        country = self.root / "country"
+        global_root = self.root / "global"
+        with mock.patch.object(reference_graph, "reference_graph_roots", return_value={"TST": country}), \
+             mock.patch.object(reference_graph, "global_reference_graph_root", return_value=global_root):
+            self.assertEqual(
+                reference_graph.graph_roots_for_loc_id("TST-A-001"),
+                [country, global_root],
+            )
+            self.assertEqual(
+                reference_graph.graph_roots_for_loc_id("ZZZ-G1"),
+                [global_root],
             )
 
 

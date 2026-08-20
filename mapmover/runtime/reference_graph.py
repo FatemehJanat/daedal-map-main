@@ -30,7 +30,15 @@ ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
 #: hardcoded default, which is what lets families and countries be added one at
 #: a time without touching the runtime.
 COUNTRY_GRAPH_GLOB = "geometry/countries/*/reference_graph"
-REQUIRED_FILES = ("identity_partitions.parquet", "endpoint_families.parquet", "manifest.json")
+GLOBAL_GRAPH_RELATIVE = Path("geometry/global/reference_graph")
+COUNTRY_REQUIRED_FILES = (
+    "identity_partitions.parquet", "endpoint_families.parquet", "manifest.json",
+)
+FULL_GRAPH_FILES = (
+    "identity_partitions.parquet", "alias_partitions.parquet",
+    "shape_partitions.parquet", "relationship_partitions.parquet",
+    "endpoint_families.parquet", "source_manifests.parquet", "manifest.json",
+)
 
 #: Identity columns read from partitions. Partitions span countries and
 #: families with differing schemas, and some carry a GEOMETRY column DuckDB
@@ -94,11 +102,15 @@ def _graph_json(path: Path) -> dict[str, Any] | None:
     return _load_graph_json(str(path.resolve()), is_cloud_mode())
 
 
-@lru_cache(maxsize=8)
-def _missing_graph_files(root_text: str, cloud_mode: bool) -> tuple[str, ...]:
+@lru_cache(maxsize=16)
+def _missing_graph_files(
+    root_text: str,
+    cloud_mode: bool,
+    required_files: tuple[str, ...] = COUNTRY_REQUIRED_FILES,
+) -> tuple[str, ...]:
     root = Path(root_text)
     missing: list[str] = []
-    for filename in REQUIRED_FILES:
+    for filename in required_files:
         path = root / filename
         if filename.endswith(".json"):
             available = _load_graph_json(str(path.resolve()), cloud_mode) is not None
@@ -126,6 +138,11 @@ def _discover_roots(data_root_text: str, override: str, cloud_mode: bool) -> tup
     for candidate in sorted(data_root.glob(COUNTRY_GRAPH_GLOB)):
         if _missing_graph_files(str(candidate.resolve()), cloud_mode):
             continue
+        manifest = _graph_json(candidate / "manifest.json") or {}
+        if manifest.get("graph_scope") not in (None, "", "country"):
+            continue
+        if str(manifest.get("completeness_status") or "").startswith("partial"):
+            continue
         country = _country_for_root(candidate.resolve())
         if country:
             found.append((country, str(candidate.resolve())))
@@ -152,22 +169,45 @@ def reference_graph_roots() -> dict[str, Path]:
     }
 
 
+def global_reference_graph_root() -> Path | None:
+    """Return the complete global graph used after country authority."""
+    root = (DATA_ROOT / GLOBAL_GRAPH_RELATIVE).resolve()
+    if _missing_graph_files(str(root), is_cloud_mode(), FULL_GRAPH_FILES):
+        return None
+    manifest = _graph_json(root / "manifest.json") or {}
+    if manifest.get("graph_scope") != "global":
+        return None
+    if str(manifest.get("completeness_status") or "").startswith("partial"):
+        return None
+    return root
+
+
 def graph_root_for_loc_id(loc_id: str | None) -> Path | None:
     """Pick the graph owning a loc_id, using its country prefix."""
     roots = reference_graph_roots()
-    if not roots:
-        return None
     if loc_id:
         country = str(loc_id).split("-", 1)[0].strip().upper()
         if country in roots:
             return roots[country]
-    return None
+    return global_reference_graph_root()
+
+
+def graph_roots_for_loc_id(loc_id: str | None) -> list[Path]:
+    """Prefer country authority, then retain the global fallback."""
+    roots: list[Path] = []
+    country = graph_root_for_loc_id(loc_id)
+    if country is not None:
+        roots.append(country)
+    global_root = global_reference_graph_root()
+    if global_root is not None and global_root not in roots:
+        roots.append(global_root)
+    return roots
 
 
 def active_reference_graph_root() -> Path | None:
     """Kept for callers that still expect a single root."""
     roots = reference_graph_roots()
-    return next(iter(roots.values()), None)
+    return next(iter(roots.values()), global_reference_graph_root())
 
 
 def _partition_paths(root: Path, table: str) -> list[Path]:
@@ -182,7 +222,7 @@ def _partition_paths(root: Path, table: str) -> list[Path]:
         rows = pq.read_table(index_path, columns=["path"]).to_pydict().get("path", [])
     except Exception:
         return []
-    return [DATA_ROOT / str(value) for value in rows if value]
+    return list(dict.fromkeys(DATA_ROOT / str(value) for value in rows if value))
 
 
 def _table_source(table: str, *, loc_id: str | None = None) -> str:
@@ -191,8 +231,15 @@ def _table_source(table: str, *, loc_id: str | None = None) -> str:
     A loc_id narrows to its owning country; without one every discovered graph
     is searched, so a lookup still works before the country is known.
     """
-    selected = graph_root_for_loc_id(loc_id)
-    roots = [selected] if selected else list(reference_graph_roots().values())
+    roots = (
+        graph_roots_for_loc_id(loc_id)
+        if loc_id else
+        [*reference_graph_roots().values(), *([global_reference_graph_root()] if global_reference_graph_root() else [])]
+    )
+    return _table_source_for_roots(table, roots)
+
+
+def _table_source_for_roots(table: str, roots: list[Path]) -> str:
     paths: list[str] = []
     for root in roots:
         paths.extend(_sql_path(path) for path in _partition_paths(root, table) if path.is_file())
@@ -202,12 +249,44 @@ def _table_source(table: str, *, loc_id: str | None = None) -> str:
     return f"[{joined}]"
 
 
-def _identity_columns() -> str:
-    return ", ".join(IDENTITY_COLUMNS)
+def _identity_columns(loc_id: str | None = None) -> str:
+    """Select the stable identity surface even when every partition omits a field."""
+    roots = graph_roots_for_loc_id(loc_id) if loc_id else [
+        *reference_graph_roots().values(),
+        *([global_reference_graph_root()] if global_reference_graph_root() else []),
+    ]
+    return _identity_columns_for_roots(roots)
+
+
+def _identity_columns_for_roots(roots: list[Path]) -> str:
+    available: set[str] = set()
+    for root in roots:
+        for path in _partition_paths(root, "identities"):
+            try:
+                available.update(parquet_columns(path))
+            except Exception:
+                continue
+    expressions: list[str] = []
+    for column in IDENTITY_COLUMNS:
+        if column == "family" and "admin_level" in available:
+            expressions.append(
+                "COALESCE(family, 'admin_' || CAST(CAST(admin_level AS BIGINT) AS VARCHAR)) AS family"
+                if "family" in available else
+                "'admin_' || CAST(CAST(admin_level AS BIGINT) AS VARCHAR) AS family"
+            )
+        elif column == "parent_loc_id" and "parent_id" in available:
+            expressions.append(
+                "COALESCE(parent_loc_id, parent_id) AS parent_loc_id"
+                if "parent_loc_id" in available else
+                "parent_id AS parent_loc_id"
+            )
+        else:
+            expressions.append(column if column in available else f"NULL AS {column}")
+    return ", ".join(expressions)
 
 
 def reference_graph_available() -> bool:
-    return bool(reference_graph_roots())
+    return bool(reference_graph_roots() or global_reference_graph_root())
 
 
 def where_is_geography_data() -> dict[str, Any]:
@@ -220,9 +299,10 @@ def where_is_geography_data() -> dict[str, Any]:
         "data_root": str(DATA_ROOT),
         "graph_root": str(root) if root else None,
         "country_graph_roots": {country: str(path) for country, path in reference_graph_roots().items()},
+        "global_graph_root": str(global_reference_graph_root()) if global_reference_graph_root() else None,
         "selection_variable": ENV_NAME,
         "local_data_uploaded": False,
-        "missing_files": list(_missing_graph_files(str(root), is_cloud_mode())),
+        "missing_files": list(_missing_graph_files(str(root), is_cloud_mode())) if root else list(COUNTRY_REQUIRED_FILES),
     }
     if available:
         # Report every discovered graph rather than one. A single release id
@@ -238,11 +318,22 @@ def where_is_geography_data() -> dict[str, Any]:
                 "totals": manifest.get("metrics"),
             }
         result["countries"] = countries
+        global_root = global_reference_graph_root()
+        if global_root:
+            global_manifest = _graph_json(global_root / "manifest.json") or {}
+            result["global"] = {
+                "release_id": global_manifest.get("release_id"),
+                "status": global_manifest.get("status"),
+                "publication_status": global_manifest.get("publication_status"),
+                "totals": global_manifest.get("metrics"),
+            }
         primary = countries.get(_country_for_root(root), {}) if root else {}
+        if not primary and global_root:
+            primary = result.get("global", {})
         result.update({
             "release_id": primary.get("release_id"),
             "status": primary.get("status"),
-            "scope": ",".join(sorted(countries)),
+            "scope": ",".join([*sorted(countries), *(["GLOBAL"] if global_root else [])]),
             "totals": primary.get("totals"),
         })
     return result
@@ -258,7 +349,11 @@ def reference_graph_families() -> list[dict[str, Any]]:
     grouping across every partition.
     """
     totals: dict[str, dict[str, int]] = {}
-    for root in reference_graph_roots().values():
+    roots = list(reference_graph_roots().values())
+    global_root = global_reference_graph_root()
+    if global_root:
+        roots.append(global_root)
+    for root in roots:
         index_path = root / PARTITION_INDEXES["identities"]
         if not index_path.is_file():
             continue
@@ -285,17 +380,23 @@ def reference_graph_families() -> list[dict[str, Any]]:
 def identity(loc_id: str) -> dict[str, Any] | None:
     if not reference_graph_available():
         return None
-    root = active_reference_graph_root()
     connection = _connection()
     try:
-        cursor = connection.execute(
-            f"SELECT {_identity_columns()} FROM read_parquet({_table_source('identities', loc_id=loc_id)}, union_by_name=True) WHERE loc_id = ? LIMIT 1",
-            [str(loc_id)],
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return dict(zip([item[0] for item in cursor.description], row))
+        # Query roots one at a time so country authority wins deterministically
+        # when its Admin0 loc_id is also present in the global fallback.
+        for root in graph_roots_for_loc_id(loc_id):
+            source = _table_source_for_roots("identities", [root])
+            if not source:
+                continue
+            cursor = connection.execute(
+                f"SELECT {_identity_columns_for_roots([root])} "
+                f"FROM read_parquet({source}, union_by_name=True) WHERE loc_id = ? LIMIT 1",
+                [str(loc_id)],
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                return dict(zip([item[0] for item in cursor.description], row))
+        return None
     finally:
         connection.close()
 
