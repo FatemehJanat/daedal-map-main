@@ -103,6 +103,85 @@ def _admin_catalog_refresh_forbidden_response(req: Request) -> Response | None:
     return None
 
 
+def _access_policy_state_path() -> Path:
+    from access_policy_shared import RUNTIME_POLICY_FILE_ENV
+    from mapmover.paths import STATE_DIR
+
+    configured = str(os.getenv(RUNTIME_POLICY_FILE_ENV, "") or "").strip()
+    return Path(configured) if configured else STATE_DIR / "access_policy_active.json"
+
+
+@router.get("/api/admin/access-policy")
+async def admin_access_policy_status(req: Request):
+    """Return the active non-secret operator policy and runtime acknowledgement."""
+    from access_policy_shared import load_access_policy, policy_fingerprint
+
+    forbidden = _admin_catalog_refresh_forbidden_response(req)
+    if forbidden is not None:
+        return forbidden
+    policy = load_access_policy()
+    return JSONResponse({
+        "ok": True,
+        "policy": policy,
+        "policy_revision": policy.get("policy_revision"),
+        "policy_fingerprint": policy_fingerprint(policy),
+        "server_safety_ceiling": {
+            "enabled": True,
+            "dashboard_mutable": False,
+            "details": "Server-owned request and existing item/response ceilings remain active.",
+        },
+    })
+
+
+@router.post("/api/admin/access-policy")
+async def admin_access_policy_activate(req: Request):
+    """Validate and hot-activate a dashboard policy without rebuilding catalogs."""
+    from access_policy_shared import (
+        POLICY_FILE_ENV,
+        POLICY_JSON_ENV,
+        activate_access_policy,
+        load_access_policy,
+        policy_fingerprint,
+        validate_access_policy,
+    )
+
+    forbidden = _admin_catalog_refresh_forbidden_response(req)
+    if forbidden is not None:
+        return forbidden
+    if str(os.getenv(POLICY_JSON_ENV, "") or "").strip() or str(os.getenv(POLICY_FILE_ENV, "") or "").strip():
+        return JSONResponse({
+            "ok": False,
+            "error": "A deployment policy env override is active; remove it before dashboard activation.",
+        }, status_code=409)
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("policy"), dict):
+        return JSONResponse({"ok": False, "error": "policy object is required"}, status_code=400)
+    current = load_access_policy()
+    expected = body.get("expected_policy_revision")
+    if expected is not None and str(expected) != str(current.get("policy_revision") or ""):
+        return JSONResponse({
+            "ok": False,
+            "error": "Active policy revision changed; refresh before activating.",
+            "active_policy_revision": current.get("policy_revision"),
+        }, status_code=409)
+    try:
+        normalized = validate_access_policy(body["policy"])
+        activated = activate_access_policy(normalized, _access_policy_state_path())
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True,
+        "policy": activated,
+        "policy_revision": activated.get("policy_revision"),
+        "policy_fingerprint": policy_fingerprint(activated),
+        "activated_at": _utc_now_iso(),
+        "server_safety_ceiling": {"enabled": True, "dashboard_mutable": False},
+    })
+
+
 def _start_runtime_prewarm_threads() -> list[str]:
     started: list[str] = []
     task_names = ["public_pack_catalog"]

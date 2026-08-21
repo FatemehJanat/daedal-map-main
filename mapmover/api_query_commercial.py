@@ -10,6 +10,7 @@ import requests
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
+from access_policy_shared import resolve_effective_access
 from mapmover.pack_pricing import PAID_PACK_IDS as _PAID_PACK_IDS
 from mapmover.paths import SITE_URL
 from mapmover.artifact_access import (
@@ -47,9 +48,57 @@ def get_trusted_artifact_token(request: Request) -> str | None:
     return record.token if record is not None else None
 
 
-def pack_requires_commercial_access(pack_id: str | None) -> bool:
+def pack_effective_access(
+    pack_id: str | None,
+    *,
+    license_permissions=None,
+    publication_cleared: bool = True,
+    caller_authenticated: bool = False,
+    caller_entitled: bool = False,
+    local_installed: bool = False,
+    trusted_artifact: bool = False,
+) -> dict[str, Any]:
     normalized = str(pack_id or "").strip().lower()
-    return bool(normalized) and normalized in PAID_QUERY_PACK_IDS
+    authored_pricing = "paid_x402_base_usdc" if normalized in PAID_QUERY_PACK_IDS else "free"
+    # Existing promoted data packs were admitted through the unified licence
+    # audit before this runtime overlay existed.  Callers that have the exact
+    # source envelope should pass it; the compatibility default preserves the
+    # established commercial eligibility of an admitted pack.
+    permissions = {"paid"} if license_permissions is None else license_permissions
+    return resolve_effective_access(
+        resource_kind="pack",
+        resource_id=normalized,
+        authored_pricing=authored_pricing,
+        license_permissions=permissions,
+        publication_cleared=publication_cleared,
+        caller_authenticated=caller_authenticated,
+        caller_entitled=caller_entitled,
+        local_installed=local_installed,
+        trusted_artifact=trusted_artifact,
+    )
+
+
+def pack_requires_commercial_access(
+    pack_id: str | None,
+    *,
+    license_permissions=None,
+    publication_cleared: bool = True,
+) -> bool:
+    """Return the *effective* settlement requirement for one hosted pack.
+
+    The authored pack registry remains stable product intent.  Launch pricing
+    and other operator choices are read from the external access policy, so
+    switching a pack temporarily free does not rewrite pack metadata or force a
+    catalog build.
+    """
+    normalized = str(pack_id or "").strip().lower()
+    if not normalized:
+        return False
+    return bool(pack_effective_access(
+        normalized,
+        license_permissions=license_permissions,
+        publication_cleared=publication_cleared,
+    )["settlement_required"])
 
 
 def commercial_access_timeout_seconds() -> float:

@@ -178,35 +178,67 @@ def is_known_geometry_loc_id(value: str | None) -> bool:
     return bool(entry and entry.get("loc_id") == str(value or "").strip().upper() and entry.get("resolvable", True))
 
 
-def geometry_bank_permissions() -> set[str]:
-    """Distinct licence permission values across every geometry bank.
+def geometry_bank_access_facts(
+    *,
+    scopes: set[str] | None = None,
+    families: set[str] | None = None,
+) -> tuple[set[str], bool]:
+    """Return commercial-use permissions and hosted publication clearance.
 
-    Feeds the paid-bulk licensing guard: a geography tool may only charge for
-    throughput when every contributing bank permits paid hosted use. Returns an
-    empty set when the catalog is unavailable, which the guard treats as
-    "not permitted" so a missing catalog fails closed rather than open.
+    Both singular and plural source envelopes are accepted during migration.
+    An explicit pending review or secondary-use disposition fails closed.  The
+    runtime catalog contains promoted banks, so a legacy envelope with no
+    review field retains its prior admitted behavior.
     """
     catalog = load_geometry_catalog() or {}
     banks = catalog.get("geometry_banks") or {}
     if isinstance(banks, dict):
         banks = list(banks.values())
     if not isinstance(banks, list):
-        return set()
+        return set(), False
 
+    normalized_scopes = {str(value).strip().upper() for value in (scopes or set()) if str(value).strip()}
+    normalized_families = {str(value).strip().lower() for value in (families or set()) if str(value).strip()}
     permissions: set[str] = set()
+    publication_cleared = True
+    matched_bank = False
     for bank in banks:
         if not isinstance(bank, dict):
             continue
-        source_license = bank.get("source_license")
-        value = None
-        if isinstance(source_license, dict):
-            value = source_license.get("permission")
-        if not value:
-            value = bank.get("permission")
-        text = str(value or "").strip().lower()
-        if text:
-            permissions.add(text)
-    return permissions
+        bank_scope = str(bank.get("scope") or "").strip().upper()
+        bank_family = str(bank.get("family") or "").strip().lower()
+        if normalized_scopes and bank_scope not in normalized_scopes:
+            continue
+        if normalized_families and bank_family not in normalized_families:
+            continue
+        matched_bank = True
+        source_licenses = [
+            item for item in (bank.get("source_licenses") or []) if isinstance(item, dict)
+        ]
+        if not source_licenses and isinstance(bank.get("source_license"), dict):
+            source_licenses = [bank["source_license"]]
+        if not source_licenses:
+            source_licenses = [bank]
+        for source_license in source_licenses:
+            value = source_license.get("permission") or bank.get("permission")
+            text = str(value or "").strip().lower()
+            if text:
+                permissions.add(text)
+            review = str(source_license.get("license_review_status") or "").strip().lower()
+            if review in {"needs_review", "rejected", "unreviewed", "pending"}:
+                publication_cleared = False
+            secondary = source_license.get("secondary_use")
+            if isinstance(secondary, dict):
+                status = str(secondary.get("status") or "").strip().lower()
+                disposition = str(secondary.get("disposition") or "").strip().lower()
+                if status in {"needs_review", "requires_application"} or disposition in {"", "pending", "needs_review"}:
+                    publication_cleared = False
+    return permissions, bool(matched_bank and publication_cleared)
+
+
+def geometry_bank_permissions() -> set[str]:
+    """Compatibility projection of :func:`geometry_bank_access_facts`."""
+    return geometry_bank_access_facts()[0]
 
 
 def is_deprecated_geometry_loc_id(value: str | None) -> bool:

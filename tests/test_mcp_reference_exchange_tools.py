@@ -42,6 +42,11 @@ def _tool_call(client: TestClient, name: str, arguments: dict | None = None, *, 
 
 class McpReferenceExchangeToolsTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._rate_limit_env = mock.patch.dict(
+            "os.environ", {"MCP_LIVE_TOOL_RATE_LIMIT": "10000"}, clear=False
+        )
+        self._rate_limit_env.start()
+        self.addCleanup(self._rate_limit_env.stop)
         app = FastAPI()
         app.include_router(mcp_router)
         self.client = TestClient(app)
@@ -249,6 +254,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             },
         )
         with (
+            mock.patch(
+                "mapmover.routes.mcp._tool_effective_access",
+                return_value={"allow": True, "settlement_required": True, "access_lane": "metered"},
+            ),
             mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=challenge),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
@@ -342,6 +351,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         """Fail closed: a paid request must never execute for free."""
         with (
             mock.patch(
+                "mapmover.routes.mcp._tool_effective_access",
+                return_value={"allow": True, "settlement_required": True, "access_lane": "metered"},
+            ),
+            mock.patch(
                 "mapmover.routes.mcp._commercial_access_decision",
                 return_value=("unavailable", {"error": {"code": "commercial_access_unavailable"}}),
             ),
@@ -374,6 +387,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         allow = ("allow", {"status": "allow", "settlement": {"settlement_id": "settle-abc"}})
         with (
+            mock.patch(
+                "mapmover.routes.mcp._tool_effective_access",
+                return_value={"allow": True, "settlement_required": True, "access_lane": "metered"},
+            ),
             mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=allow),
             mock.patch(
                 "mapmover.routes.mcp.settle_commercial_access",
@@ -435,6 +452,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         challenge = ("challenge", {"status": "challenge", "context": {}, "challenge": {}})
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2"}):
             with (
+                mock.patch(
+                    "mapmover.routes.mcp._tool_effective_access",
+                    return_value={"allow": True, "settlement_required": True, "access_lane": "metered"},
+                ),
                 mock.patch("mapmover.routes.mcp._commercial_access_decision", return_value=challenge),
                 mock.patch("mapmover.routes.mcp.log_api_query_event"),
             ):
@@ -446,6 +467,57 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         self.assertEqual(payload["limits"]["free_batch_limit"], 2)
         self.assertEqual(payload["error"]["code"], "payment_required")
+
+    def test_launch_free_waives_payment_but_keeps_item_limit(self) -> None:
+        def fake_resolve(points, include_geometry=False, **_kwargs):
+            return [
+                {
+                    "point": {"lon": point["lon"], "lat": point["lat"]},
+                    "matched": {"loc_id": "USA-CA-037", "admin_level": 2, "iso3": "USA"},
+                    "stack": [{"loc_id": "USA"}, {"loc_id": "USA-CA-037"}],
+                    "target_admin_level": "admin_2",
+                }
+                for point in points
+            ]
+
+        policy = '{"schema_version":"1.0.0","policy_revision":"launch-test","mode":"launch_free"}'
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "COMMERCIAL_ACCESS_ENABLED": "1",
+                "MCP_TOOL_BATCH_LIMIT_RESOLVE_POINT": "2",
+                "MCP_TOOL_PAID_BATCH_LIMIT_RESOLVE_POINT": "4",
+                "DAEDALMAP_ACCESS_POLICY_JSON": policy,
+            },
+            clear=False,
+        ):
+            from access_policy_shared import clear_access_policy_cache
+
+            clear_access_policy_cache()
+            with (
+                mock.patch(
+                    "mapmover.runtime.geometry_catalog.geometry_bank_access_facts",
+                    return_value=({"paid"}, True),
+                ),
+                mock.patch("mapmover.routes.mcp._commercial_access_decision") as verifier_mock,
+                mock.patch("mapmover.geometry_handlers.resolve_points_to_locations", side_effect=fake_resolve),
+                mock.patch("mapmover.routes.mcp.log_api_query_event"),
+            ):
+                payload = _tool_call(
+                    self.client,
+                    "resolve_point",
+                    {
+                        "points": [{"lon": 0, "lat": 0} for _ in range(3)],
+                        "country_scope": "USA",
+                        "target_admin_level": "admin_2",
+                    },
+                )
+            clear_access_policy_cache()
+
+        self.assertEqual(payload["point_count"], 3)
+        self.assertIn("resolved_count", payload, payload)
+        self.assertEqual(payload["resolved_count"], 3)
+        verifier_mock.assert_not_called()
 
     def test_resolve_point_above_interactive_ceiling_returns_honest_v0_limit(self) -> None:
         with (

@@ -36,6 +36,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from access_policy_shared import RUNTIME_POLICY_FILE_ENV, surface_rate_limit
 from agent_surface_shared import render_app_llms_txt
 from mapmover import initialize_catalog, load_conversions, logger
 from mapmover.auth_context import get_authenticated_user, get_authenticated_user_async
@@ -90,6 +91,13 @@ if sys.stderr.encoding != "utf-8":
 BASE_DIR = Path(__file__).resolve().parent
 SECURITY_TXT_PATH = BASE_DIR / "static" / "security.txt"
 
+# Dashboard-activated policy is runtime state, never generated catalog state.
+# An explicit JSON/file env still has higher precedence for emergency deploys.
+from mapmover.paths import STATE_DIR
+os.environ.setdefault(RUNTIME_POLICY_FILE_ENV, str(STATE_DIR / "access_policy_active.json"))
+
+HARD_GATED_SURFACES = frozenset({"agent_api_paid", "agent_api_mcp", "point_lookup"})
+
 
 def _get_request_ip(request: Request) -> str | None:
     return get_client_ip(request)
@@ -137,29 +145,34 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
     if surface == "private_mcp":
         return None
     if surface == "agent_api_discovery":
-        return (
-            _parse_env_int("AGENT_API_DISCOVERY_RATE_LIMIT", 25),
-            _parse_env_int("AGENT_API_DISCOVERY_RATE_WINDOW_SECONDS", 10),
+        return surface_rate_limit(
+            surface,
+            default_limit=_parse_env_int("AGENT_API_DISCOVERY_RATE_LIMIT", 25),
+            default_window_seconds=_parse_env_int("AGENT_API_DISCOVERY_RATE_WINDOW_SECONDS", 10),
         )
     if surface == "human_app_catalog":
-        return (
-            _parse_env_int("APP_CATALOG_RATE_LIMIT", 60),
-            _parse_env_int("APP_CATALOG_RATE_WINDOW_SECONDS", 10),
+        return surface_rate_limit(
+            surface,
+            default_limit=_parse_env_int("APP_CATALOG_RATE_LIMIT", 60),
+            default_window_seconds=_parse_env_int("APP_CATALOG_RATE_WINDOW_SECONDS", 10),
         )
     if surface == "point_lookup":
-        return (
-            _parse_env_int("POINT_LOOKUP_RATE_LIMIT", 25),
-            _parse_env_int("POINT_LOOKUP_RATE_WINDOW_SECONDS", 60),
+        return surface_rate_limit(
+            surface,
+            default_limit=_parse_env_int("POINT_LOOKUP_RATE_LIMIT", 25),
+            default_window_seconds=_parse_env_int("POINT_LOOKUP_RATE_WINDOW_SECONDS", 60),
         )
     if surface == "agent_api_paid":
-        return (
-            _parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
-            _parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
+        return surface_rate_limit(
+            surface,
+            default_limit=_parse_env_int("AGENT_API_PAID_RATE_LIMIT", 12),
+            default_window_seconds=_parse_env_int("AGENT_API_PAID_RATE_WINDOW_SECONDS", 60),
         )
     if surface == "agent_api_mcp":
-        return (
-            _parse_env_int("AGENT_API_MCP_RATE_LIMIT", 30),
-            _parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 60),
+        return surface_rate_limit(
+            surface,
+            default_limit=_parse_env_int("AGENT_API_MCP_RATE_LIMIT", 30),
+            default_window_seconds=_parse_env_int("AGENT_API_MCP_RATE_WINDOW_SECONDS", 60),
         )
     return None
 
@@ -167,9 +180,10 @@ def _rate_limit_config_for_surface(surface: str) -> tuple[int, int] | None:
 def _shared_runtime_rate_limit_for_path(path: str) -> tuple[int, int] | None:
     path = str(path or "").strip()
     if path.startswith("/api/") or path.startswith("/geometry/"):
-        return (
-            _parse_env_int("SHARED_RUNTIME_ANON_RATE_LIMIT", 120),
-            _parse_env_int("SHARED_RUNTIME_ANON_RATE_WINDOW_SECONDS", 60),
+        return surface_rate_limit(
+            "shared_runtime_anonymous",
+            default_limit=_parse_env_int("SHARED_RUNTIME_ANON_RATE_LIMIT", 120),
+            default_window_seconds=_parse_env_int("SHARED_RUNTIME_ANON_RATE_WINDOW_SECONDS", 60),
         )
     return None
 
@@ -452,6 +466,38 @@ async def static_no_cache(request: Request, call_next):
                 path="/",
             )
         return response
+
+    # Non-dashboard safety fuse. These limits are process configuration, are
+    # absent from the operator policy, and therefore cannot be raised by a
+    # compromised dashboard session. Existing per-call item/response caps form
+    # the other half of this bounded-extraction guard.
+    if (
+        surface in HARD_GATED_SURFACES
+        and request.method != "OPTIONS"
+        and not local_unrestricted
+        and artifact_token_record is None
+    ):
+        hard_limits = (
+            ("minute", _parse_env_int("DAEDALMAP_HARD_GATED_REQUESTS_PER_MINUTE", 120), 60),
+            ("hour", _parse_env_int("DAEDALMAP_HARD_GATED_REQUESTS_PER_HOUR", 3000), 3600),
+        )
+        hard_keys = [caller_identity.binding]
+        if ip_hash:
+            hard_keys.append(f"ip:{ip_hash}")
+        for hard_name, hard_limit, hard_window in hard_limits:
+            for hard_key in dict.fromkeys(hard_keys):
+                hard_allowed, hard_retry = rate_limiter.check(
+                    f"server-safety:{hard_name}:{hard_key}",
+                    limit=hard_limit,
+                    window_seconds=hard_window,
+                )
+                if not hard_allowed:
+                    request.state.analytics_error_code = "server_safety_limit"
+                    request.state.analytics_metadata = {
+                        **request.state.analytics_metadata,
+                        "server_safety_ceiling": hard_name,
+                    }
+                    return finalize_identity(_rate_limit_response("server_safety", hard_retry))
 
     rate_limit_config = _rate_limit_config_for_surface(surface)
     if rate_limit_config is None and not auth_user_id and surface == "shared_runtime":

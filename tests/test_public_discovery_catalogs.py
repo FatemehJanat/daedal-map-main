@@ -279,7 +279,10 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         resolved = [{"deepest_resolved_loc_id": "USA-CA-037"} for _ in range(26)]
         with mock.patch.dict("os.environ", {"COMMERCIAL_ACCESS_ENABLED": "1"}, clear=False):
             with (
-                mock.patch("mapmover.routes.geometry._tool_paid_bulk_enforced", return_value=True),
+                mock.patch(
+                    "mapmover.routes.geometry._tool_effective_access",
+                    return_value={"allow": True, "settlement_required": True, "access_lane": "metered"},
+                ),
                 mock.patch("mapmover.routes.geometry._commercial_access_decision", new=mock.AsyncMock(return_value=allow)),
                 mock.patch("mapmover.routes.geometry.resolve_points_to_locations", return_value=resolved),
                 mock.patch(

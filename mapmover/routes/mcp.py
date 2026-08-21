@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from access_policy_shared import resolve_effective_access, tool_rate_limit
 from mcp_surface_shared import build_mcp_instructions, build_tool_definitions
 from mcp_tool_help_shared import geometry_family_help_payload, tool_help_payload
 from pack_registry_shared import (
@@ -30,6 +31,7 @@ from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.api_query_commercial import (
     commercial_access_enabled,
     get_trusted_artifact_token,
+    pack_requires_commercial_access,
     settle_commercial_access,
     settlement_headers,
 )
@@ -43,7 +45,6 @@ from mapmover.security import get_allowed_origins, get_client_ip, is_local_loopb
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event, logger
 from tool_access_shared import (
     FAMILY_GEOGRAPHY,
-    licensing_permits_paid_bulk,
     tool_capability_id,
     tool_effective_item_limit,
     tool_family as _tool_family,
@@ -132,15 +133,17 @@ PACK_RESOURCE_COMMON_URIS = {
 
 
 def _free_pack_ids() -> frozenset[str]:
-    from mapmover.pack_pricing import FREE_PACK_IDS
+    from mapmover.pack_pricing import FREE_PACK_IDS, PAID_PACK_IDS
 
-    return FREE_PACK_IDS
+    all_ids = set(FREE_PACK_IDS) | set(PAID_PACK_IDS)
+    return frozenset(pack_id for pack_id in all_ids if not pack_requires_commercial_access(pack_id))
 
 
 def _paid_pack_ids() -> frozenset[str]:
-    from mapmover.pack_pricing import PAID_PACK_IDS
+    from mapmover.pack_pricing import FREE_PACK_IDS, PAID_PACK_IDS
 
-    return PAID_PACK_IDS
+    all_ids = set(FREE_PACK_IDS) | set(PAID_PACK_IDS)
+    return frozenset(pack_id for pack_id in all_ids if pack_requires_commercial_access(pack_id))
 
 
 def _normalize_pack_id(pack_id: str | None) -> str | None:
@@ -443,7 +446,18 @@ async def _authorize_paid_batch_tool(
         or is_local_loopback_request(request)
     ):
         return None, None, free_limit, paid_limit
-    if not commercial_access_enabled() or not _tool_paid_bulk_enforced(tool_name):
+    effective_access = _tool_effective_access(tool_name)
+    if effective_access.get("allow") and effective_access.get("access_lane") == "launch_free":
+        existing = getattr(request.state, "analytics_metadata", {})
+        existing = existing if isinstance(existing, dict) else {}
+        request.state.analytics_metadata = {
+            **existing,
+            "access_policy_revision": effective_access.get("policy_revision"),
+            "access_policy_fingerprint": effective_access.get("policy_fingerprint"),
+            "effective_access_lane": "launch_free",
+        }
+        return None, None, free_limit, paid_limit
+    if not commercial_access_enabled() or not effective_access.get("settlement_required"):
         return None, {
             "ok": False,
             "limit": free_limit,
@@ -516,6 +530,36 @@ async def _settle_paid_batch_tool(
     return settled, payload, meter_receipt
 
 
+def _tool_effective_access(tool_name: str, *, country_scope: str | None = None) -> dict[str, Any]:
+    """Resolve the operator and legal decision for one geography tool."""
+    if not tool_is_paid_bulk(tool_name) or _tool_family(tool_name) != FAMILY_GEOGRAPHY:
+        return resolve_effective_access(
+            resource_kind="tool",
+            resource_id=tool_name,
+            authored_pricing=tool_profile(tool_name).get("pricing") or "free",
+            license_permissions={"paid"},
+        )
+    try:
+        from mapmover.runtime.geometry_catalog import geometry_bank_access_facts
+
+        scopes = {str(country_scope).strip().upper()} if country_scope else None
+        families = {"admin_boundary"} if tool_name == "resolve_point" else None
+        permissions, publication_cleared = geometry_bank_access_facts(
+            scopes=scopes,
+            families=families,
+        )
+    except Exception as exc:
+        logger.warning("geometry access-policy facts failed for %s: %s", tool_name, exc)
+        permissions, publication_cleared = set(), False
+    return resolve_effective_access(
+        resource_kind="tool",
+        resource_id=f"{tool_name}:{country_scope}" if country_scope else tool_name,
+        authored_pricing=tool_profile(tool_name).get("pricing") or "free",
+        license_permissions=permissions,
+        publication_cleared=publication_cleared,
+    )
+
+
 def _tool_paid_bulk_enforced(tool_name: str) -> bool:
     """True when this tool should actually charge for bulk throughput.
 
@@ -535,19 +579,14 @@ def _tool_paid_bulk_enforced(tool_name: str) -> bool:
     if _tool_family(tool_name) != FAMILY_GEOGRAPHY:
         # Dataset tools price through the pack registry, not here.
         return False
-    try:
-        from mapmover.runtime.geometry_catalog import geometry_bank_permissions
-
-        permissions = geometry_bank_permissions()
-    except Exception as exc:
-        logger.warning("paid-bulk licensing check failed for %s: %s", tool_name, exc)
-        return False
-    if licensing_permits_paid_bulk(permissions):
+    decision = _tool_effective_access(tool_name)
+    if decision.get("settlement_required"):
         return True
     logger.warning(
-        "tool %s is authored paid_bulk but licence permissions %s do not permit paid hosted use; serving free",
+        "tool %s is authored paid_bulk but effective policy %s does not require settlement (%s)",
         tool_name,
-        sorted(permissions) or ["<none>"],
+        decision.get("access_lane"),
+        decision.get("reason_codes"),
     )
     return False
 
@@ -652,8 +691,18 @@ def _tool_rate_limit_for_tier(tool_name: str, tier: str) -> tuple[int, int]:
             _parse_env_int_optional(f"MCP_TOOL_RATE_LIMIT_{suffix}_PLUS")
             or _parse_env_int("MCP_TOOL_RATE_LIMIT_PLUS", max(free_limit, 120))
         )
-        return plus_limit, window_seconds
-    return free_limit, window_seconds
+        return tool_rate_limit(
+            tool_name,
+            tier,
+            default_limit=plus_limit,
+            default_window_seconds=window_seconds,
+        )
+    return tool_rate_limit(
+        tool_name,
+        tier,
+        default_limit=free_limit,
+        default_window_seconds=window_seconds,
+    )
 
 
 def _live_tool_rate_limit_response(request: Request, tool_name: str, request_id: Any) -> JSONResponse | None:
@@ -1783,7 +1832,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             )
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
         limit = _tool_batch_item_limit("resolve_point")
-        paid_bulk = _tool_paid_bulk_enforced("resolve_point")
         # The authored interactive ceiling also defines the verified-account
         # allowance. Licensing decides whether anonymous overage may be sold;
         # it must not silently collapse an account's included entitlement.
@@ -1792,7 +1840,6 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         caller_identity = request_caller_identity(
             request, ip_hash=hash_ip_for_analytics(get_client_ip(request))
         )
-        included_limit = paid_limit if caller_identity.can_use_included_bulk else limit
         target_admin_level = _point_lookup_target_admin_level(payload)
         country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         from mapmover.point_bulk_policy import apply_global_bulk_preset
@@ -1804,6 +1851,12 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         if preset_error is not None:
             error_payload = {"request_id": request_id, "batch_id": batch_id, "error": preset_error}
             return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
+        tool_access = _tool_effective_access("resolve_point", country_scope=country_scope)
+        paid_bulk = bool(tool_access.get("settlement_required"))
+        launch_free_bulk = bool(
+            tool_access.get("allow") and tool_access.get("access_lane") == "launch_free"
+        )
+        included_limit = paid_limit if caller_identity.can_use_included_bulk or launch_free_bulk else limit
         shape_error = _point_bulk_shape_error(
             point_count=len(points), country_scope=country_scope,
             target_admin_level=target_admin_level, bulk_preset=bulk_preset, threshold=limit,

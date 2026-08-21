@@ -470,8 +470,8 @@ class PaidBulkLicensingTests(unittest.TestCase):
         import mapmover.routes.mcp as mcp_module
 
         with mock.patch(
-            "mapmover.runtime.geometry_catalog.geometry_bank_permissions",
-            return_value={"paid", "free"},
+            "mapmover.runtime.geometry_catalog.geometry_bank_access_facts",
+            return_value=({"paid", "free"}, True),
         ):
             self.assertFalse(mcp_module._tool_paid_bulk_enforced("resolve_point"))
 
@@ -479,8 +479,8 @@ class PaidBulkLicensingTests(unittest.TestCase):
         import mapmover.routes.mcp as mcp_module
 
         with mock.patch(
-            "mapmover.runtime.geometry_catalog.geometry_bank_permissions",
-            return_value={"paid"},
+            "mapmover.runtime.geometry_catalog.geometry_bank_access_facts",
+            return_value=({"paid"}, True),
         ):
             self.assertTrue(mcp_module._tool_paid_bulk_enforced("resolve_point"))
 

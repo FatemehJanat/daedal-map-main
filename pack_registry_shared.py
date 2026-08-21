@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from access_policy_shared import resolve_effective_access
 from tool_access_shared import (
     tool_free_item_limit,
     tool_inline_item_limit,
@@ -506,6 +507,15 @@ def tool_family_catalog_entry(pack_id: str | None) -> dict:
             "pricing": tool_pricing(name),
             "limits": {key: value for key, value in limits.items() if value is not None},
         }
+        tool["effective_access"] = resolve_effective_access(
+            resource_kind="tool",
+            resource_id=name,
+            authored_pricing=tool_pricing(name),
+            # This public discovery projection answers what the operator policy
+            # does to an otherwise eligible tool. Exact geometry licence and
+            # release clearance are rechecked by the execution route.
+            license_permissions={"paid"},
+        )
         tools.append(tool)
     paid_tools = [tool["name"] for tool in tools if tool_is_paid_bulk(str(tool.get("name") or ""))]
     return {
@@ -516,6 +526,10 @@ def tool_family_catalog_entry(pack_id: str | None) -> dict:
         "description": profile.get("mcp_description"),
         "pricing": pricing,
         "paid_data_calls": pricing != "free",
+        "effective_paid_data_calls": any(
+            bool((tool.get("effective_access") or {}).get("settlement_required"))
+            for tool in tools
+        ),
         "tools": tools,
         "access_summary": {
             "model": "mixed" if paid_tools else "free",

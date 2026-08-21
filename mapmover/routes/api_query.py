@@ -20,6 +20,7 @@ from mapmover.api_query_commercial import (
     commercial_access_response,
     forwarded_commercial_headers,
     get_trusted_artifact_token,
+    pack_effective_access,
     pack_requires_commercial_access,
     post_commercial_access,
     pricing_amount_usdc_base_units,
@@ -70,6 +71,38 @@ from mapmover.storage_mode import get_runtime_mode
 router = APIRouter()
 
 EXACT_ID_ALIAS_FIELDS = {"event_id", "storm_id", "fire_id", "id"}
+
+
+def _source_access_facts(metadata: dict[str, Any]) -> tuple[set[str], bool]:
+    """Read legal eligibility and public-release clearance from one source.
+
+    Data and geometry use the same factual fields.  Legacy data sources without
+    an explicit review envelope remain governed by their published catalog
+    permission; an explicit pending/rejected condition always fails closed.
+    """
+    permissions: set[str] = set()
+    envelopes = [metadata]
+    for key in ("license_policy", "source_license"):
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            envelopes.append(value)
+    for envelope in envelopes:
+        value = str(envelope.get("permission") or "").strip().lower()
+        if value:
+            permissions.add(value)
+
+    cleared = True
+    for envelope in envelopes:
+        review = str(envelope.get("license_review_status") or "").strip().lower()
+        if review in {"needs_review", "rejected", "unreviewed", "pending"}:
+            cleared = False
+        secondary = envelope.get("secondary_use")
+        if isinstance(secondary, dict):
+            status = str(secondary.get("status") or "").strip().lower()
+            disposition = str(secondary.get("disposition") or "").strip().lower()
+            if status in {"needs_review", "requires_application"} or disposition in {"", "pending", "needs_review"}:
+                cleared = False
+    return permissions, cleared
 
 
 def _get_request_ip(request: Request) -> str | None:
@@ -129,6 +162,7 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     artifact_token = get_trusted_artifact_token(req)
     request_fingerprint: str | None = None
     query_scope: dict[str, Any] | None = None
+    effective_access_lane: str | None = None
 
     if artifact_token is not None:
         payment_rail = "trusted_artifact"
@@ -146,6 +180,8 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
             return "local_installed"
         if payment_rail:
             return "paid"
+        if effective_access_lane:
+            return effective_access_lane
         if pack_id_hint and pack_requires_commercial_access(pack_id_hint):
             return "paid"
         return "free"
@@ -355,11 +391,39 @@ async def execute_query_dataset_payload(req: Request, payload: dict[str, Any]) -
     if resolved_from_pack:
         req.state.analytics_pack_id = pack_id or spec.pack_id
     local_installed_access = get_runtime_mode() == "local"
-    commercial_verifier_required = (
-        pack_requires_commercial_access(spec.pack_id)
-        and not local_installed_access
+    source_access_metadata = load_source_metadata(spec.metadata_source_id or spec.source_id) or {}
+    source_permissions, publication_cleared = _source_access_facts(source_access_metadata)
+    effective_access = pack_effective_access(
+        spec.pack_id,
+        license_permissions=source_permissions or None,
+        publication_cleared=publication_cleared,
+        caller_authenticated=bool(auth_user_id),
+        caller_entitled=caller_identity.can_use_included_bulk,
+        local_installed=local_installed_access,
+        trusted_artifact=artifact_token is not None,
     )
-    if pack_requires_commercial_access(spec.pack_id) and local_installed_access:
+    effective_access_lane = str(effective_access.get("access_lane") or "") or None
+    existing_meta = getattr(req.state, "analytics_metadata", {})
+    existing_meta = existing_meta if isinstance(existing_meta, dict) else {}
+    req.state.analytics_metadata = {
+        **existing_meta,
+        "access_policy_revision": effective_access.get("policy_revision"),
+        "access_policy_fingerprint": effective_access.get("policy_fingerprint"),
+        "effective_access_lane": effective_access_lane,
+    }
+    if not effective_access.get("allow"):
+        return error_response(
+            request_id,
+            "source_access_blocked",
+            "This source is not cleared for the requested hosted access lane.",
+            503,
+            details={"reason_codes": effective_access.get("reason_codes") or []},
+            retry_hint="Use a published source or contact the operator about source clearance.",
+            pack_id=spec.pack_id,
+            source_id=source_id,
+        )
+    commercial_verifier_required = bool(effective_access.get("settlement_required"))
+    if effective_access_lane == "local_installed":
         payment_rail = "local_installed"
 
     available_columns = get_api_source_columns(spec)

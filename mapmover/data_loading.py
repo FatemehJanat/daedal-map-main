@@ -109,7 +109,16 @@ def _paid_pack_ids() -> frozenset[str]:
 
 
 def _pack_is_paid(pack_id: str | None) -> bool:
-    return str(pack_id or "").strip() in _paid_pack_ids()
+    from .api_query_commercial import pack_requires_commercial_access
+
+    return pack_requires_commercial_access(pack_id)
+
+
+def _effective_pack_pricing_sets() -> tuple[list[str], list[str]]:
+    pack_ids = sorted(set(_free_pack_ids()) | set(_paid_pack_ids()))
+    paid = [pack_id for pack_id in pack_ids if _pack_is_paid(pack_id)]
+    free = [pack_id for pack_id in pack_ids if pack_id not in set(paid)]
+    return free, paid
 
 
 def _hydrate_api_catalog_payload(payload: dict | None) -> dict:
@@ -142,8 +151,9 @@ def _hydrate_api_guide_payload(payload: dict | None) -> dict:
         commercial_access = {}
     commercial_access["required_for_data_calls"] = False
     commercial_access["required_for_some_data_calls"] = True
-    commercial_access["free_pack_ids"] = sorted(_free_pack_ids())
-    commercial_access["paid_pack_ids"] = sorted(_paid_pack_ids())
+    effective_free, effective_paid = _effective_pack_pricing_sets()
+    commercial_access["free_pack_ids"] = effective_free
+    commercial_access["paid_pack_ids"] = effective_paid
     hydrated["commercial_access"] = commercial_access
 
     current_live_scope = hydrated.get("current_live_scope")
@@ -156,8 +166,8 @@ def _hydrate_api_guide_payload(payload: dict | None) -> dict:
         if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
     ]
     current_live_scope["agent_ready_packs"] = sorted(pack_ids)
-    current_live_scope["free_pack_ids"] = sorted(_free_pack_ids())
-    current_live_scope["paid_pack_ids"] = sorted(_paid_pack_ids())
+    current_live_scope["free_pack_ids"] = effective_free
+    current_live_scope["paid_pack_ids"] = effective_paid
     hydrated["current_live_scope"] = current_live_scope
     return hydrated
 

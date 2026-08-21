@@ -17,7 +17,11 @@ from mapmover.api_query_commercial import (
     settlement_headers,
 )
 from mapmover.caller_identity import request_caller_identity
-from mapmover.routes.mcp import _access_lane, _commercial_access_decision, _tool_paid_bulk_enforced
+from mapmover.routes.mcp import (
+    _access_lane,
+    _commercial_access_decision,
+    _tool_effective_access,
+)
 from mapmover.security import get_client_ip
 from tool_access_shared import tool_effective_item_limit, tool_payment_required_payload, tool_quote
 from mapmover.routes.system import _require_local_or_admin
@@ -451,6 +455,7 @@ async def resolve_points_json_endpoint(req: Request):
         }
         return JSONResponse(payload, status_code=402)
     commercial_context = None
+    launch_free_access = False
     if len(points) > included_limit and trusted_token is None:
         source = str(body.get("source") or "").strip()[:80] or "unknown"
         batch_id = str(body.get("batch_id") or "").strip()[:120] or None
@@ -462,7 +467,8 @@ async def resolve_points_json_endpoint(req: Request):
             paid_limit=paid_limit,
         )
         request_id = str(body.get("request_id") or batch_id or f"point-batch-{int(time.time() * 1000)}")
-        if commercial_access_enabled() and _tool_paid_bulk_enforced("resolve_point"):
+        effective_access = _tool_effective_access("resolve_point")
+        if commercial_access_enabled() and effective_access.get("settlement_required"):
             decision, verifier_payload = await _commercial_access_decision(
                 req,
                 tool_name="resolve_point",
@@ -490,6 +496,10 @@ async def resolve_points_json_endpoint(req: Request):
                 return response
         else:
             commercial_context = None
+            launch_free_access = bool(
+                effective_access.get("allow")
+                and effective_access.get("access_lane") == "launch_free"
+            )
         metadata = {
             "surface": "test_data" if source == "try_dataset" else source,
             "event": "point_lookup_batch",
@@ -509,21 +519,21 @@ async def resolve_points_json_endpoint(req: Request):
                 capability_id="point_lookup_batch",
                 pack_id="geography_tools",
                 source_id="resolve_points",
-                decision="allow" if commercial_context is not None else "challenge",
-                payment_rail="commercial_access",
+                decision="allow" if commercial_context is not None or launch_free_access else "challenge",
+                payment_rail="launch_free" if launch_free_access else "commercial_access",
                 auth_user_id=caller_identity.auth_user_id,
                 ip_hash=hash_ip_for_analytics(get_client_ip(req)),
                 user_agent=req.headers.get("user-agent", "").strip() or None,
                 execution_latency_ms=int((time.perf_counter() - started_at) * 1000),
                 row_count=len(points),
-                status_code=200 if commercial_context is not None else 402,
-                error_code=None if commercial_context is not None else "payment_required",
+                status_code=200 if commercial_context is not None or launch_free_access else 402,
+                error_code=None if commercial_context is not None or launch_free_access else "payment_required",
                 query_granularity=f"bulk_{len(points)}",
                 metadata=metadata,
             )
         except Exception as exc:
             logger.warning(f"Point lookup batch challenge analytics failed: {exc}")
-        if commercial_context is None:
+        if commercial_context is None and not launch_free_access:
             return JSONResponse(quote_payload, status_code=402)
 
     include_geometry = False
