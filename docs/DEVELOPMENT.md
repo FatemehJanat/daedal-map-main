@@ -50,16 +50,53 @@ The package script starts Uvicorn on port `7000` with reload enabled.
 
 ## Testing
 
-Run one focused unittest:
+`run_tests.py` is the entry point. It selects which test files pytest runs; it
+does not change, skip, or reorder any test, and the known-gap markers behave
+exactly as `tests/conftest.py` documents.
 
 ```powershell
-python -m unittest tests.test_public_catalog_builder
+python run_tests.py                  # default lane, ~50s, 74 of 76 files
+python run_tests.py geometry         # one group
+python run_tests.py api chat         # several groups
+python run_tests.py --changed        # files related to your uncommitted work
+python run_tests.py --list           # groups, contents, and which are slow
+python run_tests.py --all            # everything, ~10 min
 ```
 
-Run unittest discovery:
+Anything after `--` goes to pytest unchanged:
 
 ```powershell
-python -m unittest discover -s tests
+python run_tests.py geometry -- -x -vv
+python run_tests.py --all -- --durations=25
+python run_tests.py --all -- -m "not spine_gap and not fixture_drift"
+```
+
+Groups are `geometry`, `ops`, `api`, `chat`, `catalog`, and `account`.
+
+### Why there is a default lane
+
+Two files are effectively the whole cost of the suite:
+
+| File | Time | Dominated by |
+|---|---|---|
+| `test_mcp_tool_universe_gates.py` | ~500s | `test_trusted_token_lifts_the_cap_on_every_capped_tool` |
+| `test_preprocessor_location_spine.py` | ~450s | `test_geometry_backed_query_location_samples` (435s alone) |
+
+Everything else combined runs in about 50 seconds. Both slow files walk real
+geometry over a broad sample rather than a fixture, which is what makes them
+worth having and what makes them slow, so they are excluded from the default
+lane rather than trimmed. They still run under `--all` and `--slow`, and they
+should run before anything touching geometry resolution, the tool universe, or
+access caps ships.
+
+`run_tests.py --audit` fails if a test file belongs to no group, so a new file
+cannot silently drop out of every group run. Run it if you add a test file.
+
+Run one file or one test directly when you want no selection logic at all:
+
+```powershell
+python -m pytest tests/test_public_catalog_builder.py -q
+python -m pytest tests/test_caller_identity.py::CallerIdentityTests -vv
 ```
 
 Some repository tests may require optional data, provider credentials, or
