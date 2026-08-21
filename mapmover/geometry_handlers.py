@@ -535,8 +535,6 @@ def _concat_geometry_frames(frames: list[pd.DataFrame], requested_ids: list[str]
 def _direct_family_bank_path(family: str | None, iso3: str) -> Path | None:
     family_value = str(family or "").strip().lower()
     iso3_value = str(iso3 or "").strip().upper()
-    if family_value == "regional_base":
-        return DATA_ROOT / "geometry" / "countries" / "EUR" / "geometry.parquet"
     if family_value == "overlay_zcta" and iso3_value:
         return DATA_ROOT / "geometry" / "countries" / iso3_value / "zcta" / f"{iso3_value}.parquet"
     if family_value == "overlay_tribal" and iso3_value:

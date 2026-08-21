@@ -51,16 +51,16 @@ class GeometryLoaderRuntimeTests(unittest.TestCase):
     def test_prefers_country_geometry_base_before_crosswalk_fallback(self):
         def accessible(path: Path | None) -> bool:
             text = str(path)
-            return text.endswith("geometry\\countries\\EUR\\geometry.parquet")
+            return text.endswith("geometry\\countries\\GBR\\geometry.parquet")
 
         with patch("mapmover.runtime.geometry_loader.parquet_accessible", side_effect=accessible), patch(
             "mapmover.runtime.geometry_loader.load_country_crosswalk",
             return_value={"mappings": {"FRA-IDF": "FRA-GEO"}},
         ):
-            resolved = resolve_country_geometry_source("EUR")
+            resolved = resolve_country_geometry_source("GBR")
 
         self.assertEqual(resolved["source_kind"], "country_base")
-        self.assertTrue(str(resolved["parquet_file"]).endswith("geometry\\countries\\EUR\\geometry.parquet"))
+        self.assertTrue(str(resolved["parquet_file"]).endswith("geometry\\countries\\GBR\\geometry.parquet"))
         self.assertFalse(resolved["uses_crosswalk"])
 
     def test_uses_crosswalk_base_when_local_geometry_missing(self):

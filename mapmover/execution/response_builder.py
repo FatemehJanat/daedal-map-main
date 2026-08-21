@@ -232,32 +232,26 @@ def build_metrics_response(
             iso3 = loc_id.split("-")[0] if "-" in loc_id else loc_id
             iso3_codes.add(iso3)
 
-        if "eurostat" in sources_used:
-            geometry_df = load_geometry_rows_by_loc_ids_func("EUR", list(loc_ids_to_check))
-            if geometry_df is not None and not geometry_df.empty:
-                keep_cols = [col for col in ["loc_id", "name", "geometry"] if col in geometry_df.columns]
-                geometry_df = geometry_df[keep_cols]
-        else:
-            geometry_rows = []
-            for iso3 in iso3_codes:
-                country_loc_ids = sorted(
-                    loc_id for loc_id in loc_ids_to_check
-                    if (loc_id.split("-")[0] if "-" in loc_id else loc_id) == iso3
-                )
-                if not country_loc_ids:
-                    continue
+        geometry_rows = []
+        for iso3 in iso3_codes:
+            country_loc_ids = sorted(
+                loc_id for loc_id in loc_ids_to_check
+                if (loc_id.split("-")[0] if "-" in loc_id else loc_id) == iso3
+            )
+            if not country_loc_ids:
+                continue
 
-                country_geom = load_geometry_rows_by_loc_ids_func(iso3, country_loc_ids)
-                if country_geom is None or country_geom.empty:
-                    country_geom = load_country_parquet_func(iso3, admin_level=primary_admin_num)
-                    if country_geom is not None and not country_geom.empty:
-                        country_geom = country_geom[country_geom["loc_id"].isin(country_loc_ids)]
-
+            country_geom = load_geometry_rows_by_loc_ids_func(iso3, country_loc_ids)
+            if country_geom is None or country_geom.empty:
+                country_geom = load_country_parquet_func(iso3, admin_level=primary_admin_num)
                 if country_geom is not None and not country_geom.empty:
-                    keep_cols = [col for col in ["loc_id", "name", "geometry"] if col in country_geom.columns]
-                    geometry_rows.append(country_geom[keep_cols])
+                    country_geom = country_geom[country_geom["loc_id"].isin(country_loc_ids)]
 
-            geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
+            if country_geom is not None and not country_geom.empty:
+                keep_cols = [col for col in ["loc_id", "name", "geometry"] if col in country_geom.columns]
+                geometry_rows.append(country_geom[keep_cols])
+
+        geometry_df = pd.concat(geometry_rows, ignore_index=True) if geometry_rows else None
 
     if is_multi_level and geometry_df is not None and loc_ids_to_check:
         relevant_loc_ids = set(loc_ids_to_check)

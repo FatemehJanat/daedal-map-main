@@ -150,6 +150,16 @@ class ReferenceGraphRuntimeTests(unittest.TestCase):
         self.assertEqual(references["family"], "test_sidechain")
         self.assertTrue(any(item.get("relationship_id") == "TST-REL-1" for item in references["references"]))
 
+    def test_reference_resolution_scopes_graph_aliases_to_requested_country(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_graph.resolve_alias",
+            return_value=[{"loc_id": "TST-A-001"}],
+        ) as resolver:
+            resolved = resolve_reference(from_system="test.code", value="001", iso3="TST")
+
+        self.assertTrue(resolved["ok"])
+        resolver.assert_called_once_with("test.code", "001", limit=10, iso3="TST")
+
     def test_loc_id_info_falls_back_to_graph_identity(self) -> None:
         with mock.patch(
             "mapmover.geometry_handlers._get_selection_metadata_for_loc_id",

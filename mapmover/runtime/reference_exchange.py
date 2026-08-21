@@ -715,7 +715,7 @@ def resolve_reference(
         try:
             from .reference_graph import identity as graph_identity, resolve_alias
 
-            graph_matches = resolve_alias(system, text, limit=limit or 10)
+            graph_matches = resolve_alias(system, text, limit=limit or 10, iso3=iso3)
         except Exception:
             graph_matches = []
         if graph_matches:

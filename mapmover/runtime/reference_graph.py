@@ -485,14 +485,28 @@ def aliases_for_loc_id(loc_id: str, *, limit: int = 100) -> list[dict[str, Any]]
         connection.close()
 
 
-def resolve_alias(reference_system: str, external_id: str, *, limit: int = 25) -> list[dict[str, Any]]:
+def resolve_alias(
+    reference_system: str,
+    external_id: str,
+    *,
+    limit: int = 25,
+    iso3: str | None = None,
+) -> list[dict[str, Any]]:
     if not reference_graph_available():
         return []
-    root = active_reference_graph_root()
+    roots = reference_graph_roots()
+    country = str(iso3 or "").strip().upper()
+    selected_roots = [roots[country]] if country in roots else ([] if country else list(roots.values()))
+    global_root = global_reference_graph_root()
+    if global_root and not country:
+        selected_roots.append(global_root)
+    source = _table_source_for_roots("aliases", selected_roots)
+    if not source:
+        return []
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"""SELECT * FROM read_parquet({_table_source('aliases')}, union_by_name=True)
+            f"""SELECT * FROM read_parquet({source}, union_by_name=True)
                 WHERE lower(reference_system) = lower(?) AND external_id = ?
                 ORDER BY loc_id LIMIT ?""",
             [str(reference_system), str(external_id), max(1, int(limit))],

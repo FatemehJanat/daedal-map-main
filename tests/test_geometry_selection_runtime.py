@@ -157,9 +157,7 @@ class GeometrySelectionRuntimeTests(unittest.TestCase):
         self.assertNotIn("geometry", load_subcounty.call_args.kwargs["columns"])
 
     def test_direct_family_bank_registry_maps_known_overlay_families(self):
-        regional_path = _direct_family_bank_path("regional_base", "DEU")
-        self.assertIsNotNone(regional_path)
-        self.assertTrue(str(regional_path).replace("\\", "/").endswith("/geometry/countries/EUR/geometry.parquet"))
+        self.assertIsNone(_direct_family_bank_path("regional_base", "DEU"))
         self.assertEqual(
             _direct_family_bank_path("overlay_zcta", "USA").name,
             "USA.parquet",
