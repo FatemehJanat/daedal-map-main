@@ -11,6 +11,7 @@ from mapmover.runtime import reference_exchange
 from mapmover.runtime.reference_exchange import (
     LOC_ID_SYSTEM,
     convert_reference,
+    get_geometry_references,
     list_reference_systems,
     loc_id_references,
     resolve_reference,
@@ -43,13 +44,8 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ambiguous")
         self.assertIsNone(payload["recommended_binding"])
         systems = {candidate["system"] for candidate in payload["candidates"]}
-        # The runtime discovers every country graph, so a five-digit code also
-        # matches the USA graph's own ZCTA alias system. More candidates is the
-        # point of unifying the graphs; it stays ambiguous with no binding.
-        self.assertEqual(
-            systems,
-            {"us_census_geoid", "overlay_zcta", "usa.census.2020.zcta5.geoid"},
-        )
+        # ZCTA evidence comes from an exact graph alias, not a format-built ID.
+        self.assertEqual(systems, {"us_census_geoid", "overlay_zcta"})
         self.assertEqual(payload["warnings"][-1]["code"], "ambiguous_identifier_system")
         question = payload["clarification"]["questions"][0]
         self.assertEqual(question["id"], "reference_system")
@@ -66,8 +62,35 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertIsNone(payload["recommended_binding"])
         self.assertEqual(
             {candidate["system"] for candidate in payload["candidates"]},
-            {"us_census_geoid", "overlay_zcta", "usa.census.2020.zcta5.geoid"},
+            {"us_census_geoid", "overlay_zcta"},
         )
+
+    def test_five_digit_county_does_not_construct_a_nonexistent_zcta(self) -> None:
+        payload = identify_reference_system(["36061"], country_scope="USA")
+
+        self.assertEqual(payload["status"], "matched")
+        self.assertEqual(payload["recommended_binding"]["system"], "us_census_geoid")
+        self.assertEqual(
+            {candidate["system"] for candidate in payload["candidates"]},
+            {"us_census_geoid"},
+        )
+
+    def test_retired_usa_sidechain_ids_fetch_canonical_graph_shapes(self) -> None:
+        payload = get_geometry_references(
+            ["USA-Z-10035", "USA-TRIBAL-2430"],
+            include_polygon=False,
+            include_info=True,
+        )
+
+        self.assertEqual(payload["available"], 2)
+        postal, indigenous = payload["results"]
+        self.assertEqual(postal["loc_id"], "USA-NY-061-024000-POSTAL-10035")
+        self.assertEqual(postal["family"], "postal_area")
+        self.assertIsNone(postal["admin_level"])
+        self.assertEqual(postal["info"]["parent_id"], "")
+        self.assertEqual(indigenous["loc_id"], "USA-AZ-INDIGENOUS-2430")
+        self.assertEqual(indigenous["family"], "indigenous_land_or_region")
+        self.assertIsNone(indigenous["admin_level"])
 
     def test_resolve_census_geoid_is_exact_and_shape_backed(self) -> None:
         payload = resolve_reference(from_system="census_geoid", value="06073000100")
@@ -245,6 +268,45 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
             )
 
         self.assertEqual(artifacts, [artifact])
+
+    def test_bridge_family_alias_selects_the_underlying_artifact(self) -> None:
+        artifact = {
+            "status": "complete",
+            "source_family": "overlay_zcta",
+            "source_family_aliases": ["postal_area"],
+            "target_admin_level": "admin_2",
+            "artifact_path": "published/geometry/bridges/overlay_zcta_to_admin_2_USA.parquet",
+        }
+        with (
+            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"bridge_artifacts": [artifact]}),
+            mock.patch("mapmover.runtime.reference_exchange.is_cloud_mode", return_value=True),
+        ):
+            artifacts = reference_exchange._bridge_artifacts(
+                source_family="postal_area",
+                target_admin_level="admin_2",
+                iso3="USA",
+            )
+
+        self.assertEqual(artifacts, [artifact])
+
+    def test_country_first_eez_id_resolves_as_catalog_alias(self) -> None:
+        entry = {
+            "loc_id": "EEZ-AUS",
+            "label": "Australian Exclusive Economic Zone",
+            "family": "marine_eez",
+            "aliases": ["AUS-EEZ"],
+            "resolvable": True,
+        }
+        from mapmover.runtime import geometry_catalog
+
+        with mock.patch.object(geometry_catalog, "load_geometry_catalog", return_value={"named_reference_objects": [entry]}):
+            geometry_catalog._named_index.cache_clear()
+            try:
+                resolved = geometry_catalog.resolve_geometry_name("AUS-EEZ")
+            finally:
+                geometry_catalog._named_index.cache_clear()
+
+        self.assertEqual(resolved["loc_id"], "EEZ-AUS")
 
     def test_listed_systems_declare_whether_they_are_actually_exchangeable(self) -> None:
         listing = list_reference_systems()

@@ -6,19 +6,47 @@ from mapmover.runtime.geometry_loader import resolve_country_geometry_source
 
 
 class GeometryLoaderRuntimeTests(unittest.TestCase):
-    def test_prefers_country_county_geometry_for_admin2(self):
+    def test_prefers_shared_authority_spine_for_admin2(self):
         with patch(
             "mapmover.runtime.geometry_loader.parquet_accessible",
-            side_effect=lambda path: str(path).endswith("geometry\\countries\\USA\\county.parquet"),
+            side_effect=lambda path: str(path).endswith(
+                "geometry\\countries\\USA\\admin_spine\\admin_0_3.parquet"
+            ),
         ), patch(
             "mapmover.runtime.geometry_loader.load_country_crosswalk",
             return_value={"mappings": {"USA-VA": "USA-G125186"}},
         ):
             resolved = resolve_country_geometry_source("USA", admin_level=2)
 
-        self.assertEqual(resolved["source_kind"], "country_county")
-        self.assertTrue(str(resolved["parquet_file"]).endswith("geometry\\countries\\USA\\county.parquet"))
+        self.assertEqual(resolved["source_kind"], "authority_spine")
+        self.assertTrue(
+            str(resolved["parquet_file"]).endswith(
+                "geometry\\countries\\USA\\admin_spine\\admin_0_3.parquet"
+            )
+        )
         self.assertFalse(resolved["uses_crosswalk"])
+
+    def test_prefers_shared_authority_spine_for_unfiltered_country_load(self):
+        with patch(
+            "mapmover.runtime.geometry_loader.parquet_accessible",
+            side_effect=lambda path: str(path).endswith(
+                "geometry\\countries\\CAN\\admin_spine\\admin_0_3.parquet"
+            ),
+        ), patch("mapmover.runtime.geometry_loader.load_country_crosswalk", return_value=None):
+            resolved = resolve_country_geometry_source("can")
+
+        self.assertEqual(resolved["source_kind"], "authority_spine")
+
+    def test_deeper_admin_level_does_not_use_admin_0_3_spine(self):
+        def accessible(path: Path | None) -> bool:
+            return str(path).endswith("geometry\\countries\\CAN\\geometry.parquet")
+
+        with patch("mapmover.runtime.geometry_loader.parquet_accessible", side_effect=accessible), patch(
+            "mapmover.runtime.geometry_loader.load_country_crosswalk", return_value=None
+        ):
+            resolved = resolve_country_geometry_source("CAN", admin_level=4)
+
+        self.assertEqual(resolved["source_kind"], "country_base")
 
     def test_prefers_country_geometry_base_before_crosswalk_fallback(self):
         def accessible(path: Path | None) -> bool:

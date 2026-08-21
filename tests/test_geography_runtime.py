@@ -13,10 +13,11 @@ from mapmover.runtime.geography_reference import (
 class GeographyRuntimeTests(unittest.TestCase):
     def test_derive_eurostat_geo_level_from_loc_id_shape(self):
         self.assertEqual(derive_eurostat_geo_level("FRA"), "admin_0")
-        self.assertEqual(derive_eurostat_geo_level("FRA-IDF"), "admin_1")
-        self.assertEqual(derive_eurostat_geo_level("FRA-IDF1"), "admin_2")
-        self.assertEqual(derive_eurostat_geo_level("FRA-IDF11"), "admin_3")
+        self.assertEqual(derive_eurostat_geo_level("FRA-FR1"), "admin_1")
+        self.assertEqual(derive_eurostat_geo_level("FRA-FR10"), "admin_2")
+        self.assertEqual(derive_eurostat_geo_level("FRA-FR101"), "admin_3")
         self.assertIsNone(derive_eurostat_geo_level("FRA-ID"))
+        self.assertIsNone(derive_eurostat_geo_level("AUS-ACT"))
 
     def test_normalize_county_slug_removes_common_suffixes(self):
         self.assertEqual(normalize_county_slug("Fairfax-County"), "fairfax")

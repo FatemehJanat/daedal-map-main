@@ -228,10 +228,11 @@ def load_country_parquet(iso3: str, admin_level: int = None, columns: list[str] 
     Load country geometry parquet file into cache.
     Returns DataFrame or None if file doesn't exist.
 
-    Priority order (3-tier fallback):
-    1. geometry/countries/{ISO3}/geometry.parquet - Country-specific geometry (NUTS, ABS LGA, etc.)
-    2. geometry/countries/{ISO3}/crosswalk.json + geometry/{ISO3}.parquet - Crosswalk translation to geoBoundaries
-    3. geometry/{ISO3}.parquet - Global geoBoundaries geometry (fallback)
+    Priority order:
+    1. geometry/countries/{ISO3}/admin_spine/admin_0_3.parquet - released country authority
+    2. geometry/countries/{ISO3}/geometry.parquet - legacy country-specific geometry
+    3. geometry/countries/{ISO3}/crosswalk.json + geometry/{ISO3}.parquet
+    4. geometry/{ISO3}.parquet - global GeoBoundaries fallback
 
     If admin_level is specified, uses predicate pushdown for efficiency.
     """
@@ -397,21 +398,10 @@ def load_country_parquet_viewport(iso3: str, admin_level: int | None, bbox: tupl
     """
     min_lon, min_lat, max_lon, max_lat = bbox
 
-    country_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "geometry.parquet"
-    crosswalk_file = DATA_ROOT / "geometry" / "countries" / iso3 / "crosswalk.json"
-    global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
-
-    parquet_file = None
-    crosswalk_data = None
-
-    if _parquet_accessible(country_geom_file):
-        parquet_file = country_geom_file
-    elif crosswalk_file.exists() and _parquet_accessible(global_geom_file):
-        crosswalk_data = load_country_crosswalk(iso3)
-        parquet_file = global_geom_file
-    elif _parquet_accessible(global_geom_file):
-        parquet_file = global_geom_file
-    else:
+    resolved = resolve_country_geometry_source(iso3, admin_level=admin_level)
+    parquet_file = resolved["parquet_file"]
+    crosswalk_data = resolved["crosswalk"]
+    if parquet_file is None:
         return None
 
     columns = _ensure_loc_id_projection(columns)
@@ -571,7 +561,8 @@ def _geometry_family_for_loc_id(loc_id: str) -> str | None:
     try:
         from .runtime.reference_graph import identity as graph_identity
 
-        family = str((graph_identity(loc_id) or {}).get("family") or "").strip()
+        row = graph_identity(loc_id) or {}
+        family = str(row.get("geography_family") or row.get("family") or "").strip()
         if family:
             return family
     except Exception:
@@ -704,16 +695,18 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
     if reference is not None and not reference.empty:
         return reference
 
-    county_geom_file = DATA_ROOT / "geometry" / "countries" / iso3 / "county.parquet"
+    admin_source = resolve_country_geometry_source(iso3, admin_level=2)
+    county_geom_file = admin_source["parquet_file"]
     crosswalk_data = load_country_crosswalk(iso3) or {}
     local_to_geo, geo_to_local = build_crosswalk_maps(crosswalk_data)
     requested_set = set(requested_ids)
 
-    # USA county geometry is stored under the local county id family
-    # (e.g. USA-CA-001), while the runtime often joins on geometry-space
-    # G-IDs (e.g. USA-G123331-G224259). Query the county file in local id
-    # space, then translate rows back into the caller's requested id space.
-    if (prefer_local and county_geom_file.exists()) or _parquet_accessible(county_geom_file):
+    # Query the shared authority spine in canonical/local id space, translating
+    # a legacy global G-ID through the crosswalk only when the caller supplied
+    # one. Exact graph-owned family geometry was already attempted above.
+    if county_geom_file is not None and (
+        (prefer_local and county_geom_file.exists()) or _parquet_accessible(county_geom_file)
+    ):
         county_query_ids = []
         for loc_id in requested_ids:
             local_id = geo_to_local.get(loc_id, loc_id)
@@ -723,7 +716,7 @@ def load_geometry_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[s
         if county_query_ids:
             try:
                 # The live NWS overlay repeatedly resolves US county ids. A
-                # bounded Railway prewarm can hold this exact county bank,
+                # bounded Railway prewarm can hold the Admin2 authority slice,
                 # while every other caller still uses predicate pushdown.
                 county_cache_key = ("exact_county", iso3)
                 with _country_parquet_cache_lock:
@@ -2274,13 +2267,13 @@ def _reference_graph_location_info(loc_id: str) -> dict | None:
         row = identity(loc_id)
         if not row:
             return None
-        source = where_is_geography_data()
+        source = where_is_geography_data(loc_id)
         return {
             "loc_id": row.get("loc_id") or loc_id,
             "name": row.get("name"),
             "admin_level": row.get("admin_level"),
             "parent_id": row.get("parent_loc_id"),
-            "family": row.get("family"),
+            "family": row.get("geography_family") or row.get("family"),
             "iso3": str(row.get("loc_id") or loc_id).split("-", 1)[0],
             "has_polygon": bool(row.get("has_shape")),
             "valid_from": row.get("valid_from"),
@@ -3430,21 +3423,23 @@ def prewarm_geometry() -> None:
     # NWS is the only current live feed with a bounded, repeatedly reused
     # national administrative geometry set.  Loading the exact county bank
     # once prevents each retained alert frame from paying an R2/DuckDB lookup.
-    county_geom_file = DATA_ROOT / "geometry" / "countries" / "USA" / "county.parquet"
+    county_geom_file = resolve_country_geometry_source("USA", admin_level=2)["parquet_file"]
     county_cache_key = ("exact_county", "USA")
     try:
         with _country_parquet_cache_lock:
             cached = _country_parquet_cache.get(county_cache_key)
-        if cached is None:
-            counties = select_rows(county_geom_file)
+        if cached is None and county_geom_file is not None:
+            counties = select_rows(county_geom_file, exact_filters={"admin_level": 2})
             if counties is not None and not counties.empty:
                 with _country_parquet_cache_lock:
                     _cache_country_frame(county_cache_key, counties)
                 logger.info("prewarm geometry USA county bank: %d rows in %.1fs", len(counties), _time.monotonic() - t0)
             else:
                 logger.warning("prewarm geometry USA county bank: empty result")
-        else:
+        elif cached is not None:
             logger.info("prewarm geometry USA county bank: reused %d rows", len(cached))
+        else:
+            logger.warning("prewarm geometry USA county bank: authority spine unavailable")
     except Exception as exc:
         logger.warning("prewarm geometry USA county bank failed: %s", exc)
 

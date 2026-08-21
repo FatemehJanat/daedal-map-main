@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 from pyproj import CRS, Transformer
 from pyproj.exceptions import ProjError
@@ -78,10 +79,18 @@ def _read_shape_partition(path: Path, loc_ids: list[str]) -> pd.DataFrame:
             "source_id", "source_release", "area_square_km",
         ) if column in available
     ]
+    schema = pq.read_schema(path)
+    geometry_type = schema.field("geometry").type
+    if _geoparquet_crs(str(path.resolve())) is not None:
+        geometry_expression = 'ST_AsWKB("geometry") AS __geometry_wkb'
+    elif pa.types.is_binary(geometry_type) or pa.types.is_large_binary(geometry_type):
+        geometry_expression = '"geometry" AS __geometry_wkb'
+    else:
+        geometry_expression = '"geometry"'
     selected = ", ".join(f'"{column}"' for column in ordinary)
     placeholders = ", ".join("?" for _ in loc_ids)
     sql = (
-        f"SELECT {selected}, ST_AsWKB(\"geometry\") AS __geometry_wkb "
+        f"SELECT {selected}, {geometry_expression} "
         f"FROM read_parquet(?) WHERE \"loc_id\" IN ({placeholders})"
     )
     try:

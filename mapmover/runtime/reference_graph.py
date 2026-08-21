@@ -45,7 +45,7 @@ FULL_GRAPH_FILES = (
 #: cannot return through ``SELECT *``. Naming the columns keeps the result
 #: stable; ``union_by_name`` fills a missing one with NULL.
 IDENTITY_COLUMNS = (
-    "loc_id", "family", "native_id", "name", "parent_loc_id", "admin_level",
+    "loc_id", "family", "geography_family", "native_id", "name", "parent_loc_id", "admin_level",
     "namespace_release", "valid_from", "valid_to", "has_shape", "geometry_bank",
     "geometry_status", "source_system", "source_vintage", "geometry_loc_id",
     "source_loc_id", "sibling_level", "sibling_anchor_loc_id",
@@ -289,8 +289,9 @@ def reference_graph_available() -> bool:
     return bool(reference_graph_roots() or global_reference_graph_root())
 
 
-def where_is_geography_data() -> dict[str, Any]:
-    root = active_reference_graph_root()
+def where_is_geography_data(loc_id: str | None = None) -> dict[str, Any]:
+    matching_roots = graph_roots_for_loc_id(loc_id) if loc_id else []
+    root = matching_roots[0] if matching_roots else active_reference_graph_root()
     configured = str(os.getenv(ENV_NAME, "")).strip()
     available = reference_graph_available()
     result: dict[str, Any] = {

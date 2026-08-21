@@ -1109,6 +1109,14 @@ def _provenance_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "artifact_path": "artifacts",
     }
     found: dict[str, set[str]] = {target: set() for target in set(aliases.values())}
+
+    def usable(entry: Any) -> bool:
+        if entry in (None, ""):
+            return False
+        if isinstance(entry, numbers.Real) and not isinstance(entry, (int, bool)):
+            return math.isfinite(float(entry))
+        return str(entry).strip().lower() not in {"nan", "nat", "<na>", "none", "null"}
+
     stack: list[Any] = [payload]
     while stack:
         value = stack.pop()
@@ -1119,7 +1127,7 @@ def _provenance_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 target = aliases.get(str(key))
                 if target and item not in (None, "", [], {}):
                     values = item if isinstance(item, (list, tuple, set)) else [item]
-                    found[target].update(str(entry) for entry in values if entry not in (None, ""))
+                    found[target].update(str(entry) for entry in values if usable(entry))
                 if isinstance(item, (dict, list, tuple)):
                     stack.append(item)
         elif isinstance(value, (list, tuple)):

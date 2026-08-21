@@ -34,7 +34,7 @@ def resolve_country_geometry_source(iso3: str, *, admin_level: int | None = None
     - `parquet_file`: selected parquet path or None
     - `crosswalk`: loaded crosswalk dict or None
     - `uses_crosswalk`: whether runtime loc_ids must bridge to geometry ids
-    - `source_kind`: `country_county`, `country_base`, `crosswalk_base`,
+    - `source_kind`: `authority_spine`, `country_base`, `crosswalk_base`,
       `global_base`, or `missing`
     """
     iso3 = str(iso3 or "").strip().upper()
@@ -47,17 +47,20 @@ def resolve_country_geometry_source(iso3: str, *, admin_level: int | None = None
         }
 
     country_root = COUNTRY_GEOMETRY_DIR / iso3
+    authority_spine_file = country_root / "admin_spine" / "admin_0_3.parquet"
     country_geom_file = country_root / "geometry.parquet"
-    county_geom_file = country_root / "county.parquet"
     global_geom_file = GEOMETRY_DIR / f"{iso3}.parquet"
     crosswalk = load_country_crosswalk(iso3)
 
-    if admin_level == 2 and parquet_accessible(county_geom_file):
+    # The released country admin spine is the authority for Admin0-3.  This
+    # convention is shared by AUS, CAN, USA, and future country programs; do
+    # not add country-specific county or state banks ahead of it.
+    if (admin_level is None or 0 <= admin_level <= 3) and parquet_accessible(authority_spine_file):
         return {
-            "parquet_file": county_geom_file,
+            "parquet_file": authority_spine_file,
             "crosswalk": None,
             "uses_crosswalk": False,
-            "source_kind": "country_county",
+            "source_kind": "authority_spine",
         }
 
     if parquet_accessible(country_geom_file):

@@ -84,15 +84,36 @@ def _normalize_system(system: str | None) -> str:
 
 
 def _reference_family(loc_id: str) -> str | None:
-    family = classify_loc_id_family(loc_id)
-    if family:
-        return family
     try:
         from .reference_graph import identity as graph_identity
 
-        return (graph_identity(loc_id) or {}).get("family")
+        row = graph_identity(loc_id) or {}
+        family = row.get("geography_family") or row.get("family")
+        if family:
+            return family
     except Exception:
-        return None
+        pass
+    return classify_loc_id_family(loc_id)
+
+
+def _canonical_graph_loc_id(loc_id: str) -> str:
+    """Resolve a retired loc_id alias without guessing between multiple versions."""
+    canonical = canonicalize_loc_id(loc_id)
+    try:
+        from .reference_graph import identify_aliases, identity as graph_identity
+
+        if graph_identity(canonical):
+            return canonical
+        resolved = {
+            str(row.get("loc_id") or "").strip()
+            for row in identify_aliases([canonical], limit=50)
+            if str(row.get("loc_id") or "").strip()
+        }
+        if len(resolved) == 1:
+            return next(iter(resolved))
+    except Exception:
+        pass
+    return canonical
 
 
 def _clean_json(value: Any) -> Any:
@@ -130,6 +151,16 @@ def _catalog_bridge_path(artifact: dict[str, Any]) -> Path | None:
     return DATA_ROOT / rel
 
 
+def _bridge_source_names(artifact: dict[str, Any]) -> set[str]:
+    """Return every normalized family name that may select a bridge."""
+    values = [artifact.get("source_family"), *(artifact.get("source_family_aliases") or [])]
+    return {
+        _normalize_system(str(value))
+        for value in values
+        if str(value or "").strip()
+    }
+
+
 def _bridge_artifacts(
     *,
     source_family: str | None = None,
@@ -145,7 +176,7 @@ def _bridge_artifacts(
     for artifact in load_geometry_catalog().get("bridge_artifacts") or []:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
             continue
-        if source and str(artifact.get("source_family") or "").strip().lower() != source:
+        if source and source not in _bridge_source_names(artifact):
             continue
         if level and str(artifact.get("target_admin_level") or "").strip().lower() != level:
             continue
@@ -847,8 +878,11 @@ def loc_id_references(
     if family in {"admin_0", "admin_local", "admin_geometry"} or inferred_level is not None:
         for artifact in _bridge_artifacts(target_admin_level=level, iso3=country or None):
             source = str(artifact.get("source_family") or "").strip()
-            if requested and source not in requested:
+            source_names = _bridge_source_names(artifact)
+            requested_names = sorted(requested & source_names)
+            if requested and not requested_names:
                 continue
+            output_system = requested_names[0] if requested_names else source
             result = resolve_admin_to_sidechains(
                 canonical,
                 source_family=source,
@@ -861,7 +895,8 @@ def loc_id_references(
             for overlap in result.get("overlaps") or []:
                 source_ref = overlap.get("source") or {}
                 references.append({
-                    "system": source,
+                    "system": output_system,
+                    "bridge_source_system": source,
                     "value": source_ref.get("loc_id"),
                     "name": source_ref.get("name"),
                     "role": "bridge_overlap",
@@ -1050,7 +1085,7 @@ def get_geometry_references(
     include_info: bool = True,
 ) -> dict[str, Any]:
     """Return geometry metadata for one or more loc_ids using one geometry fetch pipeline."""
-    canonical_ids = [canonicalize_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
+    canonical_ids = [_canonical_graph_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
     if not include_polygon:
         rows = get_selection_geometry_metadata(canonical_ids)
         by_loc_id: dict[str, dict[str, Any]] = {}
@@ -1099,7 +1134,7 @@ def get_geometry_references(
 
 def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
     """Return a lightweight shape-availability preflight for one or more loc_ids."""
-    canonical_ids = [canonicalize_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
+    canonical_ids = [_canonical_graph_loc_id(str(loc_id)) for loc_id in loc_ids if str(loc_id).strip()]
     rows = get_selection_geometry_metadata(canonical_ids)
     by_loc_id: dict[str, dict[str, Any]] = {}
     for row in rows:

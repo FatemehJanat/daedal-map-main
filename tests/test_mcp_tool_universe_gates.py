@@ -111,6 +111,16 @@ class AccessLaneEnumTests(unittest.TestCase):
             "status": "not_reported",
         })
 
+    def test_provenance_summary_drops_missing_value_sentinels(self) -> None:
+        summary = _provenance_summary({
+            "source_system": "geoboundaries",
+            "geometry_source": float("nan"),
+            "rows": [{"source_system": "nan"}, {"source_vintage": "<NA>"}],
+        })
+
+        self.assertEqual(summary["source_systems"], ["geoboundaries"])
+        self.assertNotIn("source_vintages", summary)
+
     def test_no_legacy_free_preview_lane_remains(self) -> None:
         """Scan the whole runtime package, not just one module.
 

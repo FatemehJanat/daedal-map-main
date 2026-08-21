@@ -497,7 +497,20 @@ def derive_eurostat_geo_level(loc_id: str | None) -> str | None:
     if not match:
         return None
 
-    nuts_code = match.group(2)
+    iso3, nuts_code = match.groups()
+    iso_codes = load_iso_codes()
+    iso2_to_iso3 = iso_codes.get("iso2_to_iso3") or {}
+    iso3_to_iso2 = {
+        str(mapped_iso3).upper(): str(iso2).upper()
+        for iso2, mapped_iso3 in iso2_to_iso3.items()
+    }
+    # Length alone is not a NUTS namespace. Without this guard ordinary local
+    # IDs such as AUS-ACT, AUS-NSW, and AUS-QLD are misclassified as the shared
+    # European regional base. NUTS codes begin with the authority's two-letter
+    # country code, with Eurostat's EL/UK conventions as explicit exceptions.
+    nuts_prefix = {"GRC": "EL", "GBR": "UK"}.get(iso3, iso3_to_iso2.get(iso3))
+    if not nuts_prefix or not nuts_code.startswith(nuts_prefix):
+        return None
     if len(nuts_code) == 3:
         return "admin_1"
     if len(nuts_code) == 4:

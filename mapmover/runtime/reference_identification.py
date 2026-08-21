@@ -43,6 +43,7 @@ _SYSTEM_ALIASES = {
     "us_census_2020_geoid": US_CENSUS_GEOID_SYSTEM,
     "zip": "overlay_zcta",
     "zcta": "overlay_zcta",
+    "usa.census.2020.zcta5.geoid": "overlay_zcta",
     "nws_zone": "overlay_nws_public_zone",
     "nws_fire": "overlay_nws_fire_weather_zone",
 }
@@ -346,14 +347,6 @@ def identify_reference_system(
             candidates.append(_candidate(
                 system="daedalmap.loc_id", identifiers=values, matches=loc_matches,
                 method="loc_id_passthrough", country_scope=country,
-            ))
-
-    if not expected_system or expected_system == "overlay_zcta":
-        zcta_matches = {value: [f"USA-Z-{value}"] for value in values if re.fullmatch(r"\d{5}", value)}
-        if zcta_matches:
-            candidates.append(_candidate(
-                system="overlay_zcta", identifiers=values, matches=zcta_matches,
-                method="exact_identifier_lookup", country_scope=country or "USA",
             ))
 
     for system, prefix in (

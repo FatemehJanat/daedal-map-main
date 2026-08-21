@@ -85,6 +85,10 @@ class LocIdRuntimeTests(unittest.TestCase):
             with self.subTest(loc_id=loc_id):
                 self.assertEqual(classify_loc_id_family(loc_id), expected)
 
+    def test_australia_state_ids_are_local_admin_not_regional_base(self):
+        for loc_id in ("AUS-ACT", "AUS-NSW", "AUS-QLD", "AUS-OT"):
+            self.assertEqual(classify_loc_id_family(loc_id), "admin_local")
+
     def test_geometry_read_mode_uses_existing_deployment_and_storage_envs(self):
         with patch.dict(
             "os.environ",
