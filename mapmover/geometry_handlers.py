@@ -2,9 +2,10 @@
 Geometry endpoint handlers.
 Handles loading geometry files and country hierarchy for drill-down navigation.
 
-Data source (resolved via paths.py DATA_ROOT):
-  geometry/global.csv      - All countries (admin_0)
-  geometry/{ISO3}.parquet  - All admin levels per country
+Data sources (resolved via paths.py DATA_ROOT):
+  geometry/display/admin_0.parquet - bounded Admin0 map/display geometry
+  geometry/global.csv              - exact Admin0 query/compatibility fallback
+  geometry/{ISO3}.parquet          - global-fallback Admin0-2 country shards
 
 Schema (13 columns):
   loc_id, parent_id, admin_level, name, name_local, code, iso_3166_2,
@@ -1022,7 +1023,7 @@ def _load_deep_geometry_index_rows(
 
 def load_country_bounds():
     """
-    Load country bounding boxes from global.csv for fast viewport filtering.
+    Load exact country bounding boxes from global.csv for query filtering.
     Returns dict of iso3 -> (min_lon, min_lat, max_lon, max_lat).
     """
     global _country_bounds_cache
@@ -1031,7 +1032,7 @@ def load_country_bounds():
 
     _country_bounds_cache = {}
 
-    df = load_global_country_display_frame()
+    df = load_global_countries_frame()
     if df is None:
         return _country_bounds_cache
 
@@ -1175,7 +1176,7 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
             c_max_lat >= min_lat and c_min_lat <= max_lat):
             # Multi-part countries spanning the antimeridian or distant
             # territories can have an almost-worldwide bounding box. Confirm
-            # those coarse candidates against the Display polygon so Russia,
+            # those coarse candidates against the exact polygon so Russia,
             # France, or the USA do not make every mid-latitude viewport load
             # unrelated country banks.
             if c_max_lon - c_min_lon >= 300:
@@ -1183,7 +1184,7 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
                     from shapely.geometry import box, shape
 
                     if broad_country_rows is None:
-                        broad_country_rows = load_global_country_display_frame()
+                        broad_country_rows = load_global_countries_frame()
                         viewport_polygon = box(min_lon, min_lat, max_lon, max_lat)
                     row = broad_country_rows[broad_country_rows["loc_id"] == iso3]
                     if not row.empty:
@@ -1192,7 +1193,7 @@ def get_countries_in_bbox(min_lon: float, min_lat: float, max_lon: float, max_la
                         if not geometry.intersects(viewport_polygon):
                             continue
                 except Exception:
-                    logger.debug("Display-polygon country shortlist failed for %s", iso3, exc_info=True)
+                    logger.debug("Exact-polygon country shortlist failed for %s", iso3, exc_info=True)
             result.append(iso3)
 
     return result
@@ -2021,12 +2022,16 @@ def df_to_geojson(df, polygon_only=False):
 
 def get_countries_geometry(debug: bool = False):
     """
-    Get all country geometries for initial map display.
+    Get bounded country geometries for initial map display.
+
+    This endpoint is a visual payload. Exact `geometry/global.csv` polygons are
+    reserved for containment and compatibility query paths and must not leak
+    into the browser bootstrap.
     Returns a GeoJSON FeatureCollection with polygon countries only.
 
     If debug=True, calculates coverage info on-the-fly from parquet files.
     """
-    df = load_global_countries_frame()
+    df = load_global_country_display_frame()
 
     if df is None:
         return {

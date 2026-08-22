@@ -31,7 +31,7 @@ from ..data_loading import load_source_metadata
 from ..source_time_contract import available_years_for_range, metadata_metric_year_range
 from ..aggregation_system import build_aggregation_spec, apply_temporal_aggregation
 from ..foundation_helpers import load_runtime_result_cap_helpers
-from ..foundation_helpers import load_global_countries_frame
+from ..foundation_helpers import load_global_country_display_frame
 from ..duckdb_helpers import (
     can_query_event_source,
     count_rows,
@@ -608,7 +608,9 @@ def execute_order(order: dict) -> dict:
                 logger=logging.getLogger(__name__),
                 filter_regions=filter_regions,
             ),
-            load_global_countries_func=load_global_countries_frame,
+            # This frame is serialized into response GeoJSON. Keep exact
+            # global.csv geometry confined to containment/query helpers.
+            load_global_countries_func=load_global_country_display_frame,
             load_subcounty_geometry_func=load_subcounty_geometry,
             load_geometry_rows_by_loc_ids_func=load_geometry_rows_by_loc_ids,
             load_country_parquet_func=load_country_parquet,

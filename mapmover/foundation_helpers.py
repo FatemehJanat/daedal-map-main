@@ -167,7 +167,12 @@ def _reference_country_codes() -> set[str]:
     return codes
 
 
-def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_ids: set[str]) -> pd.DataFrame:
+def _load_supplemental_admin0_frame(
+    existing_columns: list[str],
+    existing_loc_ids: set[str],
+    *,
+    include_overlap_overrides: bool = True,
+) -> pd.DataFrame:
     """Load approved supplemental Admin0 candidates for point containment.
 
     A supplemental territory may intentionally share a loc_id with the shallow
@@ -212,7 +217,7 @@ def _load_supplemental_admin0_frame(existing_columns: list[str], existing_loc_id
         str(value).strip().upper()
         for value in index.get("overlap_override_loc_ids") or []
         if str(value).strip()
-    }
+    } if include_overlap_overrides else set()
     supplemental = supplemental[
         supplemental["loc_id"].isin(reference_codes)
         & (
@@ -429,20 +434,22 @@ def load_global_country_display_frame():
             base = None
 
         if base is not None:
-            existing_loc_ids = set(base["loc_id"].dropna().astype(str).str.strip().str.upper()) if "loc_id" in base.columns else set()
-            supplemental = _load_supplemental_admin0_frame(list(base.columns), existing_loc_ids)
-            _GLOBAL_COUNTRY_DISPLAY_CACHE = pd.concat([base, supplemental], ignore_index=True) if not supplemental.empty else base
+            # The published Display artifact is self-contained. Runtime merging
+            # would hide an incomplete build and make its actual row universe
+            # depend on a second object-store read.
+            _GLOBAL_COUNTRY_DISPLAY_CACHE = base
             logger.info(
-                "Loaded %d countries from Admin0 Display bootstrap plus %d supplemental rows",
+                "Loaded %d countries from self-contained Admin0 Display bootstrap",
                 len(_GLOBAL_COUNTRY_DISPLAY_CACHE),
-                len(supplemental),
             )
             return _GLOBAL_COUNTRY_DISPLAY_CACHE
     except Exception as e:
         logger.warning("Failed to load Admin0 Display bootstrap: %s", e)
 
-    logger.warning("Admin0 Display bootstrap unavailable; falling back to exact global geometry")
-    return load_global_countries_frame()
+    # Display callers serialize this frame to clients. Failing closed prevents
+    # a missing bounded artifact from silently shipping exact query polygons.
+    logger.warning("Admin0 Display bootstrap unavailable")
+    return None
 
 
 def load_world_factbook_static_frame():

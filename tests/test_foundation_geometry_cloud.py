@@ -40,7 +40,7 @@ class FoundationGeometryCloudTests(unittest.TestCase):
 
         self.assertEqual(payload["sub_admin_levels"]["admin_3"]["folder"], "tract")
 
-    def test_cloud_display_frame_merges_published_supplemental_admin0(self) -> None:
+    def test_cloud_display_frame_is_self_contained(self) -> None:
         supplemental = pd.DataFrame([{
             "loc_id": "MNP",
             "name": "Northern Mariana Islands",
@@ -104,8 +104,9 @@ class FoundationGeometryCloudTests(unittest.TestCase):
             frame = foundation_helpers.load_global_country_display_frame()
 
         self.assertEqual({"USA", "MNP"}, set(frame["loc_id"]))
-        self.assertEqual(2, int((frame["loc_id"] == "MNP").sum()))
-        mnp = frame.loc[(frame["loc_id"] == "MNP") & frame["bbox_min_lon"].notna()].iloc[0]
+        self.assertEqual(1, int((frame["loc_id"] == "MNP").sum()))
+        mnp = frame.loc[frame["loc_id"] == "MNP"].iloc[0]
+        self.assertEqual("Northern Mariana Islands (display)", mnp["name"])
         self.assertEqual(145.0, mnp["bbox_min_lon"])
         self.assertEqual(146.0, mnp["bbox_max_lon"])
 
@@ -130,6 +131,25 @@ class FoundationGeometryCloudTests(unittest.TestCase):
                 frame = foundation_helpers.load_global_country_display_frame()
 
         self.assertEqual(["DSP"], frame["loc_id"].tolist())
+
+    def test_missing_display_frame_does_not_fall_back_to_exact_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            pd.DataFrame([{"loc_id": "EXACT", "name": "Exact"}]).to_csv(
+                root / "global.csv",
+                index=False,
+            )
+            with mock.patch.object(
+                foundation_helpers, "GEOMETRY_DIR", root
+            ), mock.patch.object(
+                foundation_helpers, "is_cloud_mode", return_value=False
+            ), mock.patch.object(
+                foundation_helpers, "load_global_countries_frame",
+                side_effect=AssertionError("display loader must fail closed"),
+            ):
+                frame = foundation_helpers.load_global_country_display_frame()
+
+        self.assertIsNone(frame)
 
     def test_exact_global_frame_does_not_use_display_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

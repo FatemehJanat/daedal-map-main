@@ -9,7 +9,7 @@ import logging
 import re
 import pandas as pd
 
-from .foundation_helpers import load_global_countries_frame, load_reference_json
+from .foundation_helpers import load_global_country_display_frame, load_reference_json
 from .geography import get_fallback_coordinates, get_iso_codes
 from .runtime.geography_reference import load_country_name_to_iso3_map
 
@@ -69,14 +69,15 @@ def get_geometry_lookup():
     Load the shared world bootstrap geometry into a lookup dictionary.
 
     Returns dict mapping country_code (ISO3) -> geometry dict.
-    The backing data source is the spine-owned `geometry/global.csv` helper file,
-    not a separate legacy geometry authority.
+    The backing data source is the bounded Admin0 Display artifact because these
+    polygons are attached to client response features. It is not an authority
+    source for containment or derivation.
     """
     global _geometry_cache
     if _geometry_cache is not None:
         return _geometry_cache
 
-    df = load_global_countries_frame()
+    df = load_global_country_display_frame()
     if df is None or df.empty:
         logger.warning("Shared global bootstrap geometry is not available")
         return {}

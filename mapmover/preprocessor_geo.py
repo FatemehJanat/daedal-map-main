@@ -12,7 +12,7 @@ _PARQUET_SORTED_NAMES_CACHE = {}
 
 
 def get_countries_in_viewport(bounds: dict, *, geometry_dir: Path, logger) -> list:
-    """Get ISO3 codes for countries visible in the viewport."""
+    """Get ISO3 codes visible in a viewport using exact query geometry."""
     if not bounds:
         return []
     df = load_global_countries_frame()
