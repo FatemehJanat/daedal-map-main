@@ -1464,8 +1464,15 @@ def _build_geometry_catalog_payload() -> dict:
             }),
         })
 
+    coverage_programs = {
+        str(item.get("country_code") or "").strip().upper(): item
+        for item in catalog.get("country_family_coverage") or []
+        if isinstance(item, dict) and str(item.get("country_code") or "").strip()
+    }
+    country_codes = sorted(set(country_codes) | (set(coverage_programs) - {"GLOBAL"}))
     admin_spine_coverage = []
     for code in country_codes:
+        coverage_program = coverage_programs.get(code) or {}
         profile = load_country_geometry_profile(code)
         local_system = profile.get("local_geometry_system") if isinstance(profile.get("local_geometry_system"), dict) else {}
         sub_levels = profile.get("sub_admin_levels") if isinstance(profile.get("sub_admin_levels"), dict) else {}
@@ -1504,15 +1511,39 @@ def _build_geometry_catalog_payload() -> dict:
             asset for asset in country_assets
             if str(asset.get("family") or "").strip() in {"country_admin_geometry", "country_admin_extension"}
         ]
-        if not strict_levels and not admin_spine_assets:
+        if not strict_levels and not admin_spine_assets and not coverage_program:
             continue
-        max_depth = max(level_numbers) if level_numbers else 2
+        active_depth = coverage_program.get("active_admin_depth")
+        if active_depth is None:
+            active_depth = coverage_program.get("max_admin_level")
+        try:
+            max_depth = int(active_depth)
+        except (TypeError, ValueError):
+            max_depth = max(level_numbers) if level_numbers else 2
+
+        # A country profile may describe locally prepared candidate tiers. They
+        # are useful discovery facts, but only the catalog's active/admitted
+        # depth may populate the runtime strict-level claim.
+        active_strict_levels = {}
+        for level_key, info in strict_levels.items():
+            try:
+                level_number = int(str(level_key).split("_", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            if level_number <= max_depth:
+                active_strict_levels[level_key] = info
+        strict_levels = active_strict_levels
         admin_spine_coverage.append({
             "country_code": code,
             "source_system": local_system.get("source_system"),
             "runtime_path": local_system.get("runtime_path"),
             "max_admin_level": f"admin_{max_depth}",
             "max_admin_depth": max_depth,
+            "active_admin_depth": max_depth,
+            "candidate_admin_depth": coverage_program.get("candidate_admin_depth"),
+            "candidate_admin_status": coverage_program.get("candidate_admin_status"),
+            "candidate_admin_source_licenses": coverage_program.get("candidate_admin_source_licenses") or [],
+            "candidate_admin_source_license_details": coverage_program.get("candidate_admin_source_license_details") or [],
             "strict_nested_levels": strict_levels,
             "asset_count": len(admin_spine_assets),
             "feature_count": sum(

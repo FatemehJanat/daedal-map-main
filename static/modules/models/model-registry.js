@@ -35,7 +35,8 @@ const TYPE_TO_MODEL = {
   drought_area: 'polygon',
 
   // Reference boundaries rather than events. Always polygons.
-  overture: 'polygon'
+  overture: 'polygon',
+  geometry_inventory: 'polygon'
 };
 
 const RENDERING_MODEL_TO_MODEL = {

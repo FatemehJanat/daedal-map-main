@@ -127,6 +127,7 @@ facts from a different family to the selected feature.
 | `location_geometry` | Administrative boundaries and choropleths | Show the place hierarchy, geometry facts and provenance; show a metric only when it belongs to the clicked `loc_id`. |
 | `point_collection` | Durable locations such as facilities, sensors, and buoys | Show a compact record popup from declared fields; use the default pin unless the source supplies an icon; cluster nearby points while zoomed out. |
 | `event` | Time-bounded events, disasters, alerts, and tracks | Show event-specific time, severity/impact, lifecycle, and related records where available. |
+| `geometry_basics` | Reference geometry shown for its own sake: coverage, inventory state, and provenance of the boundaries themselves | Describe what is held for the place - depth, authority, release, and lifecycle state - and say plainly when a fact is unknown rather than inheriting one from a neighbouring program. Never present inventory status as a measurement of the place. |
 | `point_lookup` | A click on otherwise empty map space | Resolve and show the coordinate's `loc_id` hierarchy; yield to a feature popup when a rendered feature was clicked. It may also include contextual raster/grid samples at that coordinate. |
 
 For source onboarding, define the GeoJSON shape, popup family, provenance and

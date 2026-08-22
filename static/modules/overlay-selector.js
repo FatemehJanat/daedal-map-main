@@ -88,6 +88,7 @@ function getOverlayModel(overlayId, sources = [], fallbackDataType = 'metrics') 
 // Icon mapping for overlay types
 const OVERLAY_ICONS = {
   'admin_layers': 'A',
+  'geometry_inventory': 'G',
   'demographics': 'D',
   'disasters': '!',
   'climate': 'C',
@@ -516,6 +517,42 @@ function buildAdminLayersOverlay() {
   };
 }
 
+// The geometry-coverage atlas is an operator surface: its payload carries
+// licence review states and internal gap dispositions. This check only keeps
+// the tray honest; the endpoint enforces local-or-admin independently.
+function accountCanUseGeometryInventory() {
+  const profile = getCurrentProfile();
+  if (profile && (profile.is_admin || profile.plan_id === 'master')) return true;
+  if (typeof window === 'undefined') return false;
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+}
+
+function buildGeometryInventoryOverlay() {
+  return {
+    id: 'geometry_inventory',
+    label: 'Geometry Inventory',
+    description: 'Country geometry coverage by admin depth',
+    default: false,
+    locked: false,
+    model: 'polygon',
+    icon: 'G',
+    hasYearFilter: false,
+    alwaysVisible: true
+  };
+}
+
+function pushGeometryInventoryCategory(categories) {
+  if (!Array.isArray(categories) || !accountCanUseGeometryInventory()) return;
+  if (categories.some((category) => category?.id === 'geometry_inventory')) return;
+  categories.push({
+    id: 'geometry_inventory',
+    label: 'Geometry Inventory',
+    icon: 'G',
+    isCategory: false,
+    overlay: buildGeometryInventoryOverlay()
+  });
+}
+
 function pushOverlayIfMissing(overlays, overlay) {
   if (!overlay?.id || !Array.isArray(overlays)) return;
   if (!overlays.some((candidate) => candidate?.id === overlay.id)) {
@@ -919,6 +956,8 @@ function buildCategoriesFromTree(overlayTree) {
       { id: 'nws_alerts', label: 'US Weather Alerts', description: 'Live NWS warnings', default: false, locked: false, model: 'nws_alerts', icon: '!', hasYearFilter: false, live: true }
     ]
   });
+
+  pushGeometryInventoryCategory(categories);
 
   return dedupeCategories(categories);
 }
@@ -1358,6 +1397,7 @@ export const OverlaySelector = {
           ]
         }
       ];
+      pushGeometryInventoryCategory(ALL_CATEGORIES);
       CATEGORIES = filterCategoriesForCurrentMode(ALL_CATEGORIES);
       ALL_OVERLAYS = getAllOverlaysFromCategories(ALL_CATEGORIES);
       VISIBLE_OVERLAYS = getAllOverlaysFromCategories(CATEGORIES);

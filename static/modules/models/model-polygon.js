@@ -13,6 +13,7 @@
 
 import { CONFIG } from '../config.js';
 import { DisasterPopup } from '../disaster-popup.js';
+import { GeometryPopup } from '../geometry-popup.js';
 import { extendBoundsWithCoordinateList } from '../map-focus.mjs';
 
 // Dependencies set via setDependencies
@@ -91,6 +92,15 @@ const COLORS = {
     fillOpacity: 0.25,
     stroke: '#3da06d',
     strokeWidth: 1.5
+  },
+  // Geometry Inventory coverage atlas. The depth ramp is owned by the geometry
+  // catalog runtime and arrives per feature as `depth_color`; this fill is only
+  // the fallback for a country with no resolvable depth.
+  geometry_inventory: {
+    fill: '#6b7280',
+    fillOpacity: 0.55,
+    stroke: 'rgba(255, 255, 255, 0.45)',
+    strokeWidth: 0.6
   },
   // Overture comparison layer. Deliberately pink and mostly unfilled so the
   // blue admin spine stays readable underneath and the two outlines can be
@@ -280,6 +290,12 @@ export const PolygonModel = {
       ];
     }
 
+    if (eventType === 'geometry_inventory') {
+      // One ramp, owned server-side beside the depth it encodes and delivered
+      // per feature. `coalesce` covers a country whose depth did not resolve.
+      return ['coalesce', ['get', 'depth_color'], colors.fill];
+    }
+
     if (eventType === 'drought_area') {
       return [
         'match', ['get', 'severity'],
@@ -410,8 +426,13 @@ export const PolygonModel = {
         const coords = e.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null;
 
         if (coords) {
-          // Show unified disaster popup
-          DisasterPopup.show(coords, props, eventType);
+          // Reference-geometry overlays are status views, not events, so they
+          // use the geometry popup family instead of event language.
+          if (eventType === 'geometry_inventory') {
+            GeometryPopup.show(coords, props);
+          } else {
+            DisasterPopup.show(coords, props, eventType);
+          }
         }
 
         // Call optional click callback
@@ -438,7 +459,9 @@ export const PolygonModel = {
       if (TimeSlider?.isPlaying) return;
       if (e.features.length > 0 && !MapAdapter.popupLocked) {
         const props = e.features[0].properties;
-        const html = DisasterPopup.buildHoverHtml(props, eventType);
+        const html = eventType === 'geometry_inventory'
+          ? GeometryPopup.buildHoverHtml(props)
+          : DisasterPopup.buildHoverHtml(props, eventType);
         MapAdapter.showPopup([e.lngLat.lng, e.lngLat.lat], html);
       }
     };

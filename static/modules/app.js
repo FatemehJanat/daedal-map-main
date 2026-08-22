@@ -30,6 +30,7 @@ import { AuroraOverlay } from './overlay-aurora.js';
 import { NwsAlertsOverlay } from './overlay-nws-alerts.js';
 import { initLivePointOverlays } from './live-point-overlay.js';
 import { DisasterPopup, setDependencies as setDisasterPopupDeps } from './disaster-popup.js';
+import { setDependencies as setGeometryPopupDeps } from './geometry-popup.js';
 import { GeometryModel, setDependencies as setGeometryDeps } from './models/model-geometry.js';
 import { AuthManager } from './auth.js';
 import { TutorialMode } from './tutorial-mode.js';
@@ -843,6 +844,7 @@ export const App = {
     setPointCollectionDeps({ MapAdapter });
     setOverlayControllerDeps({ MapAdapter, ModelRegistry, OverlaySelector, TimeSlider, ChatManager });
     setDisasterPopupDeps({ MapAdapter });
+    setGeometryPopupDeps({ MapAdapter });
     setGeometryDeps({ MapAdapter });
     setSceneRasterDeps({ MapAdapter });
 

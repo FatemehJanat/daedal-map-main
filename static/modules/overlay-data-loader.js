@@ -202,6 +202,13 @@ export async function loadRangeData(overlayId, startMs, endMs, endpoint, signal 
       dataCache[overlayId] = { type: 'FeatureCollection', features: [] };
     }
 
+    // An endpoint may describe the scale it encoded, so the browser can label
+    // the whole range instead of only the values this payload happened to
+    // contain. Kept beside the features rather than parsed per renderer.
+    if (Array.isArray(geojson.legend)) {
+      dataCache[overlayId].legend = geojson.legend;
+    }
+
     if (featureCount > 0) {
       const existingIds = new Set(
         dataCache[overlayId].features

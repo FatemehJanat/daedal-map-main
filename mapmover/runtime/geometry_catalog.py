@@ -69,6 +69,10 @@ def clear_geometry_catalog_cache() -> None:
     load_geometry_catalog.cache_clear()
     _named_index.cache_clear()
     _named_group_index.cache_clear()
+    # Imported late: geometry_inventory reads this module's catalog loader.
+    from .geometry_inventory import clear_geometry_inventory_cache
+
+    clear_geometry_inventory_cache()
 
 
 @lru_cache(maxsize=1)

@@ -14,6 +14,7 @@ import EventAnimator, { AnimationMode, setDependencies as setEventAnimatorDeps }
 import { getSourceDefaultOverride, resolveOverlayIdFromPackId, resolveOverlayIdFromSourceId } from './overlay-selector.js';
 import { TIME_SYSTEM } from './time-slider.js';
 import { OpsTimeline } from './ops-timeline.js';
+import { GeometryPopup } from './geometry-popup.js';
 import {
   buildRangeRequestSignature,
   buildStampsClaim,
@@ -329,6 +330,93 @@ function isAdminLayersOverlay(overlayId) {
   return overlayId === 'admin_layers';
 }
 
+/**
+ * Depth key for the Geometry Inventory atlas.
+ *
+ * Built from the loaded features rather than a second colour table, so the key
+ * always describes exactly what the map painted. The catalog owns the ramp.
+ */
+let geometryInventoryPinsShown = false;
+
+function renderGeometryInventoryLegend(visible) {
+  const element = globalThis.document?.getElementById?.('geometryInventoryLegend');
+  if (!element) return;
+
+  if (!visible) {
+    element.hidden = true;
+    element.innerHTML = '';
+    GeometryPopup.setPinsVisible(false);
+    return;
+  }
+
+  const features = Array.isArray(dataCache.geometry_inventory?.features)
+    ? dataCache.geometry_inventory.features
+    : [];
+  if (!features.length) {
+    element.hidden = true;
+    return;
+  }
+
+  const buckets = new Map();
+  for (const feature of features) {
+    const props = feature?.properties || {};
+    const level = props.max_admin_level;
+    const key = level == null ? 'unknown' : Number(level);
+    const bucket = buckets.get(key) || { level: key, color: props.depth_color || '#6b7280', count: 0 };
+    bucket.count += 1;
+    buckets.set(key, bucket);
+  }
+
+  // Show the whole ramp, not just the depths this payload happened to contain.
+  // An empty Admin 3 row is informative - it says nothing has landed there yet
+  // - and it lets the gradient be read end to end.
+  const ramp = Array.isArray(dataCache.geometry_inventory?.legend)
+    ? dataCache.geometry_inventory.legend
+    : [];
+  for (const entry of ramp) {
+    const level = Number(entry.level);
+    if (!Number.isFinite(level) || buckets.has(level)) continue;
+    buckets.set(level, { level, color: entry.color, count: 0 });
+  }
+
+  const rows = Array.from(buckets.values()).sort((a, b) => {
+    if (a.level === 'unknown') return 1;
+    if (b.level === 'unknown') return -1;
+    return a.level - b.level;
+  });
+
+  const smallCount = features.filter((feature) => feature?.properties?.is_small).length;
+  const toggle = smallCount
+    ? '<label class="geometry-legend-toggle">'
+      + `<input type="checkbox" id="geometryInventoryPins"${geometryInventoryPinsShown ? ' checked' : ''}>`
+      + `<span>Small markers</span><span class="geometry-legend-count">${smallCount}</span>`
+      + '</label>'
+    : '';
+
+  element.innerHTML = '<div class="geometry-legend-title">Admin depth held</div>'
+    + rows.map((row) => {
+      const label = row.level === 'unknown' ? 'Unknown' : `Admin ${row.level}`;
+      return '<div class="geometry-legend-row">'
+        + `<span class="geometry-legend-swatch" style="background:${row.color}"></span>`
+        + `<span>${label}</span>`
+        + `<span class="geometry-legend-count">${row.count}</span>`
+        + '</div>';
+    }).join('')
+    + toggle;
+  element.hidden = false;
+
+  const checkbox = element.querySelector('#geometryInventoryPins');
+  if (checkbox) {
+    checkbox.addEventListener('change', () => {
+      geometryInventoryPinsShown = checkbox.checked;
+      GeometryPopup.setPinsVisible(geometryInventoryPinsShown, dataCache.geometry_inventory);
+    });
+  }
+  // Re-assert on each render so a re-enabled overlay returns in the state the
+  // user left it, and so the pins follow refreshed data.
+  GeometryPopup.setPinsVisible(geometryInventoryPinsShown, dataCache.geometry_inventory);
+}
+
 function getOverlayDisplayContract(overlayId) {
   const contract = OverlaySelector?.getOverlayConfig?.(overlayId)?.displayContract;
   return contract && typeof contract === 'object' ? contract : null;
@@ -428,6 +516,15 @@ const OVERLAY_ENDPOINTS = {
     baseUrl: '/api/overture/geojson',
     params: {},
     eventType: 'overture',
+    yearField: null
+  },
+  // Admin geometry-coverage atlas. Catalog status painted onto Admin0 display
+  // shapes; timeless, and local-or-admin only because it exposes licence
+  // review states and internal gap dispositions.
+  geometry_inventory: {
+    baseUrl: '/api/geometry/inventory/geojson',
+    params: {},
+    eventType: 'geometry_inventory',
     yearField: null
   },
   landslides: {
@@ -4117,6 +4214,10 @@ export const OverlayController = {
         : (yearOrTimestamp ? ` for ${yearOrTimestamp}` : ' (all years)');
       console.log(`OverlayController: Rendered ${filteredGeojson.features?.length || 0} ${overlayId}${timeStr}`);
     }
+
+    if (overlayId === 'geometry_inventory') {
+      renderGeometryInventoryLegend(Boolean(rendered));
+    }
   },
 
   /**
@@ -4130,6 +4231,10 @@ export const OverlayController = {
    */
   hideOverlay(overlayId) {
     this.clearExactEventFilter?.(overlayId);
+
+    if (overlayId === 'geometry_inventory') {
+      renderGeometryInventoryLegend(false);
+    }
 
     const configuredSourceIds = OverlaySelector?.getOverlayConfig?.(overlayId)?.sourceIds || [];
     // Point collections are rendered by their dedicated model rather than the

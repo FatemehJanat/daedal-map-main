@@ -279,6 +279,29 @@ async def get_overture_divisions_geojson(req: Request, admin_level: int = None, 
         return msgpack_error(str(e), 500)
 
 
+@router.get("/api/geometry/inventory/geojson")
+async def get_geometry_inventory_geojson(req: Request):
+    """Admin geometry-coverage atlas: Admin0 shapes painted by inventory depth.
+
+    Local-or-admin gated. The payload exposes licence review states, blocked
+    families, and internal gap dispositions, so catalog visibility is never
+    authorization here either.
+
+    Shapes come from the bounded Admin0 Display bootstrap; every fact comes
+    from the generated geometry catalog.
+    """
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    try:
+        from mapmover.runtime.geometry_inventory import build_geometry_inventory_payload
+
+        return msgpack_response(build_geometry_inventory_payload())
+    except Exception as e:
+        logger.error(f"Error in /api/geometry/inventory/geojson: {e}")
+        return msgpack_error(str(e), 500)
+
+
 @router.post("/geometry/cache/clear")
 async def clear_geometry_cache_endpoint(req: Request):
     """Clear the geometry cache after data updates."""

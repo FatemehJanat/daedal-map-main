@@ -1556,6 +1556,187 @@ body.chat-mode-ops #timeSliderContainer { display: none !important; }
   color: #888;
 }
 
+/* ========== Geometry basics popup (geometry_basics_popup family) ========== */
+
+.gb-popup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-width: 268px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gb-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--map-text, #e6f3ff);
+}
+
+.gb-code {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(230, 243, 255, 0.5);
+}
+
+.gb-depth {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gb-depth-value { font-weight: 600; }
+.gb-depth-detail { color: rgba(230, 243, 255, 0.62); }
+
+.gb-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.gb-note {
+  font-size: 10px;
+  color: rgba(230, 243, 255, 0.62);
+}
+
+.gb-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.gb-fact {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.gb-fact dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(230, 243, 255, 0.45);
+}
+
+.gb-fact dd {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.gb-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gb-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(230, 243, 255, 0.45);
+}
+
+/* The reason this block exists: a country with a dozen admitted families used
+   to render one unbroken row and stretch the popup off the map. */
+.gb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.gb-chip {
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  padding: 0 7px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.gb-foot {
+  font-size: 10px;
+  color: rgba(230, 243, 255, 0.5);
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ========== Geometry Inventory depth key ========== */
+
+#geometryInventoryLegend {
+  /* Stacks under the overlay tray. The bottom-left corner belongs to the chat
+     panel in Explore and the bottom-right to attribution and the feedback
+     button, so neither is free for a persistent key. */
+  margin-top: 6px;
+  background: rgba(8, 14, 26, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 10px;
+  color: #cfd8e6;
+  pointer-events: none;
+  max-width: 190px;
+}
+
+#geometryInventoryLegend[hidden] {
+  display: none;
+}
+
+.geometry-legend-title {
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: #e6f3ff;
+}
+
+.geometry-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 16px;
+}
+
+.geometry-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.geometry-legend-count {
+  margin-left: auto;
+  color: #8a97a8;
+}
+
+/* The key itself is inert, but its one control has to be clickable. */
+.geometry-legend-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.geometry-legend-toggle input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  cursor: pointer;
+}
+
 /* ========== MapLibre Popup Styling ========== */
 
 .maplibregl-popup-content {
