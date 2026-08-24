@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mapmover.ops_route_runtime import load_or_create_ops_watch
-from mapmover.ops_route_runtime import _public_default_ops_feeds
+from mapmover.ops_route_runtime import _allowed_ops_feeds, _public_default_ops_feeds
 from mapmover import ops_orchestrator_runtime
 from mapmover.ops_feed_registry import load_ops_feed_records, validate_ops_feed_registry
 from mapmover.routes import ops as ops_routes
@@ -288,6 +288,25 @@ class OpsRouteRuntimeTest(unittest.TestCase):
         self.assertIn("ocean_sst", feeds)
         self.assertIn("usa_nws_alerts", feeds)
         self.assertNotIn("airnow", feeds)
+
+    def test_anonymous_public_deep_link_can_activate_non_default_currency(self):
+        allowed = _allowed_ops_feeds(
+            auth_user=None,
+            caller_ctx={"caller_kind": "anonymous"},
+            body={"watch_context": {"sources": ["currency"]}},
+        )
+
+        self.assertIn("currency", allowed)
+        self.assertIn("earthquakes", allowed)
+
+    def test_anonymous_deep_link_does_not_activate_wip_feed(self):
+        allowed = _allowed_ops_feeds(
+            auth_user=None,
+            caller_ctx={"caller_kind": "anonymous"},
+            body={"watch_context": {"sources": ["airnow"]}},
+        )
+
+        self.assertNotIn("airnow", allowed)
 
     @pytest.mark.fixture_drift(
         "Test reads real local NWS alert state instead of its fixture. Test isolation, not logic."

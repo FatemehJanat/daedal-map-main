@@ -10,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from mapmover import session_manager
-from mapmover.ops_feed_registry import ops_feed_ids
+from mapmover.ops_feed_registry import load_ops_feed_records, ops_feed_ids
 from mapmover.paths import ACCOUNT_URL
 from mapmover.ops_orchestrator_runtime import build_ops_report, load_current_state_snapshot
 from mapmover.runtime.explainer_response import (
@@ -160,6 +160,16 @@ def _public_default_ops_feeds() -> list[str]:
     return _supported_ops_feeds(ops_feed_ids(flag="default_watch"))
 
 
+def _public_ops_feeds() -> list[str]:
+    """Return public runtime feeds, including non-default deep-link targets."""
+    return _supported_ops_feeds(
+        record.get("feed_id")
+        for record in load_ops_feed_records()
+        if str(record.get("release_state") or "").strip().lower() == "public"
+        and bool(record.get("runtime_enabled"))
+    )
+
+
 def _base_ops_feeds(auth_user: dict | None) -> list[str]:
     account_feeds = _account_ops_feeds(auth_user)
     if account_feeds:
@@ -177,6 +187,18 @@ def _qa_all_ops_feeds(caller_ctx: dict | None) -> list[str]:
 def _requested_ops_feeds(body: dict) -> list[str]:
     watch_context = body.get("watch_context") if isinstance(body.get("watch_context"), dict) else {}
     return _supported_ops_feeds(watch_context.get("sources") or [])
+
+
+def _allowed_ops_feeds(*, auth_user: dict | None, caller_ctx: dict | None, body: dict) -> list[str]:
+    base_feeds = _qa_all_ops_feeds(caller_ctx) or _base_ops_feeds(auth_user)
+    if auth_user is not None:
+        return list(base_feeds)
+    # Visitor-facing /feeds links explicitly request one public feed. A feed
+    # need not be in the default multi-feed watch to remain a valid public
+    # deep-link target (currency is the current example).
+    public = set(_public_ops_feeds())
+    requested_public = [feed for feed in _requested_ops_feeds(body) if feed in public]
+    return _merge_ops_feeds(base_feeds, requested_public)
 
 
 def _merge_ops_feeds(*feed_lists) -> list[str]:
@@ -303,8 +325,11 @@ async def prepare_ops_chat_route_context(
         return None, None, rejection_payload, rejection_status, rejection_headers
 
     cache = session_manager.get_or_create(base_context.session_id)
-    base_feeds = _qa_all_ops_feeds(base_context.caller_ctx) or _base_ops_feeds(base_context.auth_user)
-    allowed_feeds = list(base_feeds)
+    allowed_feeds = _allowed_ops_feeds(
+        auth_user=base_context.auth_user,
+        caller_ctx=base_context.caller_ctx,
+        body=body,
+    )
     watch = load_or_create_ops_watch(
         cache=cache,
         session_id=base_context.session_id,

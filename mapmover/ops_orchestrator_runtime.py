@@ -1351,6 +1351,12 @@ def _build_point_event_display_payload(
             _wildfire_perimeter_geometry(row, max_positions=WILDFIRE_MAP_MAX_PERIMETER_POSITIONS)
             if include_perimeter else None
         )
+        # Perimeters are either promoted to bounded feature geometry above or
+        # fetched through the viewport detail endpoint. Keeping the original
+        # polygon JSON in properties duplicates megabytes of coordinates in
+        # the ordinary point-marker response.
+        if collector == WILDFIRE_LIVE_FEED:
+            props.pop("perimeter", None)
         if geometry is None:
             try:
                 lon = float(row.get("longitude"))
