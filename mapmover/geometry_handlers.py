@@ -51,7 +51,10 @@ from .runtime.country_geography import (
     get_country_sub_admin_levels,
     get_country_supported_deep_admin_levels,
 )
-from .runtime.admin_spine_query import resolve_point as resolve_admin_spine_query_point
+from .runtime.admin_spine_query import (
+    load_rows_by_loc_ids as load_admin_spine_query_rows,
+    resolve_point as resolve_admin_spine_query_point,
+)
 from .runtime.geometry_loader import resolve_country_geometry_source
 from .runtime.geometry_compatibility import (
     load_current_alias_target_rows,
@@ -3465,9 +3468,25 @@ def get_selection_geometries(loc_ids: list):
     features = []
     requested_ids = [str(loc_id).strip() for loc_id in loc_ids if str(loc_id).strip()]
 
+    # The query layout owns both directions of the point -> loc_id -> shape
+    # contract. Fetch these rows before graph/legacy routing so get_geometry
+    # can always serve an admin loc_id returned by resolve_point.
+    query_layout_ids: set[str] = set()
+    by_iso3: dict[str, list[str]] = {}
+    for loc_id in requested_ids:
+        by_iso3.setdefault(loc_id.split("-", 1)[0].upper(), []).append(loc_id)
+    for iso3, country_ids in by_iso3.items():
+        query_rows = load_admin_spine_query_rows(iso3, country_ids)
+        if query_rows is None or query_rows.empty:
+            continue
+        query_layout_ids.update(query_rows["loc_id"].astype(str))
+        query_geojson = df_to_geojson(query_rows, polygon_only=True)
+        features.extend(query_geojson.get("features", []))
+
     # Graph-owned semantic-family partitions are authoritative regardless of
     # loc_id prefix depth. Resolve them before legacy admin-depth routing.
-    reference_df = load_reference_graph_geometry(requested_ids)
+    graph_requests = [loc_id for loc_id in requested_ids if loc_id not in query_layout_ids]
+    reference_df = load_reference_graph_geometry(graph_requests)
     reference_ids: set[str] = set()
     if reference_df is not None and not reference_df.empty:
         reference_ids = set(reference_df["loc_id"].astype(str))
@@ -3479,7 +3498,7 @@ def get_selection_geometries(loc_ids: list):
         if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
-    claimed_ids = reference_ids | set(marine_ids)
+    claimed_ids = query_layout_ids | reference_ids | set(marine_ids)
     remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in claimed_ids]
 
     if marine_ids:

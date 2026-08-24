@@ -8,9 +8,10 @@ from functools import lru_cache
 
 from shapely import from_wkb
 from shapely.geometry import Point
+import pandas as pd
 
 from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, path_to_uri
-from ..paths import COUNTRY_GEOMETRY_DIR
+from ..paths import COUNTRY_GEOMETRY_DIR, DATA_ROOT
 from .geometry_catalog import load_geometry_catalog
 from .published_artifacts import read_artifact_json
 
@@ -23,25 +24,43 @@ bbox_min_lon, bbox_min_lat, bbox_max_lon, bbox_max_lat
 """
 
 
+@lru_cache(maxsize=64)
 def layout_root(iso3: str) -> Path:
-    return Path(COUNTRY_GEOMETRY_DIR) / str(iso3 or "").strip().upper() / "admin_spine"
+    country = str(iso3 or "").strip().upper()
+    profiles = [
+        profile for profile in load_geometry_catalog().get("country_profiles") or []
+        if isinstance(profile, dict) and str(profile.get("country_code") or "").upper() == country
+        and str(profile.get("release_status") or "") in {"approved_for_publication", "published"}
+    ]
+    if len(profiles) == 1:
+        relative = str(profiles[0].get("query_layout_manifest") or "").replace("\\", "/")
+        expected_prefix = f"geometry/countries/{country}/releases/geometry/"
+        if relative.startswith(expected_prefix) and relative.endswith("/runtime/admin_spine/manifest.json"):
+            return Path(DATA_ROOT) / Path(relative).parent
+    # Cloud activation is catalog-owned and fails closed. The fixed legacy root
+    # remains only for local development against pre-release holdings.
+    if is_cloud_mode():
+        return Path(DATA_ROOT) / "__catalog_has_no_admitted_country_layout__" / country
+    return Path(COUNTRY_GEOMETRY_DIR) / country / "admin_spine"
 
 
 def layout_available(iso3: str) -> bool:
     root = layout_root(iso3)
     if not is_cloud_mode():
         return (root / "manifest.json").is_file() and (root / "admin_0_3.parquet").is_file()
-    expected = f"geometry/countries/{str(iso3).upper()}/admin_spine/manifest.json"
-    if any(
-        str(bank.get("query_layout_manifest") or "").replace("\\", "/") == expected
-        for bank in load_geometry_catalog().get("geometry_banks") or []
-        if isinstance(bank, dict)
-    ):
-        return True
-    # The published manifest is the executable contract. Catalog discovery is
-    # preferred, but a catalog cache/read failure must not silently send point
-    # lookup back through a legacy monolithic geometry bank.
+    try:
+        relative_root = root.relative_to(Path(DATA_ROOT)).as_posix()
+    except ValueError:
+        return False
+    if not relative_root.startswith(f"geometry/countries/{str(iso3).upper()}/releases/geometry/"):
+        return False
+    expected = relative_root + "/manifest.json"
     return _published_layout_manifest_available(str(iso3).upper(), expected)
+
+
+def clear_admin_spine_query_cache() -> None:
+    layout_root.cache_clear()
+    _published_layout_manifest_available.cache_clear()
 
 
 @lru_cache(maxsize=64)
@@ -155,5 +174,53 @@ def resolve_point(
             "deep_candidate_count": len(deep) if deep else 0,
             "query_layout": True,
         }
+    finally:
+        connection.close()
+
+
+def load_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[str] | None = None) -> pd.DataFrame:
+    """Load exact rows from an admitted country query layout.
+
+    This is the shape-fetch counterpart to :func:`resolve_point`.  Keeping it
+    on the same layout seam lets ``get_geometry`` retrieve the loc_id returned
+    by point resolution without falling back to a legacy country bank.
+    """
+    iso3 = str(iso3 or "").strip().upper()
+    requested = list(dict.fromkeys(str(value).strip() for value in loc_ids if str(value).strip()))
+    if not requested or not layout_available(iso3):
+        return pd.DataFrame()
+    projection = list(dict.fromkeys(["loc_id", *(columns or [])]))
+    # DuckDB's spatial GEOMETRY logical type cannot be converted directly to
+    # a pandas/NumPy column. Runtime geometry loaders use WKB, so normalize the
+    # shape at the SQL boundary while preserving every other field.
+    select_clause = (
+        "* EXCLUDE (geometry), ST_AsWKB(geometry) AS geometry"
+        if columns is None
+        else ", ".join(f'"{name}"' for name in projection)
+    )
+    placeholders = ",".join("?" for _ in requested)
+    root = layout_root(iso3)
+    paths = [root / "admin_0_3.parquet"]
+    deep_root = root / "deep"
+    if deep_root.is_dir():
+        paths.extend(sorted(deep_root.glob("*.parquet")))
+    connection = _connection()
+    try:
+        frames = []
+        for path in paths:
+            if not path.is_file() and not is_cloud_mode():
+                continue
+            frame = connection.execute(
+                f"SELECT {select_clause} FROM read_parquet(?) WHERE loc_id IN ({placeholders})",
+                [path_to_uri(path), *requested],
+            ).fetchdf()
+            if not frame.empty:
+                frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        result = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["loc_id"], keep="first")
+        order = {loc_id: index for index, loc_id in enumerate(requested)}
+        result["_requested_order"] = result["loc_id"].map(order)
+        return result.sort_values("_requested_order").drop(columns=["_requested_order"]).reset_index(drop=True)
     finally:
         connection.close()

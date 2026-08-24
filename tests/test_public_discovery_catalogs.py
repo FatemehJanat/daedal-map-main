@@ -441,7 +441,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertNotIn("candidate_admin_depth", coverage["BRA"])
         self.assertNotIn("candidate_admin_status", coverage["BRA"])
         self.assertNotIn("candidate_admin_source_licenses", coverage["BRA"])
-        self.assertEqual(coverage["GBR"]["max_admin_level"], "admin_2")
+        self.assertEqual(coverage["GBR"]["max_admin_level"], "admin_3")
         self.assertNotIn("candidate_admin_depth", coverage["GBR"])
         self.assertNotIn("candidate_admin_status", coverage["GBR"])
         self.assertIn("admin_6", coverage["AUS"]["strict_nested_levels"])

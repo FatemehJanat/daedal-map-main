@@ -20,6 +20,7 @@ from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, parquet_co
 from ..paths import DATA_ROOT
 from ..runtime_config import get_runtime_config
 from .published_artifacts import read_artifact_json, relative_data_path
+from .geometry_catalog import load_geometry_catalog
 
 
 ENV_NAME = "GEOGRAPHY_REFERENCE_GRAPH_ROOT"
@@ -135,6 +136,26 @@ def _discover_roots(data_root_text: str, override: str, cloud_mode: bool) -> tup
         country = _country_for_root(resolved)
         return ((country, str(resolved)),) if country else (("", str(resolved)),)
     found: list[tuple[str, str]] = []
+    for profile in load_geometry_catalog().get("country_profiles") or []:
+        if not isinstance(profile, dict):
+            continue
+        country = str(profile.get("country_code") or "").strip().upper()
+        status = str(profile.get("release_status") or "")
+        relative = str(profile.get("reference_graph_manifest") or "").replace("\\", "/")
+        expected_prefix = f"geometry/countries/{country}/releases/geometry/"
+        if (
+            len(country) != 3
+            or status not in {"approved_for_publication", "published"}
+            or not relative.startswith(expected_prefix)
+            or not relative.endswith("/runtime/reference_graph/manifest.json")
+        ):
+            continue
+        candidate = (data_root / relative).parent.resolve()
+        if not _missing_graph_files(str(candidate), cloud_mode):
+            found.append((country, str(candidate)))
+    if cloud_mode:
+        return tuple(found)
+    admitted = {country for country, _ in found}
     for candidate in sorted(data_root.glob(COUNTRY_GRAPH_GLOB)):
         if _missing_graph_files(str(candidate.resolve()), cloud_mode):
             continue
@@ -144,7 +165,7 @@ def _discover_roots(data_root_text: str, override: str, cloud_mode: bool) -> tup
         if str(manifest.get("completeness_status") or "").startswith("partial"):
             continue
         country = _country_for_root(candidate.resolve())
-        if country:
+        if country and country not in admitted:
             found.append((country, str(candidate.resolve())))
     return tuple(found)
 
@@ -167,6 +188,12 @@ def reference_graph_roots() -> dict[str, Path]:
         country: Path(path)
         for country, path in _discover_roots(str(DATA_ROOT), override, is_cloud_mode())
     }
+
+
+def clear_reference_graph_cache() -> None:
+    _load_graph_json.cache_clear()
+    _missing_graph_files.cache_clear()
+    _discover_roots.cache_clear()
 
 
 def global_reference_graph_root() -> Path | None:
