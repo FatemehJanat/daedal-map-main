@@ -16,6 +16,13 @@ from .sidechain_admin_bridge import admin_level_name
 
 
 US_CENSUS_GEOID_SYSTEM = "us_census_geoid"
+GERS_SYSTEM = "overture_gers"
+
+#: Overture GERS division ids are UUIDs. Used only to decide which values are
+#: worth a crosswalk lookup; matching it is never evidence on its own.
+_GERS_ID_PATTERN = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 US_STATE_FIPS_TO_ABBR = {
     "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA",
@@ -101,6 +108,59 @@ def _geometry_rows(loc_ids: list[str]) -> dict[str, dict[str, Any]]:
         for row in payload.get("results") or []
         if isinstance(row, dict) and row.get("loc_id")
     }
+
+
+#: Evidence strength per detection method, strongest first. Used only to pick
+#: between candidates that already agree about the referent.
+_METHOD_RANK = {
+    "exact_identifier_crosswalk": 0,
+    "exact_identifier_lookup": 1,
+    "reference_graph_exact_alias": 2,
+    "loc_id_passthrough": 3,
+}
+
+
+def _candidates_resolve_alike(candidates: list[dict[str, Any]]) -> bool:
+    """True when every candidate maps every identifier to the same loc_ids.
+
+    Several systems recognizing one identifier is only ambiguous when they
+    disagree about what it refers to. A five-digit US county code is matched by
+    both the census GEOID adapter and the reference graph's native admin id, and
+    both return ``USA-NY-061`` - the caller already has an unambiguous answer, so
+    asking them to choose between two names for it produces the same loc_id
+    whichever they pick.
+    """
+    if len(candidates) < 2:
+        return True
+    baseline: dict[str, tuple[str, ...]] | None = None
+    for candidate in candidates:
+        resolved = {
+            str(row.get("identifier")): tuple(sorted(str(item) for item in row.get("loc_ids") or []))
+            for row in candidate.get("sample_matches") or []
+        }
+        if not resolved:
+            return False
+        if baseline is None:
+            baseline = resolved
+        elif resolved != baseline:
+            return False
+    return baseline is not None
+
+
+def _verified_loc_ids(values: list[str]) -> set[str]:
+    if not values:
+        return set()
+    from .reference_exchange import verify_loc_ids
+
+    return verify_loc_ids(values)
+
+
+def _gers_primary_loc_ids(values: list[str]) -> dict[str, list[str]]:
+    if not values:
+        return {}
+    from .reference_exchange import gers_primary_loc_ids
+
+    return gers_primary_loc_ids(values)
 
 
 def _catalog_bank(*, country_scope: str, admin_level: str, expected_vintage: str | None) -> dict[str, Any] | None:
@@ -338,10 +398,20 @@ def identify_reference_system(
             ))
 
     if not expected_system or expected_system == "daedalmap.loc_id":
+        # The regex is a prefilter, not the evidence. It only decides which
+        # values are worth a lookup; matching it never means the identifier
+        # exists. Verifying against maintained identities is what keeps a
+        # foreign UUID from being reported as a confirmed loc_id at
+        # match_rate 1.0, which is how Overture GERS ids read here before.
+        shaped = [
+            value for value in values
+            if re.fullmatch(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+", value)
+        ]
+        verified = _verified_loc_ids(shaped)
         loc_matches = {
             value: [value.upper()]
-            for value in values
-            if re.fullmatch(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+", value)
+            for value in shaped
+            if value.upper() in verified
         }
         if loc_matches:
             candidates.append(_candidate(
@@ -364,6 +434,21 @@ def identify_reference_system(
             candidates.append(_candidate(
                 system=system, identifiers=values, matches=matches,
                 method="exact_identifier_lookup", country_scope=country or "USA",
+            ))
+
+    if not expected_system or expected_system == GERS_SYSTEM:
+        # UUID shape is the prefilter; presence in the crosswalk is the
+        # evidence. Checked before the graph pass so a column of Overture ids
+        # reports the system that actually owns them.
+        uuids = [value for value in values if _GERS_ID_PATTERN.fullmatch(value)]
+        gers_matches = _gers_primary_loc_ids(uuids) if uuids else {}
+        if gers_matches:
+            candidates.append(_candidate(
+                system=GERS_SYSTEM,
+                identifiers=values,
+                matches=gers_matches,
+                method="exact_identifier_crosswalk",
+                country_scope=country,
             ))
 
     for candidate in _reference_graph_candidates(values, country_scope=country):
@@ -401,6 +486,21 @@ def identify_reference_system(
             or candidate.get("expected_vintage_supported") is not False
         )
     ]
+    # Collapse concurring systems before deciding ambiguity. Systems that name
+    # the same referent are not competing readings of the identifier, and
+    # reporting them as a conflict blocks the binding on a question whose every
+    # answer resolves identically.
+    concurring_systems: list[str] = []
+    if len(full_matches) > 1 and _candidates_resolve_alike(full_matches):
+        concurring_systems = sorted(str(item.get("system") or "") for item in full_matches)
+        # Bind the system carrying the most evidence, not the alphabetically
+        # first one. A census GEOID adapter knows the level and vintage; a bare
+        # reference-graph native id knows neither, and both naming USA-NY-061
+        # does not make them equally good bindings.
+        full_matches = sorted(full_matches, key=lambda item: _METHOD_RANK.get(
+            str(item.get("method") or ""), len(_METHOD_RANK)
+        ))[:1]
+
     if not candidates:
         status = "unmatched"
     elif expected_system:
@@ -412,7 +512,7 @@ def identify_reference_system(
     else:
         status = "partial_match"
 
-    selected = candidates[0] if candidates and status == "matched" else None
+    selected = full_matches[0] if full_matches and status == "matched" else None
     recommended_binding = None
     if selected:
         levels = selected.get("geo_levels") or []
@@ -519,6 +619,7 @@ def identify_reference_system(
             "country_scope": country or None,
         },
         "candidates": candidates,
+        "concurring_systems": concurring_systems,
         "recommended_binding": recommended_binding,
         "next_call": {
             "tool": "estimate_conversion_job",

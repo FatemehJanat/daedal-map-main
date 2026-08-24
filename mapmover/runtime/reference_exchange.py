@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from ..duckdb_helpers import is_cloud_mode
+from ..duckdb_helpers import is_cloud_mode, select_rows_by_exact_value
 from ..geometry_handlers import get_location_info, get_selection_geometries, get_selection_geometry_metadata
 from ..paths import DATA_ROOT
 from .admin_hierarchy import infer_admin_level_from_loc_id
@@ -23,7 +23,12 @@ from .geography_reference import (
     translate_geometry_id_to_local_id,
     translate_loc_id_to_geometry_id,
 )
-from .geometry_catalog import load_geometry_catalog, resolve_geometry_name
+from .geometry_catalog import (
+    geometry_capability_summary,
+    load_geometry_catalog,
+    public_geometry_catalog_records,
+    resolve_geometry_name,
+)
 from .geography_relationships import resolve_historical_country_reference
 from .loc_id_resolution import resolve_admin_text_to_loc_id
 from .sidechain_admin_bridge import (
@@ -36,6 +41,17 @@ from .sidechain_admin_bridge import (
 
 LOC_ID_SYSTEM = "daedalmap.loc_id"
 ADMIN_SYSTEM = "admin_boundary"
+GERS_SYSTEM = "overture_gers"
+
+#: The published loc_id-to-GERS crosswalk product. This is the assembled
+#: identity layer, not the raw overlap bridges it was derived from. The bridges
+#: stay internal on purpose: their subtype-to-admin_level mapping is a property
+#: of each country's OpenStreetMap tagging, not a stable contract. Measured
+#: against release 2026-07-22.0, the `county` subtype lands on admin_1, admin_2
+#: and admin_3 depending on the country, and 39 country/subtype pairs match no
+#: level we hold at all. Publishing the bridges as level-keyed joins would
+#: advertise an alignment that does not exist.
+GERS_CROSSWALK_RELATIVE = "geometry/bridges/gers/loc_id_gers_crosswalk_global.parquet"
 
 SYSTEM_ALIASES = {
     "loc_id": LOC_ID_SYSTEM,
@@ -75,12 +91,226 @@ SYSTEM_ALIASES = {
     "census_geoid": "us_census_geoid",
     "census_2020_geoid": "us_census_geoid",
     "us_census_2020_geoid": "us_census_geoid",
+    "gers": GERS_SYSTEM,
+    "gers_id": GERS_SYSTEM,
+    "overture": GERS_SYSTEM,
+    "overture_id": GERS_SYSTEM,
+    "overture_division": GERS_SYSTEM,
+    "overture_divisions": GERS_SYSTEM,
+    "overture_division_id": GERS_SYSTEM,
+    "overture_maps": GERS_SYSTEM,
+    "overture_gers_county": GERS_SYSTEM,
+    "overture_gers_region": GERS_SYSTEM,
 }
 
 
 def _normalize_system(system: str | None) -> str:
     value = str(system or "").strip().lower().replace("-", "_").replace(" ", "_")
     return SYSTEM_ALIASES.get(value, value)
+
+
+def verify_loc_ids(values: Any) -> set[str]:
+    """Return the canonical subset of ``values`` that name a maintained identity.
+
+    Two independent sources of evidence, because neither is complete on its own.
+    The reference graph knows shapeless families such as ``can_economic_region``
+    that carry no polygon, while the geometry banks cover countries the active
+    country-scoped graph does not reach. A value confirmed by either is real; a
+    value confirmed by neither is not a loc_id we hold.
+
+    This exists because string shape is not identity. A dash-separated token
+    looks exactly like a loc_id whether or not it is one, so echoing it back
+    fabricates an identifier the caller cannot tell from a real one until it
+    fails downstream. The marine EEZ branch already refuses on that principle;
+    this helper lets every other passthrough refuse the same way.
+    """
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        canonical = canonicalize_loc_id(str(value or "").strip())
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            candidates.append(canonical)
+    if not candidates:
+        return set()
+
+    verified: set[str] = set()
+    try:
+        payload = get_geometry_references(candidates, include_polygon=False, include_info=False)
+    except Exception:
+        payload = {}
+    for row in payload.get("results") or []:
+        if not isinstance(row, dict) or not row.get("has_shape"):
+            continue
+        row_loc_id = canonicalize_loc_id(str(row.get("loc_id") or ""))
+        if row_loc_id:
+            verified.add(row_loc_id)
+
+    remaining = [value for value in candidates if value not in verified]
+    if not remaining:
+        return verified
+    try:
+        from .reference_graph import identity as graph_identity
+    except Exception:
+        return verified
+    for value in remaining:
+        try:
+            if graph_identity(value):
+                verified.add(value)
+        except Exception:
+            continue
+    return verified
+
+
+#: Stated on every GERS result. Overture's `subtype` is an OpenStreetMap
+#: tagging convention, so the level a division lands on is decided per country
+#: and measured, never requested. Callers who treat it as a join key get
+#: Canada wrong, where `county` resolves onto admin_3 census subdivisions.
+GERS_LEVEL_NOTE = (
+    "admin_level is an observed property of this country's Overture mapping, not a "
+    "join key. Overture subtypes do not correspond to a fixed DaedalMap admin level, "
+    "so request a loc_id and read the level from the result."
+)
+
+
+def _gers_crosswalk_path() -> Path:
+    return DATA_ROOT / GERS_CROSSWALK_RELATIVE
+
+
+def _gers_row(row: Any) -> dict[str, Any]:
+    return {
+        "loc_id": _first_populated(row, "loc_id"),
+        "loc_name": _first_populated(row, "loc_name"),
+        "overture_name": _first_populated(row, "overture_name"),
+        "iso3": _first_populated(row, "iso3"),
+        "admin_level": _first_populated(row, "admin_level"),
+        "overture_subtype": _first_populated(row, "overture_subtype"),
+        "relationship_type": _first_populated(row, "relationship_type"),
+        "identity_confidence": _first_populated(row, "identity_confidence"),
+        "geometry_confidence": _first_populated(row, "geometry_confidence"),
+        "is_primary": bool(row.get("is_primary")),
+        "spine_vintage": _first_populated(row, "spine_vintage"),
+    }
+
+
+def resolve_gers_division(value: str, *, limit: int | None = 10) -> dict[str, Any]:
+    """Resolve one Overture GERS division id to its DaedalMap loc_id.
+
+    An exact identifier lookup against the assembled crosswalk, deliberately
+    with no ``target_admin_level`` argument. The two confidence scores stay
+    separate for the reason the crosswalk builder records: area agreement
+    measures whether two polygons draw the same edges, identity measures
+    whether the two systems mean the same unit, and Michigan is an unambiguous
+    identity match at 0.60 area agreement.
+
+    Only the primary row asserts identity. Secondary rows are real overlaps and
+    stay visible, but a division resolving onto several of ours is a structural
+    difference - Virginia independent cities, Connecticut planning regions - not
+    a failed equivalence.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return {
+            "ok": False,
+            "from_system": GERS_SYSTEM,
+            "input": value,
+            "error": {"code": "gers_id_required", "message": "value is required"},
+        }
+    path = _gers_crosswalk_path()
+    try:
+        frame = select_rows_by_exact_value(path, "gers_division_id", text)
+    except Exception:
+        frame = None
+    if frame is None or frame.empty:
+        return {
+            "ok": False,
+            "from_system": GERS_SYSTEM,
+            "input": value,
+            "error": {
+                "code": "gers_division_not_found",
+                "message": "no maintained crosswalk row matches that Overture GERS division id",
+            },
+            "level_note": GERS_LEVEL_NOTE,
+        }
+    records = [_gers_row(row) for row in frame.to_dict("records")]
+    primary = next((item for item in records if item["is_primary"]), None)
+    secondary = [item for item in records if not item["is_primary"]]
+    secondary.sort(key=lambda item: -float(item.get("geometry_confidence") or 0))
+    if limit is not None:
+        secondary = secondary[: max(0, int(limit) - 1)]
+    release = _first_populated(frame.to_dict("records")[0], "overture_release")
+    if not primary:
+        # Every row an overlap means the division crosses our units without any
+        # one of them owning it. Refusing is correct: there is no identity to
+        # hand back, and picking the largest overlap would invent one.
+        return {
+            "ok": False,
+            "from_system": GERS_SYSTEM,
+            "input": value,
+            "error": {
+                "code": "gers_division_has_no_primary_match",
+                "message": "the division overlaps maintained areas without a primary identity match",
+            },
+            "overlaps": secondary,
+            "overlap_count": len(records),
+            "overture_release": release,
+            "level_note": GERS_LEVEL_NOTE,
+        }
+    return _clean_json({
+        "ok": True,
+        "from_system": GERS_SYSTEM,
+        "input": value,
+        "resolved_loc_id": primary["loc_id"],
+        "resolved_family": _reference_family(str(primary["loc_id"])),
+        "match_type": "exact_identifier_crosswalk",
+        "relationship_type": primary["relationship_type"],
+        "identity_confidence": primary["identity_confidence"],
+        "geometry_confidence": primary["geometry_confidence"],
+        "admin_level": primary["admin_level"],
+        "overture_subtype": primary["overture_subtype"],
+        "iso3": primary["iso3"],
+        "spine_vintage": primary["spine_vintage"],
+        "overture_release": release,
+        "overlaps": secondary,
+        "overlap_count": len(secondary),
+        "level_note": GERS_LEVEL_NOTE,
+    })
+
+
+def gers_primary_loc_ids(values: Any) -> dict[str, list[str]]:
+    """Map GERS division ids to their primary loc_id in one crosswalk scan.
+
+    Primary rows only. A secondary overlap is a real relationship but not an
+    identity claim, so it must not make an identifier look recognized when the
+    crosswalk holds no identity for it.
+    """
+    from ..duckdb_helpers import select_rows
+
+    requested = list(dict.fromkeys(str(item).strip() for item in values or [] if str(item).strip()))
+    if not requested:
+        return {}
+    path = _gers_crosswalk_path()
+    if not (path.exists() or is_cloud_mode()):
+        return {}
+    try:
+        frame = select_rows(
+            path,
+            columns=["gers_division_id", "loc_id", "is_primary"],
+            in_filters={"gers_division_id": requested},
+        )
+    except Exception:
+        return {}
+    if frame is None or frame.empty:
+        return {}
+    out: dict[str, list[str]] = {}
+    for row in frame.to_dict("records"):
+        if not row.get("is_primary"):
+            continue
+        key = str(row.get("gers_division_id") or "").strip()
+        loc_id = str(row.get("loc_id") or "").strip()
+        if key and loc_id:
+            out.setdefault(key, []).append(loc_id)
+    return out
 
 
 def _reference_family(loc_id: str) -> str | None:
@@ -293,6 +523,55 @@ def _resolve_eez_by_country(text: str) -> dict[str, Any] | None:
     }
 
 
+def _gers_manifest() -> dict[str, Any]:
+    path = _gers_crosswalk_path().with_name(
+        _gers_crosswalk_path().stem + "_manifest.json"
+    )
+    if not path.is_file():
+        return {}
+    try:
+        import json
+
+        return json.loads(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _gers_system_entry() -> dict[str, Any] | None:
+    """Describe the GERS crosswalk for discovery, or nothing when absent.
+
+    Listed as an exact identifier system rather than a geometry family with a
+    bridge. It answers one question - which loc_id is this division - and it
+    carries no selectable admin level, so presenting it beside the level-keyed
+    bridges would imply a join it does not support.
+    """
+    path = _gers_crosswalk_path()
+    if not (path.exists() or is_cloud_mode()):
+        return None
+    manifest = _gers_manifest()
+    return {
+        "system": GERS_SYSTEM,
+        "label": "Overture Maps GERS division id",
+        "role": "exact_identifier_system",
+        "resolver": "exact_identifier_crosswalk",
+        "bidirectional": False,
+        "identifier_example": "58cd13ed-fb26-44c3-b791-196cf89a60aa",
+        "source_release": _first_populated(manifest, "overture_release", "release"),
+        "area_crs": _first_populated(manifest, "area_crs"),
+        # Reported as the observed mix rather than one value, because it is one.
+        # A country re-leveled onto its own authority spine carries that spine,
+        # so asserting a single vintage for the artifact would be false.
+        "spine_vintage": _first_populated(manifest, "spine_vintage"),
+        "spine_vintage_rows": manifest.get("spine_vintage_rows"),
+        "subtype_admin_level_rows": manifest.get("subtype_admin_level_rows"),
+        "confidence_model": manifest.get("confidence_model"),
+        "known_issues": manifest.get("known_issues"),
+        "level_note": GERS_LEVEL_NOTE,
+        "attribution": _first_populated(manifest, "attribution"),
+        "license_note": _first_populated(manifest, "license_note"),
+    }
+
+
 def list_reference_systems() -> dict[str, Any]:
     """Return the currently discoverable reference systems and bridges."""
     catalog = load_geometry_catalog()
@@ -314,6 +593,9 @@ def list_reference_systems() -> dict[str, Any]:
             "bidirectional": False,
         },
     }
+    gers = _gers_system_entry()
+    if gers:
+        systems[GERS_SYSTEM] = gers
     for family in catalog.get("geometry_families") or []:
         if not isinstance(family, dict):
             continue
@@ -399,9 +681,13 @@ def list_reference_systems() -> dict[str, Any]:
     })
 
 
+def _public_catalog_records(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    return public_geometry_catalog_records(catalog, key)
+
+
 def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
     counts = {
-        key: len(catalog.get(key) or []) if isinstance(catalog.get(key), list) else 0
+        key: len(_public_catalog_records(catalog, key))
         for key in (
             "geometry_collections",
             "geometry_banks",
@@ -418,7 +704,7 @@ def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
 
 def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    assets = catalog.get("geometry_products") or []
+    assets = _public_catalog_records(catalog, "geometry_products")
     for asset in assets:
         if not isinstance(asset, dict):
             continue
@@ -452,7 +738,7 @@ def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, 
 
 def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for artifact in catalog.get("bridge_artifacts") or []:
+    for artifact in _public_catalog_records(catalog, "bridge_artifacts"):
         if not isinstance(artifact, dict):
             continue
         source_license = artifact.get("source_license") if isinstance(artifact.get("source_license"), dict) else {}
@@ -474,7 +760,7 @@ def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _geometry_catalog_products(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for package in catalog.get("geometry_products") or []:
+    for package in _public_catalog_records(catalog, "geometry_products"):
         if not isinstance(package, dict):
             continue
         coverage = package.get("admin_coverage") if isinstance(package.get("admin_coverage"), dict) else {}
@@ -498,8 +784,7 @@ def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit:
     rows: list[dict[str, Any]] = []
     items = [
         item
-        for item in catalog.get("named_reference_objects") or []
-        if isinstance(item, dict)
+        for item in _public_catalog_records(catalog, "named_reference_objects")
     ]
     for item in items[: max(0, limit)]:
         rows.append({
@@ -535,19 +820,22 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
         "download_url": "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
         "app_summary_endpoint": "https://app.daedalmap.com/api/v1/geometry/catalog",
         "counts": _geometry_catalog_counts(catalog),
+        "capabilities": geometry_capability_summary(catalog),
         "runtime_data_source": data_source,
         "runtime_reference_families": graph_families,
         "usage": {
-            "start_here": "Use summary or admin_coverage to discover coverage, then use loc_id-keyed tools for lookups and exports.",
+            "start_here": "Use capabilities for the concise current coverage model. Use summary or a focused inventory view only when more catalog detail is needed.",
             "loc_id_rule": "Shape and data tools are keyed to DaedalMap loc_id. If an input is not a loc_id, call resolve_reference first.",
             "bulk_rule": "Prepared bulk point requests should provide country_scope and target_admin_level; geometry exports should preflight before create.",
         },
     }
+    if selected_view == "capabilities":
+        return _clean_json(base)
     if selected_view == "summary":
         return _clean_json({
             **base,
-            "collections": catalog.get("geometry_collections") or [],
-            "families": catalog.get("geometry_families") or [],
+            "collections": _public_catalog_records(catalog, "geometry_collections"),
+            "families": _public_catalog_records(catalog, "geometry_families"),
             "admin_coverage": _geometry_catalog_admin_coverage(catalog),
         })
     if selected_view == "admin_coverage":
@@ -559,28 +847,66 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
     if selected_view == "named_reference_objects":
         return _clean_json({**base, "named_reference_objects": _geometry_catalog_named_reference_objects(catalog, limit=row_limit)})
     if selected_view == "full":
-        return _clean_json({**base, "catalog": catalog})
+        return _clean_json({
+            **base,
+            "catalog": {
+                "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
+                "generated_at": catalog.get("generated_at"),
+                "capability_summary": geometry_capability_summary(catalog),
+                "geometry_collections": _public_catalog_records(catalog, "geometry_collections"),
+                "geometry_families": _public_catalog_records(catalog, "geometry_families"),
+                "geometry_banks": _public_catalog_records(catalog, "geometry_banks"),
+                "bridge_artifacts": _public_catalog_records(catalog, "bridge_artifacts"),
+                "resolver_groups": _public_catalog_records(catalog, "resolver_groups"),
+                "named_reference_objects": _public_catalog_records(catalog, "named_reference_objects"),
+            },
+        })
     return _clean_json({
         **base,
         "ok": False,
         "error": {
             "code": "invalid_view",
-            "message": "view must be one of summary, admin_coverage, bridges, products, named_reference_objects, or full",
+            "message": "view must be one of capabilities, summary, admin_coverage, bridges, products, named_reference_objects, or full",
         },
     })
 
 
 def _direct_loc_id_result(value: str, *, request_system: str) -> dict[str, Any]:
     loc_id = canonicalize_loc_id(value)
-    family = classify_loc_id_family(loc_id)
+    if not loc_id:
+        return {
+            "ok": False,
+            "from_system": request_system,
+            "input": value,
+            "resolved_loc_id": None,
+            "error": {
+                "code": "loc_id_required",
+                "message": "value is not a parseable loc_id",
+            },
+        }
+    # Passthrough normalizes case; it does not confer existence. Without this
+    # check an Overture GERS UUID, or any dash-separated token, came back as a
+    # confirmed loc_id purely because it had the right punctuation.
+    if not verify_loc_ids([loc_id]):
+        return {
+            "ok": False,
+            "from_system": request_system,
+            "input": value,
+            "normalized_input": loc_id,
+            "resolved_loc_id": None,
+            "error": {
+                "code": "loc_id_not_found",
+                "message": "no maintained identity or geometry matches that loc_id",
+            },
+        }
     return {
-        "ok": bool(loc_id),
+        "ok": True,
         "from_system": request_system,
         "input": value,
-        "resolved_loc_id": loc_id or None,
-        "resolved_family": family,
+        "resolved_loc_id": loc_id,
+        "resolved_family": classify_loc_id_family(loc_id),
         "match_type": "loc_id_passthrough",
-        "references": [{"system": LOC_ID_SYSTEM, "value": loc_id, "role": "reserve"}] if loc_id else [],
+        "references": [{"system": LOC_ID_SYSTEM, "value": loc_id, "role": "reserve"}],
     }
 
 
@@ -620,6 +946,10 @@ def resolve_reference(
         return {"ok": False, "from_system": system, "input": value, "error": "value is required"}
     if system in {LOC_ID_SYSTEM, "admin_local", "admin_geometry"}:
         return _clean_json(_direct_loc_id_result(text, request_system=system))
+    if system == GERS_SYSTEM:
+        # Deliberately ignores target_admin_level. The level is an output of
+        # this country's Overture mapping, not something a caller may select.
+        return _clean_json(resolve_gers_division(text, limit=limit))
     if system == "us_census_geoid":
         from .reference_identification import census_geoid_level, census_geoid_to_loc_id
 
@@ -755,7 +1085,11 @@ def resolve_reference(
         "normalized_input": source_loc_id,
         "resolved_loc_id": primary.get("match_loc_id"),
         "resolved_family": "admin_boundary" if primary.get("match_loc_id") else None,
-        "match_type": "bridge_overlap",
+        "match_type": (
+            "bridge_overlap"
+            if primary.get("source_area_share") is not None
+            else "bridge_identity"
+        ),
         "bridge": {
             "artifact_path": artifact.get("artifact_path"),
             "bridge_vintage": artifact.get("bridge_vintage"),

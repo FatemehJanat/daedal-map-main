@@ -45,7 +45,11 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertIsNone(payload["recommended_binding"])
         systems = {candidate["system"] for candidate in payload["candidates"]}
         # ZCTA evidence comes from an exact graph alias, not a format-built ID.
-        self.assertEqual(systems, {"us_census_geoid", "overlay_zcta"})
+        # Asserted as a subset: 06037 is both an LA County GEOID and a
+        # Connecticut ZCTA, and those two disagreeing about the referent is what
+        # makes it ambiguous. Other systems may also recognize the string, and a
+        # system that agrees with one of these does not change the conflict.
+        self.assertLessEqual({"us_census_geoid", "overlay_zcta"}, systems)
         self.assertEqual(payload["warnings"][-1]["code"], "ambiguous_identifier_system")
         question = payload["clarification"]["questions"][0]
         self.assertEqual(question["id"], "reference_system")
@@ -60,20 +64,22 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "ambiguous")
         self.assertIsNone(payload["recommended_binding"])
-        self.assertEqual(
-            {candidate["system"] for candidate in payload["candidates"]},
+        self.assertLessEqual(
             {"us_census_geoid", "overlay_zcta"},
+            {candidate["system"] for candidate in payload["candidates"]},
         )
 
     def test_five_digit_county_does_not_construct_a_nonexistent_zcta(self) -> None:
         payload = identify_reference_system(["36061"], country_scope="USA")
+        systems = {candidate["system"] for candidate in payload["candidates"]}
 
         self.assertEqual(payload["status"], "matched")
         self.assertEqual(payload["recommended_binding"]["system"], "us_census_geoid")
-        self.assertEqual(
-            {candidate["system"] for candidate in payload["candidates"]},
-            {"us_census_geoid"},
-        )
+        # The point is that no ZCTA is invented for a county code. Systems that
+        # recognize 36061 and agree it is USA-NY-061 are concurring evidence,
+        # not a competing reading, so they are reported rather than excluded.
+        self.assertNotIn("overlay_zcta", systems)
+        self.assertIn("us_census_geoid", payload["concurring_systems"])
 
     def test_retired_usa_sidechain_ids_fetch_canonical_graph_shapes(self) -> None:
         payload = get_geometry_references(
