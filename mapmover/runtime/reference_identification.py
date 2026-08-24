@@ -12,17 +12,17 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from .external_reference_adapters import (
+    GERS_SYSTEM,
+    admitted_external_adapters,
+    external_equivalence_matches,
+    external_system_aliases,
+    identifier_matches,
+)
 from .sidechain_admin_bridge import admin_level_name
 
 
 US_CENSUS_GEOID_SYSTEM = "us_census_geoid"
-GERS_SYSTEM = "overture_gers"
-
-#: Overture GERS division ids are UUIDs. Used only to decide which values are
-#: worth a crosswalk lookup; matching it is never evidence on its own.
-_GERS_ID_PATTERN = re.compile(
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-)
 
 US_STATE_FIPS_TO_ABBR = {
     "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA",
@@ -40,6 +40,7 @@ US_STATE_FIPS_TO_ABBR = {
 }
 
 _SYSTEM_ALIASES = {
+    **external_system_aliases(),
     "loc_id": "daedalmap.loc_id",
     "locid": "daedalmap.loc_id",
     "daedalmap": "daedalmap.loc_id",
@@ -113,6 +114,7 @@ def _geometry_rows(loc_ids: list[str]) -> dict[str, dict[str, Any]]:
 #: Evidence strength per detection method, strongest first. Used only to pick
 #: between candidates that already agree about the referent.
 _METHOD_RANK = {
+    "typed_external_equivalence": 0,
     "exact_identifier_crosswalk": 0,
     "exact_identifier_lookup": 1,
     "reference_graph_exact_alias": 2,
@@ -153,14 +155,6 @@ def _verified_loc_ids(values: list[str]) -> set[str]:
     from .reference_exchange import verify_loc_ids
 
     return verify_loc_ids(values)
-
-
-def _gers_primary_loc_ids(values: list[str]) -> dict[str, list[str]]:
-    if not values:
-        return {}
-    from .reference_exchange import gers_primary_loc_ids
-
-    return gers_primary_loc_ids(values)
 
 
 def _catalog_bank(*, country_scope: str, admin_level: str, expected_vintage: str | None) -> dict[str, Any] | None:
@@ -373,6 +367,8 @@ def identify_reference_system(
     expected_system = normalize_identifier_system(expected.get("system"))
     expected_level = _expected_level(expected.get("geo_level") or expected.get("admin_level"))
     expected_vintage = str(expected.get("vintage") or "").strip() or None
+    expected_source_release = str(expected.get("source_release") or "").strip() or None
+    expected_internal_release = str(expected.get("internal_release") or "").strip() or None
     country = str(country_scope or expected.get("country_scope") or "").strip().upper()
 
     candidates: list[dict[str, Any]] = []
@@ -436,20 +432,33 @@ def identify_reference_system(
                 method="exact_identifier_lookup", country_scope=country or "USA",
             ))
 
-    if not expected_system or expected_system == GERS_SYSTEM:
-        # UUID shape is the prefilter; presence in the crosswalk is the
-        # evidence. Checked before the graph pass so a column of Overture ids
-        # reports the system that actually owns them.
-        uuids = [value for value in values if _GERS_ID_PATTERN.fullmatch(value)]
-        gers_matches = _gers_primary_loc_ids(uuids) if uuids else {}
-        if gers_matches:
-            candidates.append(_candidate(
-                system=GERS_SYSTEM,
+    for adapter in admitted_external_adapters():
+        if expected_system and expected_system != adapter.system:
+            continue
+        # Identifier shape only bounds the lookup. A maintained
+        # equivalence edge is the evidence; containment and overlap edges
+        # deliberately cannot produce a recommended loc_id binding.
+        shaped = [value for value in values if identifier_matches(adapter, value)]
+        evidence = external_equivalence_matches(
+            adapter.system,
+            shaped,
+            country_scope=country or None,
+            source_release=expected_source_release,
+            internal_release=expected_internal_release,
+        ) if shaped else {"matches": {}}
+        matches = evidence.get("matches") or {}
+        if matches:
+            candidate = _candidate(
+                system=adapter.system,
                 identifiers=values,
-                matches=gers_matches,
-                method="exact_identifier_crosswalk",
+                matches=matches,
+                method="typed_external_equivalence",
                 country_scope=country,
-            ))
+            )
+            candidate["source_releases"] = evidence.get("source_releases") or []
+            candidate["internal_releases"] = evidence.get("internal_releases") or []
+            candidate["source_levels"] = evidence.get("source_levels") or []
+            candidates.append(candidate)
 
     for candidate in _reference_graph_candidates(values, country_scope=country):
         if not expected_system or candidate["system"] == expected_system:
@@ -525,6 +534,15 @@ def identify_reference_system(
             ),
             "country_scope": country or ("USA" if selected["system"] == US_CENSUS_GEOID_SYSTEM else None),
         }
+        if any(selected["system"] == adapter.system for adapter in admitted_external_adapters()):
+            source_releases = selected.get("source_releases") or []
+            internal_releases = selected.get("internal_releases") or []
+            recommended_binding["source_release"] = expected_source_release or (
+                source_releases[0] if len(source_releases) == 1 else None
+            )
+            recommended_binding["internal_release"] = expected_internal_release or (
+                internal_releases[0] if len(internal_releases) == 1 else None
+            )
     warnings: list[dict[str, Any]] = []
     guidance = None
     clarification = None
@@ -616,6 +634,8 @@ def identify_reference_system(
             "system": expected_system or None,
             "geo_level": expected_level,
             "vintage": expected_vintage,
+            "source_release": expected_source_release,
+            "internal_release": expected_internal_release,
             "country_scope": country or None,
         },
         "candidates": candidates,

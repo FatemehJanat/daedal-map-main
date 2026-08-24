@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from ..duckdb_helpers import is_cloud_mode, select_rows_by_exact_value
+from ..duckdb_helpers import is_cloud_mode
 from ..geometry_handlers import get_location_info, get_selection_geometries, get_selection_geometry_metadata
 from ..paths import DATA_ROOT
 from .admin_hierarchy import infer_admin_level_from_loc_id
@@ -29,6 +29,18 @@ from .geometry_catalog import (
     public_geometry_catalog_records,
     resolve_geometry_name,
 )
+from .external_reference_adapters import (
+    GERS_SYSTEM,
+    adapter_available,
+    adapter_public_entry,
+    admitted_external_adapters,
+    edge_dict,
+    external_primary_loc_ids,
+    external_system_aliases,
+    get_external_adapter,
+    lookup_external_edges,
+    lookup_loc_id_edges,
+)
 from .geography_relationships import resolve_historical_country_reference
 from .loc_id_resolution import resolve_admin_text_to_loc_id
 from .sidechain_admin_bridge import (
@@ -41,17 +53,6 @@ from .sidechain_admin_bridge import (
 
 LOC_ID_SYSTEM = "daedalmap.loc_id"
 ADMIN_SYSTEM = "admin_boundary"
-GERS_SYSTEM = "overture_gers"
-
-#: The published loc_id-to-GERS crosswalk product. This is the assembled
-#: identity layer, not the raw overlap bridges it was derived from. The bridges
-#: stay internal on purpose: their subtype-to-admin_level mapping is a property
-#: of each country's OpenStreetMap tagging, not a stable contract. Measured
-#: against release 2026-07-22.0, the `county` subtype lands on admin_1, admin_2
-#: and admin_3 depending on the country, and 39 country/subtype pairs match no
-#: level we hold at all. Publishing the bridges as level-keyed joins would
-#: advertise an alignment that does not exist.
-GERS_CROSSWALK_RELATIVE = "geometry/bridges/gers/loc_id_gers_crosswalk_global.parquet"
 
 SYSTEM_ALIASES = {
     "loc_id": LOC_ID_SYSTEM,
@@ -91,16 +92,7 @@ SYSTEM_ALIASES = {
     "census_geoid": "us_census_geoid",
     "census_2020_geoid": "us_census_geoid",
     "us_census_2020_geoid": "us_census_geoid",
-    "gers": GERS_SYSTEM,
-    "gers_id": GERS_SYSTEM,
-    "overture": GERS_SYSTEM,
-    "overture_id": GERS_SYSTEM,
-    "overture_division": GERS_SYSTEM,
-    "overture_divisions": GERS_SYSTEM,
-    "overture_division_id": GERS_SYSTEM,
-    "overture_maps": GERS_SYSTEM,
-    "overture_gers_county": GERS_SYSTEM,
-    "overture_gers_region": GERS_SYSTEM,
+    **external_system_aliases(),
 }
 
 
@@ -162,155 +154,136 @@ def verify_loc_ids(values: Any) -> set[str]:
     return verified
 
 
-#: Stated on every GERS result. Overture's `subtype` is an OpenStreetMap
-#: tagging convention, so the level a division lands on is decided per country
-#: and measured, never requested. Callers who treat it as a join key get
-#: Canada wrong, where `county` resolves onto admin_3 census subdivisions.
-GERS_LEVEL_NOTE = (
-    "admin_level is an observed property of this country's Overture mapping, not a "
-    "join key. Overture subtypes do not correspond to a fixed DaedalMap admin level, "
-    "so request a loc_id and read the level from the result."
-)
+def resolve_external_reference(
+    system: str,
+    value: str,
+    *,
+    country_scope: str | None = None,
+    source_release: str | None = None,
+    internal_release: str | None = None,
+    limit: int | None = 10,
+) -> dict[str, Any]:
+    """Resolve an admitted external id through typed relationship edges.
 
-
-def _gers_crosswalk_path() -> Path:
-    return DATA_ROOT / GERS_CROSSWALK_RELATIVE
-
-
-def _gers_row(row: Any) -> dict[str, Any]:
-    return {
-        "loc_id": _first_populated(row, "loc_id"),
-        "loc_name": _first_populated(row, "loc_name"),
-        "overture_name": _first_populated(row, "overture_name"),
-        "iso3": _first_populated(row, "iso3"),
-        "admin_level": _first_populated(row, "admin_level"),
-        "overture_subtype": _first_populated(row, "overture_subtype"),
-        "relationship_type": _first_populated(row, "relationship_type"),
-        "identity_confidence": _first_populated(row, "identity_confidence"),
-        "geometry_confidence": _first_populated(row, "geometry_confidence"),
-        "is_primary": bool(row.get("is_primary")),
-        "spine_vintage": _first_populated(row, "spine_vintage"),
-    }
-
-
-def resolve_gers_division(value: str, *, limit: int | None = 10) -> dict[str, Any]:
-    """Resolve one Overture GERS division id to its DaedalMap loc_id.
-
-    An exact identifier lookup against the assembled crosswalk, deliberately
-    with no ``target_admin_level`` argument. The two confidence scores stay
-    separate for the reason the crosswalk builder records: area agreement
-    measures whether two polygons draw the same edges, identity measures
-    whether the two systems mean the same unit, and Michigan is an unambiguous
-    identity match at 0.60 area agreement.
-
-    Only the primary row asserts identity. Secondary rows are real overlaps and
-    stay visible, but a division resolving onto several of ours is a structural
-    difference - Virginia independent cities, Connecticut planning regions - not
-    a failed equivalence.
+    Only an explicit ``equivalent_identity`` edge may recommend a loc_id.
+    ``contained_by`` and ``overlaps`` edges remain visible without becoming an
+    identity claim. No target-admin argument exists on this boundary.
     """
+    adapter = get_external_adapter(system)
     text = str(value or "").strip()
+    normalized_system = adapter.system if adapter else _normalize_system(system)
+    if adapter is None:
+        return {"ok": False, "from_system": normalized_system, "input": value,
+                "error": {"code": "external_system_not_admitted", "message": "external reference system is not admitted"}}
     if not text:
-        return {
-            "ok": False,
-            "from_system": GERS_SYSTEM,
-            "input": value,
-            "error": {"code": "gers_id_required", "message": "value is required"},
-        }
-    path = _gers_crosswalk_path()
-    try:
-        frame = select_rows_by_exact_value(path, "gers_division_id", text)
-    except Exception:
-        frame = None
-    if frame is None or frame.empty:
-        return {
-            "ok": False,
-            "from_system": GERS_SYSTEM,
-            "input": value,
-            "error": {
-                "code": "gers_division_not_found",
-                "message": "no maintained crosswalk row matches that Overture GERS division id",
-            },
-            "level_note": GERS_LEVEL_NOTE,
-        }
-    records = [_gers_row(row) for row in frame.to_dict("records")]
-    primary = next((item for item in records if item["is_primary"]), None)
-    secondary = [item for item in records if not item["is_primary"]]
-    secondary.sort(key=lambda item: -float(item.get("geometry_confidence") or 0))
+        return {"ok": False, "from_system": normalized_system, "input": value,
+                "error": {"code": "external_id_required", "message": "value is required"}}
+    if not adapter_available(adapter):
+        return {"ok": False, "from_system": adapter.system, "input": value,
+                "error": {"code": "external_system_unavailable", "message": "external reference system has no admitted, verified crosswalk"}}
+    edges = lookup_external_edges(
+        adapter.system,
+        text,
+        source_release=source_release,
+        internal_release=internal_release,
+        country_scope=country_scope,
+    )
+    if not edges:
+        return {"ok": False, "from_system": adapter.system, "input": value,
+                "error": {"code": "external_reference_not_found", "message": "no admitted typed edge matches that external identifier"}}
+    equivalences = [edge for edge in edges if edge.is_equivalence]
+    relationships = [edge for edge in edges if not edge.is_equivalence]
+    relationships.sort(key=lambda edge: (-(edge.geometry_confidence or 0.0), edge.loc_id))
     if limit is not None:
-        secondary = secondary[: max(0, int(limit) - 1)]
-    release = _first_populated(frame.to_dict("records")[0], "overture_release")
-    if not primary:
-        # Every row an overlap means the division crosses our units without any
-        # one of them owning it. Refusing is correct: there is no identity to
-        # hand back, and picking the largest overlap would invent one.
-        return {
+        relationships = relationships[: max(0, int(limit) - (1 if equivalences else 0))]
+    relationship_rows = [edge_dict(edge) for edge in relationships]
+    if not equivalences:
+        return _clean_json({
             "ok": False,
-            "from_system": GERS_SYSTEM,
+            "status": "relationship_only",
+            "from_system": adapter.system,
             "input": value,
+            "resolved_loc_id": None,
             "error": {
-                "code": "gers_division_has_no_primary_match",
-                "message": "the division overlaps maintained areas without a primary identity match",
+                "code": "external_reference_has_no_equivalence",
+                "message": "maintained containment or overlap edges exist, but none asserts identity equivalence",
             },
-            "overlaps": secondary,
-            "overlap_count": len(records),
-            "overture_release": release,
-            "level_note": GERS_LEVEL_NOTE,
-        }
+            "relationships": relationship_rows,
+            "relationship_count": len(relationships),
+            "source_releases": sorted({edge.source_release for edge in edges if edge.source_release}),
+            "internal_releases": sorted({edge.internal_release for edge in edges if edge.internal_release}),
+        })
+    equivalent_loc_ids = sorted({edge.loc_id for edge in equivalences})
+    if len(equivalent_loc_ids) != 1:
+        return _clean_json({
+            "ok": False,
+            "status": "conflicting_equivalence",
+            "from_system": adapter.system,
+            "input": value,
+            "resolved_loc_id": None,
+            "error": {
+                "code": "external_reference_conflicting_equivalence",
+                "message": "the admitted crosswalk asserts equivalence to more than one loc_id",
+            },
+            "relationships": [edge_dict(edge) for edge in equivalences] + relationship_rows,
+            "relationship_count": len(edges),
+        })
+    equivalences.sort(key=lambda edge: (edge.partition_id or "", edge.edge_id or ""))
+    primary = equivalences[0]
     return _clean_json({
         "ok": True,
-        "from_system": GERS_SYSTEM,
+        "from_system": adapter.system,
         "input": value,
-        "resolved_loc_id": primary["loc_id"],
-        "resolved_family": _reference_family(str(primary["loc_id"])),
-        "match_type": "exact_identifier_crosswalk",
-        "relationship_type": primary["relationship_type"],
-        "identity_confidence": primary["identity_confidence"],
-        "geometry_confidence": primary["geometry_confidence"],
-        "admin_level": primary["admin_level"],
-        "overture_subtype": primary["overture_subtype"],
-        "iso3": primary["iso3"],
-        "spine_vintage": primary["spine_vintage"],
-        "overture_release": release,
-        "overlaps": secondary,
-        "overlap_count": len(secondary),
-        "level_note": GERS_LEVEL_NOTE,
+        "resolved_loc_id": primary.loc_id,
+        "resolved_family": _reference_family(primary.loc_id),
+        "match_type": "exact_identifier_equivalence",
+        "relationship_type": primary.relationship_type,
+        "identity_confidence": primary.identity_confidence,
+        "geometry_confidence": primary.geometry_confidence,
+        "source_level": primary.source_level,
+        "external_subtype": primary.external_subtype,
+        "edge_id": primary.edge_id,
+        "partition_id": primary.partition_id,
+        "bridge_generation_id": primary.bridge_generation_id,
+        "edge_content_hash": primary.edge_content_hash,
+        "country": primary.country,
+        "source_release": primary.source_release,
+        "internal_release": primary.internal_release,
+        "relationships": relationship_rows,
+        "relationship_count": len(relationships),
     })
 
 
+def resolve_gers_division(value: str, *, limit: int | None = 10) -> dict[str, Any]:
+    """Compatibility wrapper for the generic admitted external adapter."""
+    payload = resolve_external_reference(GERS_SYSTEM, value, limit=limit)
+    # Preserve the pre-registry response vocabulary while callers migrate to
+    # source_release/internal_release/external_subtype/source_level.
+    payload.setdefault("overture_release", payload.get("source_release"))
+    payload.setdefault("spine_vintage", payload.get("internal_release"))
+    payload.setdefault("overture_subtype", payload.get("external_subtype"))
+    payload.setdefault("admin_level", payload.get("source_level"))
+    payload.setdefault("iso3", payload.get("country"))
+    payload.setdefault("overlaps", payload.get("relationships") or [])
+    payload.setdefault("overlap_count", payload.get("relationship_count") or 0)
+    if payload.get("match_type") == "exact_identifier_equivalence":
+        payload["match_type"] = "exact_identifier_crosswalk"
+    if payload.get("relationship_type") == "equivalent_identity":
+        payload["relationship_type"] = "equivalence"
+    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    compatibility_codes = {
+        "external_id_required": "gers_id_required",
+        "external_reference_not_found": "gers_division_not_found",
+        "external_reference_has_no_equivalence": "gers_division_has_no_primary_match",
+    }
+    if error.get("code") in compatibility_codes:
+        payload["error"] = {**error, "code": compatibility_codes[error["code"]]}
+    return payload
+
+
 def gers_primary_loc_ids(values: Any) -> dict[str, list[str]]:
-    """Map GERS division ids to their primary loc_id in one crosswalk scan.
-
-    Primary rows only. A secondary overlap is a real relationship but not an
-    identity claim, so it must not make an identifier look recognized when the
-    crosswalk holds no identity for it.
-    """
-    from ..duckdb_helpers import select_rows
-
-    requested = list(dict.fromkeys(str(item).strip() for item in values or [] if str(item).strip()))
-    if not requested:
-        return {}
-    path = _gers_crosswalk_path()
-    if not (path.exists() or is_cloud_mode()):
-        return {}
-    try:
-        frame = select_rows(
-            path,
-            columns=["gers_division_id", "loc_id", "is_primary"],
-            in_filters={"gers_division_id": requested},
-        )
-    except Exception:
-        return {}
-    if frame is None or frame.empty:
-        return {}
-    out: dict[str, list[str]] = {}
-    for row in frame.to_dict("records"):
-        if not row.get("is_primary"):
-            continue
-        key = str(row.get("gers_division_id") or "").strip()
-        loc_id = str(row.get("loc_id") or "").strip()
-        if key and loc_id:
-            out.setdefault(key, []).append(loc_id)
-    return out
+    """Compatibility wrapper; only equivalence edges participate."""
+    return external_primary_loc_ids(GERS_SYSTEM, list(values or []))
 
 
 def _reference_family(loc_id: str) -> str | None:
@@ -456,7 +429,7 @@ SELF_RESOLVING_RESOLVERS = frozenset({
     "admin geometry name and point resolver",
 })
 
-_ALWAYS_EXCHANGEABLE_ROLES = frozenset({"reserve", "exact_identifier_system"})
+_ALWAYS_EXCHANGEABLE_ROLES = frozenset({"reserve", "exact_identifier_system", "external_reference_bridge"})
 
 
 def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> None:
@@ -471,7 +444,11 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
     name = str(system.get("system") or "")
     if role in _ALWAYS_EXCHANGEABLE_ROLES:
         system["exchangeable"] = True
-        system["exchange_via"] = "reserve" if role == "reserve" else "exact_identifier_crosswalk"
+        system["exchange_via"] = (
+            "reserve" if role == "reserve" else
+            "typed_external_reference_edges" if role == "external_reference_bridge" else
+            "exact_identifier_crosswalk"
+        )
         return
     if name in bridged_systems:
         system["exchangeable"] = True
@@ -523,55 +500,6 @@ def _resolve_eez_by_country(text: str) -> dict[str, Any] | None:
     }
 
 
-def _gers_manifest() -> dict[str, Any]:
-    path = _gers_crosswalk_path().with_name(
-        _gers_crosswalk_path().stem + "_manifest.json"
-    )
-    if not path.is_file():
-        return {}
-    try:
-        import json
-
-        return json.loads(path.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _gers_system_entry() -> dict[str, Any] | None:
-    """Describe the GERS crosswalk for discovery, or nothing when absent.
-
-    Listed as an exact identifier system rather than a geometry family with a
-    bridge. It answers one question - which loc_id is this division - and it
-    carries no selectable admin level, so presenting it beside the level-keyed
-    bridges would imply a join it does not support.
-    """
-    path = _gers_crosswalk_path()
-    if not (path.exists() or is_cloud_mode()):
-        return None
-    manifest = _gers_manifest()
-    return {
-        "system": GERS_SYSTEM,
-        "label": "Overture Maps GERS division id",
-        "role": "exact_identifier_system",
-        "resolver": "exact_identifier_crosswalk",
-        "bidirectional": False,
-        "identifier_example": "58cd13ed-fb26-44c3-b791-196cf89a60aa",
-        "source_release": _first_populated(manifest, "overture_release", "release"),
-        "area_crs": _first_populated(manifest, "area_crs"),
-        # Reported as the observed mix rather than one value, because it is one.
-        # A country re-leveled onto its own authority spine carries that spine,
-        # so asserting a single vintage for the artifact would be false.
-        "spine_vintage": _first_populated(manifest, "spine_vintage"),
-        "spine_vintage_rows": manifest.get("spine_vintage_rows"),
-        "subtype_admin_level_rows": manifest.get("subtype_admin_level_rows"),
-        "confidence_model": manifest.get("confidence_model"),
-        "known_issues": manifest.get("known_issues"),
-        "level_note": GERS_LEVEL_NOTE,
-        "attribution": _first_populated(manifest, "attribution"),
-        "license_note": _first_populated(manifest, "license_note"),
-    }
-
-
 def list_reference_systems() -> dict[str, Any]:
     """Return the currently discoverable reference systems and bridges."""
     catalog = load_geometry_catalog()
@@ -593,14 +521,19 @@ def list_reference_systems() -> dict[str, Any]:
             "bidirectional": False,
         },
     }
-    gers = _gers_system_entry()
-    if gers:
-        systems[GERS_SYSTEM] = gers
+    for adapter in admitted_external_adapters():
+        if adapter_available(adapter):
+            systems[adapter.system] = adapter_public_entry(adapter)
     for family in catalog.get("geometry_families") or []:
         if not isinstance(family, dict):
             continue
         system = str(family.get("family") or "").strip()
         if not system:
+            continue
+        # External identifier systems are advertised only through their
+        # admitted typed adapter. Legacy geometry-family names must not create
+        # a second, target-admin-steerable authority path.
+        if get_external_adapter(system):
             continue
         systems.setdefault(system, {
             "system": system,
@@ -615,6 +548,8 @@ def list_reference_systems() -> dict[str, Any]:
         for family in reference_graph_families():
             system = str(family.get("family") or "").strip()
             if not system:
+                continue
+            if get_external_adapter(system):
                 continue
             systems.setdefault(system, {
                 "system": system,
@@ -632,6 +567,8 @@ def list_reference_systems() -> dict[str, Any]:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
             continue
         source = str(artifact.get("source_family") or "").strip()
+        if get_external_adapter(source):
+            continue
         level = str(artifact.get("target_admin_level") or "").strip()
         # A family renamed by the area-depth migration answers to both names.
         # Without this the canonical name looks unreachable even though its
@@ -938,6 +875,8 @@ def resolve_reference(
     country_hint: str | None = None,
     admin_level_hint: int | None = None,
     as_of: str | None = None,
+    source_release: str | None = None,
+    internal_release: str | None = None,
 ) -> dict[str, Any]:
     """Resolve a reference-system value into one or more ``loc_id`` matches."""
     system = _normalize_system(from_system)
@@ -946,10 +885,28 @@ def resolve_reference(
         return {"ok": False, "from_system": system, "input": value, "error": "value is required"}
     if system in {LOC_ID_SYSTEM, "admin_local", "admin_geometry"}:
         return _clean_json(_direct_loc_id_result(text, request_system=system))
-    if system == GERS_SYSTEM:
-        # Deliberately ignores target_admin_level. The level is an output of
-        # this country's Overture mapping, not something a caller may select.
-        return _clean_json(resolve_gers_division(text, limit=limit))
+    if get_external_adapter(system):
+        # External edges own their typed relationship and two release clocks.
+        # An admin level is observed metadata, never caller-steerable input.
+        payload = resolve_external_reference(
+            system,
+            text,
+            # `iso3` historically defaults to USA for admin bridges, so using
+            # it here would silently filter a Canadian external id. Only the
+            # explicit country hint may constrain an external adapter.
+            country_scope=country_hint or None,
+            source_release=source_release,
+            internal_release=internal_release,
+            limit=limit,
+        )
+        if system == GERS_SYSTEM:
+            # Transitional aliases only; source_level/source_release/
+            # internal_release are the canonical generic fields.
+            payload.setdefault("admin_level", payload.get("source_level"))
+            payload.setdefault("overture_subtype", payload.get("external_subtype"))
+            payload.setdefault("overture_release", payload.get("source_release"))
+            payload.setdefault("spine_vintage", payload.get("internal_release"))
+        return _clean_json(payload)
     if system == "us_census_geoid":
         from .reference_identification import census_geoid_level, census_geoid_to_loc_id
 
@@ -1116,6 +1073,9 @@ def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, A
             results[index] = convert_reference(**request)
             continue
         system = _normalize_system(request.get("from_system"))
+        if get_external_adapter(system):
+            results[index] = resolve_reference(**request)
+            continue
         level = admin_level_name(request.get("target_admin_level") or "admin_2")
         iso3 = str(request.get("iso3") or "USA").strip().upper()
         artifact = _first_bridge_artifact(
@@ -1183,6 +1143,8 @@ def loc_id_references(
     target_admin_level: int | str | None = None,
     min_share: float | None = None,
     limit_per_system: int | None = 10,
+    source_release: str | None = None,
+    internal_release: str | None = None,
 ) -> dict[str, Any]:
     """Return known references that point at a ``loc_id``."""
     canonical = canonicalize_loc_id(loc_id)
@@ -1208,10 +1170,46 @@ def loc_id_references(
 
     inferred_level = infer_admin_level_from_loc_id(canonical)
     level = admin_level_name(target_admin_level if target_admin_level not in (None, "") else inferred_level)
-    country = str(iso3 or canonical.split("-", 1)[0] if "-" in canonical else iso3 or "").strip().upper()
+    # The reserve id is authoritative for its own country. `iso3` retains a
+    # historical USA default for bridge calls and must not filter a CAN/BRA
+    # reverse external-reference lookup out of existence.
+    loc_country = canonical.split("-", 1)[0] if "-" in canonical else ""
+    country = str(loc_country or iso3 or "").strip().upper()
+    for adapter in admitted_external_adapters():
+        if requested and adapter.system not in requested:
+            continue
+        for edge in lookup_loc_id_edges(
+            adapter.system,
+            canonical,
+            country_scope=country or None,
+            source_release=source_release,
+            internal_release=internal_release,
+            limit=limit_per_system,
+        ):
+            references.append({
+                "system": adapter.system,
+                "value": edge.external_id,
+                "name": edge.external_name,
+                "role": edge.relationship_type,
+                "is_identity_equivalence": edge.is_equivalence,
+                "is_primary": edge.is_primary,
+                "source_release": edge.source_release,
+                "internal_release": edge.internal_release,
+                "country": edge.country,
+                "source_level": edge.source_level,
+                "external_subtype": edge.external_subtype,
+                "edge_id": edge.edge_id,
+                "partition_id": edge.partition_id,
+                "bridge_generation_id": edge.bridge_generation_id,
+                "edge_content_hash": edge.edge_content_hash,
+                "identity_confidence": edge.identity_confidence,
+                "geometry_confidence": edge.geometry_confidence,
+            })
     if family in {"admin_0", "admin_local", "admin_geometry"} or inferred_level is not None:
         for artifact in _bridge_artifacts(target_admin_level=level, iso3=country or None):
             source = str(artifact.get("source_family") or "").strip()
+            if get_external_adapter(source):
+                continue
             source_names = _bridge_source_names(artifact)
             requested_names = sorted(requested & source_names)
             if requested and not requested_names:
@@ -1244,6 +1242,8 @@ def loc_id_references(
 
         for alias in aliases_for_loc_id(canonical, limit=limit_per_system or 10):
             system = str(alias.get("reference_system") or "").strip()
+            if get_external_adapter(system):
+                continue
             if requested and system not in requested:
                 continue
             references.append({
@@ -1257,6 +1257,8 @@ def loc_id_references(
         for edge in relationships_for_loc_id(canonical, limit=graph_limit):
             outgoing = str(edge.get("source_loc_id") or "") == canonical
             system = str(edge.get("target_family") if outgoing else edge.get("source_family") or "").strip()
+            if get_external_adapter(system):
+                continue
             if requested and system not in requested:
                 continue
             references.append({
@@ -1293,6 +1295,8 @@ def convert_reference(
     bridge_vintage: str | None = None,
     min_share: float | None = None,
     limit: int | None = 10,
+    source_release: str | None = None,
+    internal_release: str | None = None,
 ) -> dict[str, Any]:
     """Convert a value from one reference system to another through ``loc_id``."""
     target = _normalize_system(to_system)
@@ -1304,6 +1308,8 @@ def convert_reference(
         bridge_vintage=bridge_vintage,
         min_share=min_share,
         limit=limit,
+        source_release=source_release,
+        internal_release=internal_release,
     )
     loc_id = resolved.get("resolved_loc_id")
     if not loc_id:
@@ -1317,6 +1323,8 @@ def convert_reference(
         target_admin_level=target_admin_level,
         min_share=min_share,
         limit_per_system=limit,
+        source_release=source_release,
+        internal_release=internal_release,
     )
     results = [ref for ref in references.get("references") or [] if ref.get("system") == target]
     if not results:

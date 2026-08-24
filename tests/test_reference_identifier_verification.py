@@ -6,8 +6,15 @@ is not ambiguity, and an Overture subtype is not an admin level.
 """
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
+import pandas as pd
+
+from mapmover.runtime import external_reference_adapters as external_adapters
 from mapmover.runtime.reference_exchange import (
     GERS_SYSTEM,
     list_reference_systems,
@@ -93,6 +100,75 @@ class ConcurringSystemTests(unittest.TestCase):
 
 
 class GersResolutionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Explicitly admit the retained fixture; production has no fallback."""
+        adapter = external_adapters.get_external_adapter(GERS_SYSTEM)
+        cls._temporary = tempfile.TemporaryDirectory()
+        root = Path(cls._temporary.name)
+        partitions = []
+        fixtures = (
+            ("USA", "geoboundaries_global_bank", USA_GERS_ID, USA_GERS_LOC_ID, 2, 0.94),
+            ("CAN", "can_authority_spine", CAN_GERS_ID, CAN_GERS_LOC_ID, 3, 0.99),
+        )
+        for country, internal, external_id, loc_id, admin_level, confidence in fixtures:
+            country_rows = pd.DataFrame([
+                {
+                    "gers_division_id": external_id, "loc_id": loc_id,
+                    "relationship_type": "equivalence", "is_primary": True,
+                    "overture_release": "2026-07-22.0", "spine_vintage": internal,
+                    "iso3": country, "admin_level": admin_level, "overture_subtype": "county",
+                    "identity_confidence": "high", "geometry_confidence": confidence,
+                },
+                {
+                    "gers_division_id": external_id, "loc_id": f"{country}-SECONDARY",
+                    "relationship_type": "overlaps", "is_primary": False,
+                    "overture_release": "2026-07-22.0", "spine_vintage": internal,
+                    "iso3": country, "admin_level": admin_level, "overture_subtype": "county",
+                    "identity_confidence": "none", "geometry_confidence": 0.1,
+                },
+            ])
+            forward = root / f"{country.lower()}-by-external.parquet"
+            reverse = root / f"{country.lower()}-by-internal.parquet"
+            country_rows.sort_values(["gers_division_id", "is_primary"], ascending=[True, False]).to_parquet(forward, index=False)
+            country_rows.sort_values(["loc_id", "is_primary"], ascending=[True, False]).to_parquet(reverse, index=False)
+            partitions.append({
+                "country_iso3": country,
+                "internal_spine_release": internal,
+                "partition_fingerprint": hashlib.sha256(f"{country}:{internal}".encode()).hexdigest(),
+                "artifacts": {
+                    "by_external_id": {"path": forward.relative_to(root).as_posix(), "sha256": hashlib.sha256(forward.read_bytes()).hexdigest()},
+                    "by_internal_id": {"path": reverse.relative_to(root).as_posix(), "sha256": hashlib.sha256(reverse.read_bytes()).hexdigest()},
+                },
+            })
+        admitted_manifest = external_adapters.AdmittedExternalBridge(
+            adapter=adapter,
+            release_fingerprint=external_adapters.stable_fingerprint(partitions),
+            source_release="2026-07-22.0",
+            partitions=tuple(
+                external_adapters.ExternalReferencePartition(
+                    partition_id=row["partition_fingerprint"],
+                    forward_path=row["artifacts"]["by_external_id"]["path"],
+                    forward_sha256=row["artifacts"]["by_external_id"]["sha256"],
+                    reverse_path=row["artifacts"]["by_internal_id"]["path"],
+                    reverse_sha256=row["artifacts"]["by_internal_id"]["sha256"],
+                    source_release="2026-07-22.0", internal_release=row["internal_spine_release"],
+                    country=row["country_iso3"],
+                ) for row in partitions
+            ),
+            source_license={"license": "test fixture"},
+        )
+        cls._data_patch = mock.patch.object(external_adapters, "DATA_ROOT", root)
+        cls._data_patch.start()
+        cls._admission_patch = mock.patch.object(external_adapters, "admitted_bridge", return_value=admitted_manifest)
+        cls._admission_patch.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._admission_patch.stop()
+        cls._data_patch.stop()
+        cls._temporary.cleanup()
+
     def test_gers_division_resolves_to_a_loc_id(self) -> None:
         payload = resolve_gers_division(USA_GERS_ID)
 
@@ -182,22 +258,19 @@ class GersResolutionTests(unittest.TestCase):
         )
 
         self.assertTrue(entry["exchangeable"])
-        self.assertEqual(entry["role"], "exact_identifier_system")
-        self.assertEqual(entry["exchange_via"], "exact_identifier_crosswalk")
+        self.assertEqual(entry["role"], "external_reference_bridge")
+        self.assertEqual(entry["exchange_via"], "typed_external_reference_edges")
+        self.assertIn("exact_external_key_lookup", entry["capabilities"])
         self.assertNotIn("target_admin_level", entry)
         self.assertIn("not a join key", entry["level_note"])
 
-    def test_discovery_reports_the_observed_level_mix(self) -> None:
-        """One subtype spanning three of our levels is the evidence itself."""
+    def test_discovery_reports_independent_internal_releases(self) -> None:
+        """Country partitions retain independent internal-spine clocks."""
         entry = next(
             item for item in list_reference_systems()["systems"]
             if item["system"] == GERS_SYSTEM
         )
-        county_levels = {
-            key for key in entry["subtype_admin_level_rows"] if key.startswith("county_")
-        }
-
-        self.assertGreater(len(county_levels), 1)
+        self.assertGreater(len(entry["internal_releases"]), 1)
 
 
 if __name__ == "__main__":
