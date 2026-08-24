@@ -517,21 +517,11 @@ function buildAdminLayersOverlay() {
   };
 }
 
-// The geometry-coverage atlas is an operator surface: its payload carries
-// licence review states and internal gap dispositions. This check only keeps
-// the tray honest; the endpoint enforces local-or-admin independently.
-function accountCanUseGeometryInventory() {
-  const profile = getCurrentProfile();
-  if (profile && (profile.is_admin || profile.plan_id === 'master')) return true;
-  if (typeof window === 'undefined') return false;
-  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-}
-
 function buildGeometryInventoryOverlay() {
   return {
     id: 'geometry_inventory',
-    label: 'Geometry Inventory',
-    description: 'Country geometry coverage by admin depth',
+    label: 'Geometry Catalog',
+    description: 'Explore currently available geometry depth by country',
     default: false,
     locked: false,
     model: 'polygon',
@@ -542,11 +532,11 @@ function buildGeometryInventoryOverlay() {
 }
 
 function pushGeometryInventoryCategory(categories) {
-  if (!Array.isArray(categories) || !accountCanUseGeometryInventory()) return;
+  if (!Array.isArray(categories)) return;
   if (categories.some((category) => category?.id === 'geometry_inventory')) return;
   categories.push({
     id: 'geometry_inventory',
-    label: 'Geometry Inventory',
+    label: 'Geometry Catalog',
     icon: 'G',
     isCategory: false,
     overlay: buildGeometryInventoryOverlay()

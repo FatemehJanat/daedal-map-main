@@ -8,6 +8,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mapmover import logger
+from mapmover.auth_context import get_authenticated_user
+from mapmover.hosted_runtime_account import load_account_context
 from mapmover.logging_analytics import hash_ip_for_analytics, log_api_query_event
 from mapmover.api_query_commercial import (
     commercial_access_enabled,
@@ -24,7 +26,7 @@ from mapmover.routes.mcp import (
 )
 from mapmover.security import get_client_ip
 from tool_access_shared import tool_effective_item_limit, tool_payment_required_payload, tool_quote
-from mapmover.routes.system import _require_local_or_admin
+from mapmover.routes.system import _require_admin, _require_local_or_admin
 from mapmover.geometry_handlers import (
     clear_cache as clear_geometry_cache,
     get_countries_geometry as get_countries_geometry_handler,
@@ -50,6 +52,19 @@ from mapmover.runtime.geography_relationships import compare_geographies
 
 router = APIRouter()
 MAX_SELECTION_LOC_IDS = 1_000
+
+
+def _geometry_inventory_internal_view(req: Request) -> bool:
+    """Select operator detail only for a positively identified privileged user."""
+    client = getattr(req, "client", None)
+    host = str(getattr(client, "host", "") or "").strip().lower()
+    if os.getenv("DEPLOYMENT", "").strip().lower() == "local" and host in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    auth_user = get_authenticated_user(req)
+    if not auth_user:
+        return False
+    context = load_account_context(str(auth_user.get("id") or ""))
+    return bool(context and (context.get("plan_id") == "master" or context.get("is_admin")))
 
 
 def _point_lookup_batch_limit() -> int:
@@ -281,22 +296,29 @@ async def get_overture_divisions_geojson(req: Request, admin_level: int = None, 
 
 @router.get("/api/geometry/inventory/geojson")
 async def get_geometry_inventory_geojson(req: Request):
-    """Admin geometry-coverage atlas: Admin0 shapes painted by inventory depth.
+    """Visual geometry catalog, with an explicit operator-only detail view.
 
-    Local-or-admin gated. The payload exposes licence review states, blocked
-    families, and internal gap dispositions, so catalog visibility is never
-    authorization here either.
-
-    Shapes come from the bounded Admin0 Display bootstrap; every fact comes
-    from the generated geometry catalog.
+    Anonymous and ordinary users receive current usable depth and available
+    families only. Master/admin accounts and local development receive the
+    full diagnostic atlas automatically. ``?view=public`` lets operators
+    inspect the public projection; explicit internal requests still fail
+    closed for non-privileged callers.
     """
-    _context, error = _require_local_or_admin(req)
-    if error:
-        return error
     try:
-        from mapmover.runtime.geometry_inventory import build_geometry_inventory_payload
+        from mapmover.runtime.geometry_inventory import (
+            build_geometry_inventory_payload,
+            build_public_geometry_inventory_payload,
+        )
 
-        return msgpack_response(build_geometry_inventory_payload())
+        requested_view = str(req.query_params.get("view", "auto") or "auto").strip().lower()
+        internal = requested_view != "public" and _geometry_inventory_internal_view(req)
+        if requested_view == "internal" and not internal:
+            _context, error = _require_admin(req)
+            if error:
+                return error
+        if internal:
+            return msgpack_response(build_geometry_inventory_payload())
+        return msgpack_response(build_public_geometry_inventory_payload())
     except Exception as e:
         logger.error(f"Error in /api/geometry/inventory/geojson: {e}")
         return msgpack_error(str(e), 500)

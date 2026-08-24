@@ -15,6 +15,12 @@
 
 let MapAdapter = null;
 
+const PIN_SOURCE_ID = 'geometry-inventory-small-country-pins';
+const PIN_LAYER_ID = 'geometry-inventory-small-country-symbols';
+const PIN_HIT_LAYER_ID = 'geometry-inventory-small-country-hit';
+const PIN_IMAGE_PREFIX = 'geometry-inventory-pin';
+const PIN_FALLBACK_COLOR = '#6b7280';
+
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
 }
@@ -94,15 +100,15 @@ export const GeometryPopup = {
    * Describe where a country's admin depth came from, in plain language.
    */
   depthProvenance(properties = {}) {
-    switch (String(properties.depth_source || '')) {
+    switch (String(properties.coverage_basis || properties.depth_source || '')) {
+      case 'enhanced_country_coverage':
       case 'country_program':
-        return 'From this country\'s geography inventory.';
-      case 'admin_spine_product':
-        return 'From an admin spine release. No country inventory recorded yet.';
+        return 'Enhanced country coverage available now.';
+      case 'global_baseline':
       case 'shared_bank_baseline':
-        return 'Depth actually held in the shared global bank. Not inventoried.';
+        return 'Available through the global geometry baseline.';
       default:
-        return 'Shared global baseline. This country has not been inventoried.';
+        return 'Currently available geometry coverage.';
     }
   },
 
@@ -131,11 +137,12 @@ export const GeometryPopup = {
     if (!families.length) return '';
 
     const available = families.filter((family) => family?.available);
-    const pending = families.filter((family) => {
+    const internal = String(properties.catalog_view || '') === 'internal';
+    const pending = internal ? families.filter((family) => {
       if (family?.available) return false;
       return String(family?.state || 'not_inventoried') !== 'not_inventoried';
-    });
-    const uninventoried = families.length - available.length - pending.length;
+    }) : [];
+    const uninventoried = internal ? families.length - available.length - pending.length : 0;
 
     const group = (label, items, labeller) => items.length
       ? `<div class="gb-group"><div class="gb-group-label">${label}</div>`

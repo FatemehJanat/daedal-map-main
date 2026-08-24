@@ -518,9 +518,8 @@ const OVERLAY_ENDPOINTS = {
     eventType: 'overture',
     yearField: null
   },
-  // Admin geometry-coverage atlas. Catalog status painted onto Admin0 display
-  // shapes; timeless, and local-or-admin only because it exposes licence
-  // review states and internal gap dispositions.
+  // Public visual geometry catalog. Current usable capability is painted onto
+  // Admin0 display shapes; candidate and workflow state stay server-side.
   geometry_inventory: {
     baseUrl: '/api/geometry/inventory/geojson',
     params: {},

@@ -1,16 +1,19 @@
-"""Geometry Inventory overlay payload.
+"""Role-aware Geometry Catalog overlay payload.
 
-The Explore ``Geometry Inventory`` overlay answers one operator question on a
-world map: how deep is the administrative spine we actually hold for each
-country, and what does the inventory say about the families beside it.
+The Explore ``Geometry Catalog`` overlay answers one public question on a
+world map: what administrative depth and geometry families are usable now?
+Master/admin accounts receive the richer stewardship view from the same
+catalog authority; ordinary users never receive its candidate or workflow
+fields.
 
 Two inputs, with a strict division of labour:
 
 - ``geometry/display/admin_0.parquet`` supplies **shapes only**. It is the
   bounded 2.3 MB simplified Admin0 bootstrap the map already loads, so the
   browser never receives exact world geometry for a status view.
-- ``geometry/geometry_catalog.json`` supplies **every fact**: admin depth, the
-  value the colour ramp reads, lifecycle states, authorities, and popup text.
+- ``geometry/geometry_catalog.json`` supplies **every fact**. The route then
+  selects either the public capability projection or the internal lifecycle
+  projection from the authenticated account context.
 
 The hierarchy counts that ride along in the Admin0 frame
 (``descendants_by_level``) describe the geoBoundaries bank only and cap at 2
@@ -305,6 +308,7 @@ def _feature_properties(
     properties: dict[str, Any] = {
         "loc_id": loc_id,
         "name": name,
+        "catalog_view": "internal",
         "max_admin_level": level,
         "candidate_admin_depth": resolved.get("candidate_admin_depth"),
         "candidate_admin_status": resolved.get("candidate_admin_status"),
@@ -336,6 +340,83 @@ def _feature_properties(
             "families": [],
         })
     return properties
+
+
+def _public_family_card(family: dict[str, Any]) -> dict[str, Any] | None:
+    """Return only capability facts that are useful to a catalog visitor."""
+    if not family.get("available"):
+        return None
+    return {
+        key: family.get(key)
+        for key in ("family_id", "label", "short_label", "description")
+        if family.get(key) not in (None, "")
+    } | {"available": True}
+
+
+def public_geometry_inventory_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project the operator atlas into a public, capability-only catalog.
+
+    The public map says what works now. Candidate depth, lifecycle state,
+    release identifiers, licence review, gaps, and inventory workflow remain
+    confined to the operator payload.
+    """
+    features: list[dict[str, Any]] = []
+    for feature in payload.get("features") or []:
+        if not isinstance(feature, dict):
+            continue
+        source = feature.get("properties") or {}
+        families = [
+            card
+            for family in (source.get("families") or [])
+            if isinstance(family, dict)
+            for card in [_public_family_card(family)]
+            if card is not None
+        ]
+        properties = {
+            key: source.get(key)
+            for key in (
+                "loc_id", "name", "max_admin_level", "depth_color",
+                "area_km2", "is_small", "centroid_lon", "centroid_lat",
+            )
+            if source.get(key) is not None
+        }
+        properties.update({
+            "catalog_view": "public",
+            "coverage_basis": (
+                "enhanced_country_coverage"
+                if source.get("depth_source") == "country_program"
+                else "global_baseline"
+            ),
+            "available_family_count": len(families),
+            "families": families,
+        })
+        features.append({
+            "type": "Feature",
+            "geometry": feature.get("geometry"),
+            "properties": properties,
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "view": "public",
+        "features": features,
+        "count": len(features),
+        "legend": payload.get("legend") or [],
+        "small_country_area_km2": payload.get("small_country_area_km2"),
+        "small_country_count": payload.get("small_country_count", 0),
+        "unknown_color": payload.get("unknown_color"),
+        "catalog": {
+            key: (payload.get("catalog") or {}).get(key)
+            for key in ("schema_version", "generated_at")
+            if (payload.get("catalog") or {}).get(key) is not None
+        },
+    }
+
+
+@lru_cache(maxsize=1)
+def build_public_geometry_inventory_payload() -> dict[str, Any]:
+    """Build the public visual catalog from the current operator atlas."""
+    return public_geometry_inventory_payload(build_geometry_inventory_payload())
 
 
 @lru_cache(maxsize=1)
@@ -385,6 +466,7 @@ def build_geometry_inventory_payload() -> dict[str, Any]:
 
     return {
         "type": "FeatureCollection",
+        "view": "internal",
         "features": features,
         "count": len(features),
         "shape_source": "geometry/display/admin_0.parquet",
@@ -411,3 +493,4 @@ def build_geometry_inventory_payload() -> dict[str, Any]:
 def clear_geometry_inventory_cache() -> None:
     """Drop the built payload so a rebuilt catalog is picked up in place."""
     build_geometry_inventory_payload.cache_clear()
+    build_public_geometry_inventory_payload.cache_clear()
