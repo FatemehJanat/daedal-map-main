@@ -75,8 +75,8 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
     "read_geometry_catalog": _g(
         ["You need current geometry collections, families, banks, bridges, releases, or exports."],
         ["Resolving a place", "Returning shapes"],
-        {"view": "summary", "limit": 5},
-        ["counts", "collections", "geometry_banks", "download_url"],
+        {"view": "capabilities"},
+        ["capabilities", "counts", "download_url"],
         ["list_reference_systems", "resolve_reference", "check_geometry"],
         ["catalog fingerprint", "bank releases", "source licenses"]
     ),
@@ -238,12 +238,18 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
 }
 
 
-def geometry_family_help_payload(question: str | None = None) -> dict[str, Any]:
+def geometry_family_help_payload(
+    question: str | None = None,
+    *,
+    catalog_capabilities: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    capabilities = dict(catalog_capabilities or {})
     return {
         "ok": True,
         "tool_name": "how_geometry_works",
         "summary": "DaedalMap Geometry MCP deterministically resolves geography onto the shared loc_id spine, inspects identities and relationships, returns shapes, and prepares bounded exports.",
         "core_rule": "Translate the user's intent into a strict geometry tool call, normalize onto loc_id, then request only the identity, relationship, or shape detail the user actually needs.",
+        "coverage": capabilities,
         "interaction_contract": {
             "natural_language_owner": "calling_client_llm",
             "execution_input": "strict_json_schema",
@@ -283,6 +289,7 @@ def geometry_family_help_payload(question: str | None = None) -> dict[str, Any]:
             if name == "get_tool_help" or tool_profile(name).get("family") == "geography"
         ),
         "notes": [
+            capabilities.get("public_claim") or "Coverage is read from geometry_catalog.json; do not hardcode a country list or depth.",
             "loc_id is the reserve geography identifier used by data packs and geometry tools.",
             "Known identifier crosswalks bypass point and polygon rediscovery.",
             "A mixed-vintage point chain is context, not strict stored parentage.",

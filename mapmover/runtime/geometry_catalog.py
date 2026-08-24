@@ -16,6 +16,7 @@ from typing import Any
 from ..paths import GEOMETRY_DIR
 from ..runtime_config import get_runtime_config
 from .published_artifacts import read_artifact_json
+from geometry_catalog_shared import build_geometry_capability_summary, public_geometry_catalog_records
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
@@ -73,6 +74,15 @@ def clear_geometry_catalog_cache() -> None:
     from .geometry_inventory import clear_geometry_inventory_cache
 
     clear_geometry_inventory_cache()
+
+
+def geometry_capability_summary(catalog: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read the generated capability contract, deriving it for older catalogs."""
+    payload = catalog if isinstance(catalog, dict) else load_geometry_catalog()
+    summary = payload.get("capability_summary") if isinstance(payload, dict) else None
+    if isinstance(summary, dict) and summary:
+        return dict(summary)
+    return build_geometry_capability_summary(payload if isinstance(payload, dict) else {})
 
 
 @lru_cache(maxsize=1)

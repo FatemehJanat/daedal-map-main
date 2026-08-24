@@ -70,7 +70,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "how_geometry_works",
             "title": "How Geometry MCP Works",
-            "description": "Free family-level orientation for the DaedalMap geography/geometry MCP. Explains the loc_id spine, natural-language translation boundary, discovery and resolution workflows, known-identifier bypass, shape/export workflow, and when the client must ask a clarification. Use get_tool_help for one exact tool after reading this overview.",
+            "description": "Free family-level orientation for the DaedalMap geography/geometry MCP. Explains the catalog-driven global baseline, automatic country enrichment, loc_id spine, discovery and resolution workflows, and shape/export workflow. Use get_tool_help for one exact tool after reading this overview.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -226,14 +226,14 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "read_geometry_catalog",
             "title": "Read Geometry Catalog",
-            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so you can see collections, families, banks, crosswalk products, and named reference objects before choosing loc_id tools. Use view='summary' first; use view='full' only when you need the whole catalog. No payment required.",
+            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so coverage updates automatically flow into MCP discovery. Use view='capabilities' first for the global baseline and enhanced countries; use focused inventory views for families, banks, crosswalk products, and named objects. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "view": {
                         "type": "string",
-                        "enum": ["summary", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
-                        "description": "Catalog view to return. Default summary.",
+                        "enum": ["capabilities", "summary", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
+                        "description": "Catalog view to return. Use capabilities for the concise first-user coverage model. Default summary for compatibility.",
                     },
                     "limit": {
                         "type": "integer",

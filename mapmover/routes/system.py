@@ -1406,18 +1406,22 @@ def _geometry_scope_codes(*values) -> set[str]:
 
 
 def _build_geometry_catalog_payload() -> dict:
-    from mapmover.runtime.geometry_catalog import load_geometry_catalog
+    from mapmover.runtime.geometry_catalog import (
+        geometry_capability_summary,
+        load_geometry_catalog,
+        public_geometry_catalog_records,
+    )
     from mapmover.runtime.country_geography import load_country_geometry_profile
 
     catalog = load_geometry_catalog()
-    collections = [item for item in (catalog.get("geometry_collections") or []) if isinstance(item, dict)]
-    banks = [item for item in (catalog.get("geometry_banks") or []) if isinstance(item, dict)]
-    families = [item for item in (catalog.get("geometry_families") or []) if isinstance(item, dict)]
-    bridges = [item for item in (catalog.get("bridge_artifacts") or []) if isinstance(item, dict)]
-    assets = [item for item in (catalog.get("geometry_products") or []) if isinstance(item, dict)]
-    packages = [item for item in (catalog.get("release_packages") or []) if isinstance(item, dict)]
-    named = [item for item in (catalog.get("named_reference_objects") or []) if isinstance(item, dict)]
-    groups = [item for item in (catalog.get("resolver_groups") or []) if isinstance(item, dict)]
+    collections = public_geometry_catalog_records(catalog, "geometry_collections")
+    banks = public_geometry_catalog_records(catalog, "geometry_banks")
+    families = public_geometry_catalog_records(catalog, "geometry_families")
+    bridges = public_geometry_catalog_records(catalog, "bridge_artifacts")
+    assets = public_geometry_catalog_records(catalog, "geometry_products")
+    packages = public_geometry_catalog_records(catalog, "release_packages")
+    named = public_geometry_catalog_records(catalog, "named_reference_objects")
+    groups = public_geometry_catalog_records(catalog, "resolver_groups")
 
     country_codes = sorted({
         code
@@ -1540,10 +1544,6 @@ def _build_geometry_catalog_payload() -> dict:
             "max_admin_level": f"admin_{max_depth}",
             "max_admin_depth": max_depth,
             "active_admin_depth": max_depth,
-            "candidate_admin_depth": coverage_program.get("candidate_admin_depth"),
-            "candidate_admin_status": coverage_program.get("candidate_admin_status"),
-            "candidate_admin_source_licenses": coverage_program.get("candidate_admin_source_licenses") or [],
-            "candidate_admin_source_license_details": coverage_program.get("candidate_admin_source_license_details") or [],
             "strict_nested_levels": strict_levels,
             "asset_count": len(admin_spine_assets),
             "feature_count": sum(
@@ -1560,6 +1560,7 @@ def _build_geometry_catalog_payload() -> dict:
         "ok": bool(catalog),
         "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
         "generated_at": catalog.get("generated_at"),
+        "capabilities": geometry_capability_summary(catalog),
         "collection_count": len(collections),
         "bank_count": len(banks),
         "family_count": len(families),

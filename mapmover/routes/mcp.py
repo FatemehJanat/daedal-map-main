@@ -27,6 +27,7 @@ from pack_registry_shared import (
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
+from mapmover.runtime.geometry_catalog import geometry_capability_summary
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.api_query_commercial import (
     commercial_access_enabled,
@@ -1029,10 +1030,12 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
 def get_server_description(pack_id: str | None = None) -> str:
     normalized = _normalize_pack_id(pack_id)
     if normalized in {"geography", "reverse-geocoding", "boundaries"}:
+        coverage_claim = str(geometry_capability_summary().get("public_claim") or "").strip()
+        coverage_prefix = f"Coverage: {coverage_claim} " if coverage_claim else ""
         return (
-            f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} "
+            f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} {coverage_prefix}"
             "The calling LLM translates the user's natural-language request into strict tool JSON; geometry execution tools do not accept prose unless a schema explicitly says they do. Call get_tool_help before an unfamiliar tool. On error, inspect error, warnings, guidance, and clarification; ask the user only when clarification.required is true. "
-            "Start with free discovery: call read_geometry_catalog for coverage, admin depths, shape-backed families, bridges, named geometries, and package availability; then call list_reference_systems to see supported exchange systems, bridge vintages, counts, and license/source context. "
+            "Start with free discovery: call read_geometry_catalog with view='capabilities' for the current global baseline and catalog-admitted country enrichment; use its focused inventory views for admin depths, shape-backed families, bridges, named geometries, and package availability. Then call list_reference_systems to see supported exchange systems, bridge vintages, counts, and license/source context. "
             "For coordinates, call resolve_point with lat/lon or points; it returns only the compact complete latest-available chain and defaults to the deepest served tier. Do not request geometry or relationship detail in that call. "
             "When the caller asks for details about that chain, pass its stack loc_ids to loc_id_info; use get_geometry only for shapes and compare_geographies only for overlap, topology, validity, or successor questions. Mixed-vintage point context is not strict parentage. "
             "For a user dataset with unknown or informally declared geography keys, call identify_reference_system on representative or all distinct identifiers, then pass an unambiguous geography_binding to the conversion-job tools. For one known outside geography code or name, call resolve_reference. For bulk geometry, call resolve_loc_id_scope only for one strict hierarchy, then estimate_geometry_package before create_geometry_export. "
@@ -1312,7 +1315,14 @@ def _ensure_request_id(arguments: dict[str, Any], tool_name: str) -> dict[str, A
 
 
 def _tool_definitions() -> list[dict[str, Any]]:
-    return build_tool_definitions()
+    definitions = build_tool_definitions()
+    claim = str(geometry_capability_summary().get("public_claim") or "").strip()
+    if not claim:
+        return definitions
+    for definition in definitions:
+        if definition.get("name") in {"how_geometry_works", "read_geometry_catalog", "resolve_point"}:
+            definition["description"] = f"{definition.get('description', '').rstrip()} Current catalog: {claim}"
+    return definitions
 
 
 def _prompt_definitions() -> list[dict[str, Any]]:
@@ -4445,7 +4455,10 @@ async def mcp_endpoint(request: Request, pack_id: str | None = None):
         rate_limit_response = _live_tool_rate_limit_response(request, tool_name, request_id)
         if rate_limit_response:
             return rate_limit_response
-        payload = geometry_family_help_payload(str(arguments.get("question") or ""))
+        payload = geometry_family_help_payload(
+            str(arguments.get("question") or ""),
+            catalog_capabilities=geometry_capability_summary(),
+        )
         return _finish_data_helper(
             request,
             tool_name=tool_name,

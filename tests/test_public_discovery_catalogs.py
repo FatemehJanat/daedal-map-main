@@ -438,15 +438,12 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(coverage["CAN"]["max_admin_level"], "admin_5")
         self.assertEqual(coverage["BRA"]["max_admin_level"], "admin_2")
         self.assertEqual(coverage["BRA"]["active_admin_depth"], 2)
-        self.assertEqual(coverage["BRA"]["candidate_admin_depth"], 5)
-        self.assertEqual(coverage["BRA"]["candidate_admin_status"], "blocked")
-        self.assertEqual(
-            coverage["BRA"]["candidate_admin_source_licenses"],
-            ["IBGE open public geoscience data; attribution required"],
-        )
+        self.assertNotIn("candidate_admin_depth", coverage["BRA"])
+        self.assertNotIn("candidate_admin_status", coverage["BRA"])
+        self.assertNotIn("candidate_admin_source_licenses", coverage["BRA"])
         self.assertEqual(coverage["GBR"]["max_admin_level"], "admin_2")
-        self.assertEqual(coverage["GBR"]["candidate_admin_depth"], 3)
-        self.assertEqual(coverage["GBR"]["candidate_admin_status"], "discovered")
+        self.assertNotIn("candidate_admin_depth", coverage["GBR"])
+        self.assertNotIn("candidate_admin_status", coverage["GBR"])
         self.assertIn("admin_6", coverage["AUS"]["strict_nested_levels"])
 
 

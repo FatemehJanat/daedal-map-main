@@ -915,6 +915,66 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["admin_coverage"][0]["product_id"], "global_admin_spine")
         self.assertIn("download_url", payload)
 
+    def test_read_geometry_catalog_returns_concise_capabilities(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.load_geometry_catalog",
+            return_value={
+                "schema_version": "1.1.0",
+                "global_admin_baseline": [
+                    {"country_code": "BRA", "max_admin_level": 2},
+                    {"country_code": "AUS", "max_admin_level": 2},
+                ],
+                "country_family_coverage": [{
+                    "country_code": "AUS",
+                    "label": "Australia",
+                    "active_admin_depth": 6,
+                    "available_family_ids": ["administrative"],
+                }],
+            },
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "capabilities"})
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["view"], "capabilities")
+        self.assertEqual(payload["capabilities"]["enhanced_country_codes"], ["AUS"])
+        self.assertEqual(payload["capabilities"]["global_baseline"]["geographic_entity_count"], 2)
+        self.assertNotIn("candidate_countries", payload["capabilities"])
+        self.assertNotIn("country_programs", payload["capabilities"])
+
+    def test_read_geometry_catalog_full_view_does_not_expose_internal_country_candidates(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.load_geometry_catalog",
+            return_value={
+                "schema_version": "1.1.0",
+                "global_admin_baseline": [{"country_code": "FRA", "max_admin_level": 2}],
+                "country_family_coverage": [{
+                    "country_code": "FRA",
+                    "candidate_admin_depth": 4,
+                    "candidate_admin_status": "ready_for_acquisition",
+                }],
+            },
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "full"})
+
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("country_family_coverage", payload["catalog"])
+        self.assertNotIn("candidate_countries", payload["catalog"]["capability_summary"])
+
+    def test_read_geometry_catalog_filters_candidate_products(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.load_geometry_catalog",
+            return_value={
+                "geometry_products": [
+                    {"product_id": "active", "release_state": "published", "admin_coverage": {}},
+                    {"product_id": "internal", "release_state": "candidate_blocked", "admin_coverage": {}},
+                ],
+            },
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "products"})
+
+        self.assertEqual([item["product_id"] for item in payload["products"]], ["active"])
+        self.assertEqual(payload["counts"]["geometry_products"], 1)
+
     def test_read_geometry_catalog_logs_runtime_analytics(self) -> None:
         with (
             mock.patch(
