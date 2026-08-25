@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..paths import GEOMETRY_DIR
-from ..runtime_config import get_runtime_config
+from ..runtime_config import force_remote_data_reads, get_data_plane_mode
 from .published_artifacts import read_artifact_json
 from geometry_catalog_shared import build_geometry_capability_summary, public_geometry_catalog_records
 
@@ -27,7 +27,7 @@ def _normalize(value: str | None) -> str:
 
 
 def _is_cloud_mode() -> bool:
-    return str(get_runtime_config().get("runtime_mode", "local")).strip().lower() == "cloud"
+    return get_data_plane_mode() == "cloud"
 
 
 def _fetch_geometry_catalog_from_s3() -> dict[str, Any] | None:
@@ -49,12 +49,13 @@ def load_geometry_catalog() -> dict[str, Any]:
         except Exception:
             pass
 
-    try:
-        payload = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-        if isinstance(payload, dict):
-            return payload
-    except (OSError, json.JSONDecodeError):
-        pass
+    if not force_remote_data_reads():
+        try:
+            payload = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except (OSError, json.JSONDecodeError):
+            pass
 
     return {
         "schema_version": "1.1.0",

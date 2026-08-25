@@ -413,8 +413,8 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         geometry_catalog.clear_geometry_catalog_cache()
         with mock.patch.dict(os.environ, {"S3_BUCKET": "test-bucket", "S3_PREFIX": "published"}, clear=False):
             with mock.patch(
-                "mapmover.runtime.geometry_catalog.get_runtime_config",
-                return_value={"runtime_mode": "cloud", "cloud": {"bucket": "test-bucket", "prefix": "published"}},
+                "mapmover.runtime.geometry_catalog.get_data_plane_mode",
+                return_value="cloud",
             ), mock.patch(
                 "boto3.client",
                 return_value=store,

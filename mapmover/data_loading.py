@@ -51,7 +51,7 @@ from .runtime.geography_reference import (
     canonicalize_loc_id,
     translate_loc_id_to_geometry_id,
 )
-from .runtime_config import get_runtime_config
+from .runtime_config import force_remote_data_reads, get_data_plane_mode, get_runtime_config
 
 logger = logging.getLogger("mapmover")
 
@@ -205,6 +205,8 @@ def _requested_product_surface() -> str | None:
 
 def _allow_local_source_fallback() -> bool:
     """Allow local source file fallback only for deliberate WIP/dev surfaces."""
+    if force_remote_data_reads():
+        return False
     return _requested_catalog_surface() == "wip"
 
 
@@ -229,7 +231,7 @@ def _api_catalog_output_root() -> Path:
 
 
 def _load_json_from_runtime_or_s3(relative_path: str, *, use_agent_prefix: bool = False, use_api_prefix: bool = False) -> dict | None:
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    runtime_mode = get_data_plane_mode()
     if runtime_mode == "cloud":
         use_discovery_prefix = use_agent_prefix or use_api_prefix
         candidate_paths = [f"agent_catalog/{relative_path}"] if use_discovery_prefix else [relative_path]
@@ -270,7 +272,7 @@ def load_catalog():
     if _catalog_cache is not None and (now - _catalog_cache_time) < _CATALOG_TTL_SECONDS:
         return build_active_catalog(_catalog_cache, catalog_surface=_requested_product_surface())
 
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    runtime_mode = get_data_plane_mode()
 
     if runtime_mode == "cloud":
         if (now - _catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS and _catalog_cache is None:
@@ -284,7 +286,7 @@ def load_catalog():
             return active_catalog
         except Exception as e:
             logger.warning(f"catalog.json S3 fetch failed: {e}")
-            local_catalog_path = get_catalog_path()
+            local_catalog_path = None if force_remote_data_reads() else get_catalog_path()
             if local_catalog_path and local_catalog_path.exists():
                 try:
                     with open(local_catalog_path, 'r', encoding='utf-8-sig') as f:
@@ -562,7 +564,7 @@ def load_full_catalog():
     if _full_catalog_cache is not None and (now - _full_catalog_cache_time) < _CATALOG_TTL_SECONDS:
         return _full_catalog_cache
 
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    runtime_mode = get_data_plane_mode()
 
     if runtime_mode == "cloud":
         if (now - _full_catalog_missing_time) < _CATALOG_MISS_TTL_SECONDS and _full_catalog_cache is None:
@@ -576,7 +578,7 @@ def load_full_catalog():
             return raw_catalog
         except Exception as e:
             logger.warning(f"wip_catalog.json S3 fetch failed, falling back to local/runtime catalogs: {e}")
-            local_wip_path = get_wip_catalog_path()
+            local_wip_path = None if force_remote_data_reads() else get_wip_catalog_path()
             if local_wip_path and local_wip_path.exists():
                 try:
                     with open(local_wip_path, "r", encoding="utf-8-sig") as f:
@@ -847,7 +849,7 @@ def load_source_metadata(source_id: str):
     if source_id in _metadata_cache:
         return _metadata_cache[source_id]
 
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    runtime_mode = get_data_plane_mode()
 
     if runtime_mode == "cloud":
         # Resolve published source paths from the raw published catalog, not
@@ -948,7 +950,7 @@ def load_source_reference(source_id: str):
     Returns:
         dict: Source reference data or None if not found
     """
-    runtime_mode = str(get_runtime_config().get("runtime_mode", "local")).strip().lower()
+    runtime_mode = get_data_plane_mode()
 
     if runtime_mode == "cloud":
         catalog = load_full_catalog()

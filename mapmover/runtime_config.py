@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -128,6 +129,42 @@ def _build_defaults() -> dict:
 
 
 _DEFAULTS = _build_defaults()
+_DATA_PLANE_LOCK = threading.RLock()
+_LOCAL_DATA_PLANE_OVERRIDE: str | None = None
+
+
+def get_data_plane_mode() -> str:
+    """Return the active read lane without changing deployment semantics."""
+    with _DATA_PLANE_LOCK:
+        override = _LOCAL_DATA_PLANE_OVERRIDE
+    if override in {"local", "cloud"}:
+        return override
+    # ``paths.RUNTIME_MODE`` is the process's frozen startup identity. Using it
+    # here avoids a later environment mutation making the UI report a mode
+    # different from the paths and credentials the server actually booted with.
+    try:
+        from .paths import RUNTIME_MODE
+
+        return str(RUNTIME_MODE).strip().lower() or "local"
+    except (ImportError, AttributeError):
+        return str(get_runtime_config().get("runtime_mode", "local")).strip().lower() or "local"
+
+
+def set_local_data_plane_mode(mode: str) -> str:
+    """Set the process-local read lane used by the localhost QA shell."""
+    normalized = str(mode or "").strip().lower()
+    if normalized not in {"local", "cloud"}:
+        raise ValueError("Data plane mode must be local or cloud")
+    global _LOCAL_DATA_PLANE_OVERRIDE
+    with _DATA_PLANE_LOCK:
+        _LOCAL_DATA_PLANE_OVERRIDE = normalized
+    return normalized
+
+
+def force_remote_data_reads() -> bool:
+    """Return whether localhost explicitly selected strict cloud reads."""
+    with _DATA_PLANE_LOCK:
+        return _LOCAL_DATA_PLANE_OVERRIDE == "cloud"
 
 
 def _get_runtime_config_path() -> Path:

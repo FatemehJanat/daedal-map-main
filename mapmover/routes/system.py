@@ -2663,6 +2663,51 @@ async def set_local_catalog_surface(req: Request):
     return msgpack_response({"catalog_surface": "wip" if use_wip else "published", "lane": lane})
 
 
+@router.post("/api/local/data-plane")
+async def set_local_data_plane(req: Request):
+    """Switch localhost reads between installed files and the cloud lane."""
+    from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
+    from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
+    from mapmover.foundation_helpers import clear_foundation_helper_cache
+    from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+    from mapmover.paths import RUNTIME_MODE
+    from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
+    from mapmover.runtime_config import get_data_plane_mode, set_local_data_plane_mode
+
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    if str(RUNTIME_MODE).strip().lower() != "local":
+        return msgpack_error("Local data-plane switching is unavailable in hosted runtime.", 404)
+    try:
+        body = msgpack.unpackb(await req.body(), raw=False)
+    except Exception:
+        try:
+            body = await req.json()
+        except Exception:
+            body = {}
+    previous_mode = get_data_plane_mode()
+    try:
+        mode = set_local_data_plane_mode((body or {}).get("mode"))
+    except ValueError as exc:
+        return msgpack_error(str(exc), 400)
+
+    if mode == previous_mode:
+        return msgpack_response({"ok": True, "changed": False, "data_plane_mode": mode})
+
+    import mapmover.data_loading as _dl
+
+    _dl.clear_catalog_cache()
+    _dl.clear_api_discovery_cache()
+    clear_geometry_catalog_cache()
+    clear_foundation_helper_cache()
+    clear_geometry_cache()
+    clear_data_cascade_cache()
+    cache_clear()
+    reset_thread_connection_pool()
+    return msgpack_response({"ok": True, "changed": True, "data_plane_mode": mode})
+
+
 @router.get("/api/runtime/packs/state")
 async def get_runtime_packs_state(req: Request):
     """Return runtime-local pack installation and activation state."""
@@ -4546,6 +4591,7 @@ async def get_admin_levels():
 async def get_auth_config():
     """Return safe public auth configuration for the frontend."""
     from mapmover.paths import ACCOUNT_URL, INSTALL_MODE, RUNTIME_MODE, SITE_URL
+    from mapmover.runtime_config import get_data_plane_mode
 
     enabled = _hosted_auth_enabled()
     local_wrapper_enabled = (
@@ -4559,6 +4605,7 @@ async def get_auth_config():
         "site_url": SITE_URL,
         "account_url": ACCOUNT_URL if enabled else "/settings",
         "local_wrapper_enabled": local_wrapper_enabled,
+        "runtime_mode": get_data_plane_mode(),
     }
 
 

@@ -43,6 +43,21 @@ function localWipPreferenceKey(lane = currentCatalogLane()) {
   return `useWipCatalog:${lane}`;
 }
 
+const LOCAL_CLOUD_DATA_PREFERENCE_KEY = 'useCloudRuntime';
+
+function currentRuntimeMode() {
+  return String(authConfig?.runtime_mode || (isLocalLikeHost(window.location.hostname) ? 'local' : 'cloud'))
+    .trim().toLowerCase() === 'cloud' ? 'cloud' : 'local';
+}
+
+function accountCanUseWipCatalog() {
+  return Boolean(currentProfile?.is_admin || currentProfile?.plan_id === 'master');
+}
+
+function selectedCatalogSurface(lane = currentCatalogLane()) {
+  return window.localStorage.getItem(localWipPreferenceKey(lane)) === '1' ? 'wip' : 'published';
+}
+
 function isLocalWrapperEnabled() {
   return Boolean(authConfig?.local_wrapper_enabled);
 }
@@ -79,13 +94,16 @@ async function syncLocalWrapperAuthState() {
   return await localWrapperSyncPromise;
 }
 
-async function restoreLocalCatalogSurface() {
+async function restoreCatalogSurfacePreference() {
   // The UI preference lives in browser storage, whereas the local Python
   // process starts with the published catalog. Restore it before app startup
   // reaches OverlaySelector, rather than waiting for the next checkbox click.
   if (!isLocalLikeHost(window.location.hostname) || !isAuthenticated()) return;
   const lane = currentCatalogLane();
-  const useWip = window.localStorage.getItem(localWipPreferenceKey(lane)) === '1';
+  const useWip = selectedCatalogSurface(lane) === 'wip' && accountCanUseWipCatalog();
+  if (!accountCanUseWipCatalog()) {
+    window.localStorage.setItem(localWipPreferenceKey(lane), '0');
+  }
   try {
     const response = await fetch('/api/local/catalog-surface', {
       method: 'POST',
@@ -96,6 +114,60 @@ async function restoreLocalCatalogSurface() {
   } catch (error) {
     console.warn('Could not restore local catalog surface', error);
   }
+}
+
+async function restoreLocalDataPlanePreference() {
+  if (!isLocalLikeHost(window.location.hostname) || !isLocalWrapperEnabled()) return;
+  const mode = window.localStorage.getItem(LOCAL_CLOUD_DATA_PREFERENCE_KEY) === '1' ? 'cloud' : 'local';
+  try {
+    const response = await fetch('/api/local/data-plane', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    authConfig.runtime_mode = mode;
+  } catch (error) {
+    console.warn('Could not restore local data-plane preference', error);
+  }
+}
+
+async function applyLocalDataPlane(mode) {
+  const normalized = mode === 'cloud' ? 'cloud' : 'local';
+  const activeOverlays = window.OverlaySelector?.getActiveOverlays?.() || [];
+  const response = await fetch('/api/local/data-plane', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: normalized })
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  authConfig.runtime_mode = normalized;
+  window.localStorage.setItem(LOCAL_CLOUD_DATA_PREFERENCE_KEY, normalized === 'cloud' ? '1' : '0');
+  window.dispatchEvent(new CustomEvent('local-data-plane-changed', {
+    detail: { dataPlaneMode: normalized }
+  }));
+  await window.OverlaySelector?.init?.({ restoreState: true });
+  for (const overlayId of activeOverlays) {
+    await window.OverlayController?.reloadOverlay?.(overlayId);
+  }
+}
+
+async function applyCatalogSurface(catalogSurface, lane = currentCatalogLane()) {
+  const useWip = catalogSurface === 'wip';
+  if (useWip && !accountCanUseWipCatalog()) {
+    throw new Error('WIP catalog access requires a master or admin account');
+  }
+  const response = await fetch('/api/local/catalog-surface', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ use_wip: useWip, lane })
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  window.localStorage.setItem(localWipPreferenceKey(lane), useWip ? '1' : '0');
+  window.dispatchEvent(new CustomEvent('local-catalog-surface-changed', {
+    detail: { catalogSurface: useWip ? 'wip' : 'published', lane }
+  }));
+  await window.OverlaySelector?.init?.({ restoreState: true });
 }
 
 function getLocalLinkedSiteBase() {
@@ -523,13 +595,21 @@ function updateDom() {
     btn.disabled = false;
     btn.classList.add('logged-in');
     const currentLane = currentCatalogLane();
-    const localCatalogControl = isLocalLikeHost(window.location.hostname)
-      ? `<br><label style="display:block;margin-top:4px"><input type="checkbox" data-wip-catalog-toggle> Use WIP catalog</label>`
-      : '';
+    const runtimeMode = currentRuntimeMode();
+    const catalogSurface = selectedCatalogSurface(currentLane);
+    const canUseWip = accountCanUseWipCatalog();
+    const surfaceControl = `<div style="margin-top:6px">`
+      + (isLocalWrapperEnabled()
+        ? `<label style="display:block;margin-top:4px"><input type="checkbox" data-cloud-runtime-toggle${runtimeMode === 'cloud' ? ' checked' : ''}> Use cloud data</label>`
+        : '')
+      + (isLocalWrapperEnabled() && canUseWip
+        ? `<label style="display:block;margin-top:4px"><input type="checkbox" data-wip-catalog-toggle${catalogSurface === 'wip' ? ' checked' : ''}> Use WIP catalog</label>`
+        : '')
+      + `</div>`;
     const accountLabel = isLocalLikeHost(window.location.hostname)
       ? 'Open account settings (hosted sign-in may be required)'
       : 'Open account settings';
-    status.innerHTML = `Signed in${isLocalLikeHost(window.location.hostname) ? ' locally' : ''} as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener" data-secure-account-link="1">${accountLabel}</a>${localCatalogControl}`;
+    status.innerHTML = `Signed in${isLocalLikeHost(window.location.hostname) ? ' locally' : ''} as ${email}. <a href="${accountUrl}" target="_blank" rel="noopener" data-secure-account-link="1">${accountLabel}</a>${surfaceControl}`;
     const accountLink = status.querySelector('[data-secure-account-link]');
     if (accountLink) {
       accountLink.addEventListener('click', async (event) => {
@@ -537,36 +617,39 @@ function updateDom() {
         await navigateToHostedAccount(accountUrl, { targetBlank: true });
       });
     }
+    const cloudToggle = status.querySelector('[data-cloud-runtime-toggle]');
     const wipToggle = status.querySelector('[data-wip-catalog-toggle]');
-    if (wipToggle) {
-      wipToggle.checked = window.localStorage.getItem(localWipPreferenceKey(currentLane)) === '1';
-      wipToggle.addEventListener('change', async () => {
-        const useWip = wipToggle.checked;
-        wipToggle.disabled = true;
+    if (cloudToggle) {
+      cloudToggle.addEventListener('change', async () => {
+        const nextRuntime = cloudToggle.checked ? 'cloud' : 'local';
+        cloudToggle.disabled = true;
+        if (wipToggle) wipToggle.disabled = true;
         try {
-          const response = await fetch('/api/local/catalog-surface', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ use_wip: useWip, lane: currentLane })
-          });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          window.localStorage.setItem(localWipPreferenceKey(currentLane), useWip ? '1' : '0');
-          // The local WIP switch is one runtime surface, not only an overlay
-          // tray preference.  Tell chat to use the same catalog on its next
-          // request so WIP sources can be discovered without being published.
-          window.dispatchEvent(new CustomEvent('local-catalog-surface-changed', {
-            detail: { catalogSurface: useWip ? 'wip' : 'published', lane: currentLane }
-          }));
-          // Catalog membership is the only UI state that changed. Rebuild the
-          // overlay tray in place; do not discard the map/chat session.
-          await window.OverlaySelector?.init?.({ restoreState: true });
+          await applyLocalDataPlane(nextRuntime);
+          updateDom();
         } catch (error) {
-          console.warn('Could not switch local catalog surface', error);
-          wipToggle.checked = !useWip;
+          console.warn('Could not switch local data plane', error);
+          cloudToggle.checked = !cloudToggle.checked;
         } finally {
-          // The selector refresh normally re-renders this element, but keep
-          // the original control usable if that refresh is delayed or fails.
+          cloudToggle.disabled = false;
+          if (wipToggle) wipToggle.disabled = false;
+        }
+      });
+    }
+    if (wipToggle) {
+      wipToggle.addEventListener('change', async () => {
+        const nextSurface = wipToggle.checked ? 'wip' : 'published';
+        wipToggle.disabled = true;
+        if (cloudToggle) cloudToggle.disabled = true;
+        try {
+          await applyCatalogSurface(nextSurface, currentLane);
+          updateDom();
+        } catch (error) {
+          console.warn('Could not switch catalog surface', error);
+          wipToggle.checked = !wipToggle.checked;
+        } finally {
           wipToggle.disabled = false;
+          if (cloudToggle) cloudToggle.disabled = false;
         }
       });
     }
@@ -627,7 +710,8 @@ export const AuthManager = {
             clearLegacySharedCookies();
             await fetchProfile();
             await syncLocalWrapperAuthState();
-            await restoreLocalCatalogSurface();
+            await restoreLocalDataPlanePreference();
+            await restoreCatalogSurfacePreference();
             updateDom();
           }
           authClient.auth.onAuthStateChange(async (_event, session) => {
@@ -638,7 +722,8 @@ export const AuthManager = {
             clearLegacySharedCookies();
             await fetchProfile();
             await syncLocalWrapperAuthState();
-            await restoreLocalCatalogSurface();
+            await restoreLocalDataPlanePreference();
+            await restoreCatalogSurfacePreference();
             updateDom();
             if (userChanged && (_event === 'SIGNED_IN' || _event === 'SIGNED_OUT')) {
               emitAuthChanged();
@@ -657,7 +742,8 @@ export const AuthManager = {
 
       initialized = true;
       await syncLocalWrapperAuthState();
-      await restoreLocalCatalogSurface();
+      await restoreLocalDataPlanePreference();
+      await restoreCatalogSurfacePreference();
       updateDom();
       markAuthBootSettled();
       emitAuthChanged();

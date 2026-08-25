@@ -27,6 +27,11 @@ def geometry_read_mode() -> str:
     if override in {"local", "runtime"}:
         return override
 
+    from ..runtime_config import get_data_plane_mode
+
+    if get_data_plane_mode() == "cloud":
+        return "runtime"
+
     if deployment_name() == "local" and storage_mode_name() == "local":
         return "local"
     return "runtime"

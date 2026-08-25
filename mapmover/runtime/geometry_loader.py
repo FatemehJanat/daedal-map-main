@@ -7,13 +7,14 @@ from ..duckdb_helpers import is_cloud_mode, parquet_columns
 from ..foundation_helpers import load_country_crosswalk
 from ..paths import COUNTRY_GEOMETRY_DIR, GEOMETRY_DIR
 from .read_posture import prefer_local_geometry_reads
+from ..runtime_config import force_remote_data_reads
 
 
 def parquet_accessible(path: Path | None) -> bool:
     """Return True when a parquet path exists locally or is cloud-readable."""
     if path is None:
         return False
-    if path.exists():
+    if path.exists() and not force_remote_data_reads():
         return True
     if prefer_local_geometry_reads():
         return False

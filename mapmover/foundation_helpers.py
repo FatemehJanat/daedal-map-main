@@ -17,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 
-from .duckdb_helpers import is_cloud_mode, parquet_columns
+from .duckdb_helpers import is_cloud_mode, parquet_columns, path_to_uri, run_df
 from .orchestrator_specs import list_orchestrator_specs
 from .paths import COUNTRIES_DIR, COUNTRY_GEOMETRY_DIR, DATA_ROOT, GEOMETRY_DIR
 from .runtime.explainer_response import build_explainer_response, looks_like_explainer_question
@@ -28,6 +28,7 @@ from .runtime.result_cap import (
     merge_cap_info,
 )
 from .runtime.published_artifacts import read_artifact_bytes, read_artifact_json
+from .runtime_config import force_remote_data_reads
 
 logger = logging.getLogger("mapmover")
 
@@ -86,6 +87,18 @@ _COUNTRY_JSON_ASSET_CACHE: dict[tuple[str, str, str], Any] = {}
 _GLOBAL_COUNTRIES_CACHE = None
 _GLOBAL_COUNTRY_DISPLAY_CACHE = None
 _WORLD_FACTBOOK_STATIC_CACHE = None
+
+
+def clear_foundation_helper_cache() -> None:
+    """Clear helper frames whose backing lane can change in local QA."""
+    global _GLOBAL_COUNTRIES_CACHE, _GLOBAL_COUNTRY_DISPLAY_CACHE, _WORLD_FACTBOOK_STATIC_CACHE
+    _REFERENCE_JSON_CACHE.clear()
+    _COUNTRY_CROSSWALK_CACHE.clear()
+    _COUNTRY_JSON_ASSET_CACHE.clear()
+    _GLOBAL_COUNTRIES_CACHE = None
+    _GLOBAL_COUNTRY_DISPLAY_CACHE = None
+    _WORLD_FACTBOOK_STATIC_CACHE = None
+
 
 def _parquet_accessible(path: Path) -> bool:
     """Returns True if a parquet file exists locally or is accessible via S3/DuckDB."""
@@ -299,7 +312,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
         return _COUNTRY_CROSSWALK_CACHE[cache_key]
 
     crosswalk_path = COUNTRY_GEOMETRY_DIR / iso3 / "crosswalk.json"
-    if crosswalk_path.exists():
+    if crosswalk_path.exists() and not force_remote_data_reads():
         try:
             with open(crosswalk_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
@@ -314,7 +327,7 @@ def load_country_crosswalk(iso3: str) -> dict | None:
         _COUNTRY_CROSSWALK_CACHE[cache_key] = None
         return None
 
-    if not crosswalk_path.exists():
+    if force_remote_data_reads() or not crosswalk_path.exists():
         if is_cloud_mode():
             try:
                 data = read_artifact_json(f"geometry/countries/{iso3}/crosswalk.json", lane="published")
@@ -341,7 +354,7 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
         return _COUNTRY_JSON_ASSET_CACHE[cache_key]
 
     asset_path = COUNTRIES_DIR / iso3 / filename
-    if asset_path.exists():
+    if asset_path.exists() and not force_remote_data_reads():
         try:
             with open(asset_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
@@ -356,7 +369,7 @@ def load_country_json_asset(iso3: str, filename: str) -> Any:
         _COUNTRY_JSON_ASSET_CACHE[cache_key] = None
         return None
 
-    if not asset_path.exists():
+    if force_remote_data_reads() or not asset_path.exists():
         if is_cloud_mode():
             try:
                 data = read_artifact_json(f"countries/{iso3}/{filename}", lane="published")
@@ -377,7 +390,7 @@ def load_global_countries_frame():
         return _GLOBAL_COUNTRIES_CACHE
 
     global_file = GEOMETRY_DIR / "global.csv"
-    if global_file.exists():
+    if global_file.exists() and not force_remote_data_reads():
         try:
             base = pd.read_csv(global_file)
             existing_loc_ids = set(base["loc_id"].dropna().astype(str).str.strip().str.upper()) if "loc_id" in base.columns else set()
@@ -425,7 +438,10 @@ def load_global_country_display_frame():
 
     display_file = GEOMETRY_DIR / "display" / "admin_0.parquet"
     try:
-        if display_file.exists():
+        if is_cloud_mode() and force_remote_data_reads():
+            raw = read_artifact_bytes("geometry/display/admin_0.parquet", lane="published")
+            base = pd.read_parquet(BytesIO(raw))
+        elif display_file.exists():
             base = pd.read_parquet(display_file)
         elif is_cloud_mode():
             raw = read_artifact_bytes("geometry/display/admin_0.parquet", lane="published")
@@ -464,7 +480,12 @@ def load_world_factbook_static_frame():
         return None
 
     try:
-        _WORLD_FACTBOOK_STATIC_CACHE = pd.read_parquet(factbook_file)
+        if is_cloud_mode():
+            _WORLD_FACTBOOK_STATIC_CACHE = run_df(
+                "SELECT * FROM read_parquet(?)", [path_to_uri(factbook_file)]
+            )
+        else:
+            _WORLD_FACTBOOK_STATIC_CACHE = pd.read_parquet(factbook_file)
         logger.info("Loaded %d rows from world_factbook_static", len(_WORLD_FACTBOOK_STATIC_CACHE))
         return _WORLD_FACTBOOK_STATIC_CACHE
     except Exception as e:
