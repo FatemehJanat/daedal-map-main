@@ -736,7 +736,9 @@ def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit:
     return {"items": rows, "returned": len(rows), "total": len(items), "truncated": len(rows) < len(items)}
 
 
-def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> dict[str, Any]:
+def read_geometry_catalog(
+    *, view: str = "summary", limit: int | None = 50, country_scope: str | None = None,
+) -> dict[str, Any]:
     """Return an agent-oriented view of the live geometry catalog."""
     catalog = load_geometry_catalog()
     try:
@@ -766,6 +768,22 @@ def read_geometry_catalog(*, view: str = "summary", limit: int | None = 50) -> d
             "bulk_rule": "Prepared bulk point requests should provide country_scope and target_admin_level; geometry exports should preflight before create.",
         },
     }
+    selected_country = str(country_scope or "").strip().upper()
+    if selected_view == "capabilities" and selected_country:
+        from .geometry_inventory import country_capability_record
+
+        country = country_capability_record(catalog, selected_country)
+        if country is None:
+            return _clean_json({
+                **base,
+                "ok": False,
+                "country_scope": selected_country,
+                "error": {
+                    "code": "country_not_found",
+                    "message": f"Country {selected_country} is not present in the active geometry catalog.",
+                },
+            })
+        return _clean_json({**base, "country_scope": selected_country, "country": country})
     if selected_view == "capabilities":
         return _clean_json(base)
     if selected_view == "summary":

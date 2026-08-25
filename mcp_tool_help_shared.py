@@ -247,15 +247,15 @@ def geometry_family_help_payload(
     return {
         "ok": True,
         "tool_name": "how_geometry_works",
-        "summary": "Start here before using DaedalMap geometry tools. The tools resolve coordinates and identifiers onto the loc_id spine, inspect geography, and return bounded shape results.",
-        "core_rule": "Keep each call aligned with the stored geometry partitions: one country for Admin0-3 work, and one Admin1 region at a time for Admin4 or deeper work.",
+        "summary": "Start here before using DaedalMap geometry tools. The tools resolve coordinates and identifiers onto loc_id, inspect geography, and return bounded shape results.",
+        "core_rule": "Learn the durable geometry model here, then read the live catalog for the selected country's current depths, families, and query guidance before constructing a large call.",
         "coverage": capabilities,
         "start_here": [
             {
                 "step": 1,
                 "tool": "read_geometry_catalog",
-                "arguments": {"view": "countries"},
-                "purpose": "Confirm that the country and requested admin depth are currently available.",
+                "arguments": {"view": "capabilities", "country_scope": "<ISO3 when known>"},
+                "purpose": "Read the selected country's current admin depth, available families, and query guidance. Omit country_scope for the concise global coverage model.",
             },
             {
                 "step": 2,
@@ -265,21 +265,21 @@ def geometry_family_help_payload(
             },
             {
                 "step": 3,
-                "purpose": "Use one of the partition-aware workflows below and keep identifiers as strings.",
+                "purpose": "Use the country result and one of the workflows below; keep identifiers as strings.",
             },
         ],
-        "storage_model": {
-            "country_shallow_partition": {
-                "admin_levels": [0, 1, 2, 3],
-                "scope": "one country",
-                "rule": "A country-scoped call can reuse one shallow country partition.",
+        "concepts": {
+            "loc_id": "The stable DaedalMap geography identifier shared by geometry and data tools.",
+            "administrative_spine": {
+                "rule": "Each country selects one complete, nested administrative hierarchy. Countries have different depths and native tier names.",
+                "discovery": "Use read_geometry_catalog(view='capabilities', country_scope='<ISO3>') for the active depth and current query guidance.",
             },
-            "admin_1_deep_partition": {
-                "admin_levels": [4, 5],
-                "scope": "one Admin1 region within one country",
-                "rule": "Deep geometry is stored by Admin1 owner. Put points or loc_ids from only one Admin1 region in each deep call.",
+            "reference_families": {
+                "rule": "Postal areas, places, watersheds, electoral districts, Indigenous regions, weather zones, water bodies, and other families are independent reference systems unless the catalog says they belong to the selected spine.",
+                "discovery": "Use the country's available_family_ids, then list_reference_systems when identifier exchange support is needed.",
             },
-            "why_scope_matters": "Opening and searching geometry partitions is the main cold-path cost. Item count still matters, but a same-partition batch is usually cheaper than a smaller batch spread across many regions.",
+            "catalog_authority": "Coverage is generated from admitted releases. Do not assume that every country has the same depth, families, or physical query layout.",
+            "query_cost": "Opening and searching geometry partitions is the main cold-path cost. Item count still matters, but calls aligned with the catalog's query guidance are usually faster than calls spread across unrelated regions or families.",
         },
         "request_rules": [
             {
@@ -287,20 +287,20 @@ def geometry_family_help_payload(
                 "rule": "Call resolve_point once. It may infer the country, Admin1 owner, and deepest available result.",
             },
             {
-                "request": "multiple points through Admin3",
-                "rule": "Use one country_scope and one target_admin_level. Split multi-country input into separate calls.",
+                "request": "multiple administrative points",
+                "rule": "Read the country catalog entry, then use one country_scope and one target_admin_level. Split multi-country input into separate calls.",
             },
             {
-                "request": "multiple points at Admin4 or Admin5",
-                "rule": "First resolve the points to Admin1, group them by returned Admin1 loc_id, then call resolve_point once per Admin1 group at the deeper target.",
+                "request": "points at a partitioned deep level",
+                "rule": "Follow the selected country's query_guidance. When it declares Admin1-owned deep partitions, first resolve to Admin1, group by returned Admin1 loc_id, and make one deeper call per group.",
             },
             {
-                "request": "geometry for known deep loc_ids",
-                "rule": "Group loc_ids by country and Admin1 owner. Call check_geometry or get_geometry once per Admin1 group.",
+                "request": "geometry for known loc_ids",
+                "rule": "Keep administrative loc_ids aligned with the country's query guidance. Keep independent reference-family loc_ids grouped by country and family; do not infer administrative ownership from overlap.",
             },
             {
-                "request": "Admin4 or Admin5 coverage across an entire country",
-                "rule": "Enumerate the country's Admin1 regions and make one bounded MCP call per Admin1 region. Do not submit one nationwide deep batch.",
+                "request": "large or nationwide deep coverage",
+                "rule": "Use the country catalog entry to enumerate the declared partition owners and make bounded MCP calls for one owner at a time.",
             },
         ],
         "interaction_contract": {
@@ -321,7 +321,7 @@ def geometry_family_help_payload(
                 "steps": ["resolve_point", "loc_id_info only when details are requested", "check_geometry then get_geometry only when shapes are requested"],
             },
             {
-                "name": "country_scoped_admin_0_through_3_points",
+                "name": "country_scoped_administrative_points",
                 "example": {
                     "tool": "resolve_point",
                     "arguments": {
@@ -333,18 +333,20 @@ def geometry_family_help_payload(
                 "steps": ["confirm coverage", "send points from one country", "reuse the returned loc_id chain"],
             },
             {
-                "name": "admin_4_or_5_points_across_multiple_regions",
+                "name": "partitioned_deep_points_across_multiple_regions",
                 "steps": [
-                    "call resolve_point with one country_scope and target_admin_level 1",
-                    "group points by the returned Admin1 loc_id",
-                    "call resolve_point separately for each Admin1 group with target_admin_level 4 or 5",
+                    "read the selected country's catalog entry and query_guidance",
+                    "resolve to the declared partition-owner level",
+                    "group points by the returned owner loc_id",
+                    "call resolve_point separately for each owner group at the requested deeper level",
                 ],
-                "important": "The current schema does not accept an admin_1_scope argument. The grouping is expressed by putting only one Admin1 region's points in each call.",
+                "important": "Use only fields accepted by resolve_point. Grouping is expressed by putting one declared owner region's points in each call.",
             },
             {
                 "name": "known_loc_ids_to_shapes",
                 "steps": [
-                    "group deep loc_ids by country and Admin1 owner",
+                    "separate administrative loc_ids from independent reference-family loc_ids",
+                    "group them according to the country catalog entry and family",
                     "call check_geometry once per group",
                     "call get_geometry for the same group only when bbox, centroid, or polygon output is needed",
                 ],

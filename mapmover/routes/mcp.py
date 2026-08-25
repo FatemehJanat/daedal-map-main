@@ -2802,7 +2802,11 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
         from mapmover.runtime.reference_exchange import read_geometry_catalog
 
         runtime_started = time.perf_counter()
-        result = read_geometry_catalog(view=view, limit=payload.get("limit"))
+        result = read_geometry_catalog(
+            view=view,
+            limit=payload.get("limit"),
+            country_scope=payload.get("country_scope"),
+        )
         stages = {"catalog_lookup_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "geometry_catalog_read_failed", "message": str(exc)}}

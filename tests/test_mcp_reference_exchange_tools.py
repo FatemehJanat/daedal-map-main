@@ -152,23 +152,19 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["interaction_contract"]["per_tool_help"]["tool"], "get_tool_help")
         workflow_names = {workflow["name"] for workflow in payload["workflows"]}
         self.assertIn("known_or_suspected_dataset_identifiers", workflow_names)
-        self.assertIn("admin_4_or_5_points_across_multiple_regions", workflow_names)
+        self.assertIn("partitioned_deep_points_across_multiple_regions", workflow_names)
         self.assertIn("known_loc_ids_to_shapes", workflow_names)
         self.assertNotIn("shapes_and_exports", workflow_names)
-        self.assertEqual(
-            payload["storage_model"]["country_shallow_partition"]["admin_levels"],
-            [0, 1, 2, 3],
-        )
-        self.assertEqual(
-            payload["storage_model"]["admin_1_deep_partition"]["admin_levels"],
-            [4, 5],
-        )
         self.assertEqual(payload["start_here"][0]["tool"], "read_geometry_catalog")
+        self.assertEqual(payload["start_here"][0]["arguments"]["view"], "capabilities")
+        self.assertEqual(payload["start_here"][0]["arguments"]["country_scope"], "<ISO3 when known>")
+        self.assertIn("administrative_spine", payload["concepts"])
+        self.assertIn("reference_families", payload["concepts"])
         deep_workflow = next(
             workflow for workflow in payload["workflows"]
-            if workflow["name"] == "admin_4_or_5_points_across_multiple_regions"
+            if workflow["name"] == "partitioned_deep_points_across_multiple_regions"
         )
-        self.assertIn("does not accept an admin_1_scope", deep_workflow["important"])
+        self.assertIn("fields accepted by resolve_point", deep_workflow["important"])
         self.assertIn("identify_reference_system", payload["available_tools"])
         self.assertNotIn("query_dataset", payload["available_tools"])
         self.assertEqual(analytics_mock.call_args.kwargs["capability_id"], "geometry_family_help")

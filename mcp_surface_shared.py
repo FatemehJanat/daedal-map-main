@@ -70,7 +70,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "how_geometry_works",
             "title": "How Geometry MCP Works",
-            "description": "Free starting guide for the DaedalMap geography/geometry MCP. Call this first to learn the loc_id model, discover current country coverage, and structure fast requests around one country Admin0-3 partition or one Admin1-owned Admin4-5 partition at a time. It includes valid workflows for point lookup and bounded shape retrieval. Use get_tool_help for one exact tool afterward.",
+            "description": "Free starting guide for the DaedalMap geography/geometry MCP. Call this first to learn the durable loc_id, administrative-spine, reference-family, discovery, point-lookup, and bounded-shape concepts. Then read the live geometry catalog for country-specific depths, families, and query guidance, and use get_tool_help for one exact tool.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -240,6 +240,10 @@ def build_tool_definitions() -> list[dict]:
                         "minimum": 1,
                         "maximum": 500,
                         "description": "Maximum named reference objects to return. Default 50.",
+                    },
+                    "country_scope": {
+                        "type": "string",
+                        "description": "Optional ISO3 country code for view='capabilities'. Returns the selected country's baseline, active depth, families, and query guidance.",
                     },
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },

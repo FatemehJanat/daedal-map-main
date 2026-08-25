@@ -245,6 +245,76 @@ def build_depth_index(catalog: dict[str, Any]) -> tuple[dict[str, dict[str, Any]
     }
 
 
+def country_capability_record(catalog: dict[str, Any], country_scope: str) -> dict[str, Any] | None:
+    """Project one machine-readable country record from the overlay's index."""
+    country_code = _scope_code(country_scope)
+    if not country_code:
+        return None
+    depth_index, _global_entry = build_depth_index(catalog)
+    resolved = depth_index.get(country_code)
+    if resolved is None:
+        return None
+    baseline = next((
+        item for item in catalog.get("global_admin_baseline") or []
+        if isinstance(item, dict) and _scope_code(item.get("country_code")) == country_code
+    ), {})
+    profile = next((
+        item for item in catalog.get("country_profiles") or []
+        if isinstance(item, dict)
+        and _scope_code(item.get("country_code")) == country_code
+        and str(item.get("release_status") or "") in {"approved_for_publication", "published"}
+    ), {})
+    program = resolved.get("program") or {}
+    available_families = [
+        {
+            key: family.get(key)
+            for key in ("family_id", "label", "short_label", "description")
+            if family.get(key) not in (None, "")
+        }
+        for family in program.get("families") or []
+        if isinstance(family, dict) and family.get("available") is True
+    ]
+    active_depth = _as_int(resolved.get("max_admin_level"))
+    available_family_ids = list(program.get("available_family_ids") or [])
+    if not available_family_ids and not profile and baseline:
+        available_family_ids = ["administrative"]
+    has_country_layout = bool(profile.get("query_layout_manifest"))
+    if has_country_layout:
+        deep_enabled = active_depth is not None and active_depth > 3
+        query_guidance = {
+            "model": "country_administrative_spine",
+            "shallow_admin_levels": list(range(0, min(active_depth, 3) + 1)) if active_depth is not None else [],
+            "deep_admin_levels": list(range(4, active_depth + 1)) if deep_enabled else [],
+            "deep_partition_owner_level": 1 if deep_enabled else None,
+            "deep_batch_rule": (
+                "Resolve and group by Admin1, then make one deeper call per Admin1 group."
+                if deep_enabled else "No deep partition is active for this country release."
+            ),
+        }
+    else:
+        query_guidance = {
+            "model": "global_admin_baseline",
+            "available_admin_levels": list(range(0, active_depth + 1)) if active_depth is not None else [],
+            "deep_partition_owner_level": None,
+            "deep_batch_rule": "No catalog-admitted deep country layout is active.",
+        }
+    return {
+        "country_code": country_code,
+        "label": profile.get("label") or program.get("label") or baseline.get("label") or country_code,
+        "release_version": profile.get("release_version"),
+        "active_admin_depth": active_depth,
+        "available_family_ids": available_family_ids,
+        "families": available_families,
+        "query_layout_available": has_country_layout,
+        "reference_graph_available": bool(profile.get("reference_graph_manifest")),
+        "baseline_admin_depth": _as_int(baseline.get("max_admin_level")),
+        "baseline_geometry_status": baseline.get("geometry_status"),
+        "baseline_feature_counts_by_level": baseline.get("feature_counts_by_level") or {},
+        "query_guidance": query_guidance,
+        "reference_family_rule": "available_family_ids are independent catalog families unless explicitly admitted into the administrative spine",
+    }
+
+
 def depth_legend(catalog: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Legend rows for the depth ramp, emitted with every payload."""
     labels = {
