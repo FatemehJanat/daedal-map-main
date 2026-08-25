@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 from pathlib import Path
 from typing import Any
 
-from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, parquet_columns, path_to_uri
+from ..duckdb_helpers import build_guarded_connection, is_cloud_mode, parquet_columns, path_to_uri, select_rows
 from ..paths import DATA_ROOT
 from ..runtime_config import get_runtime_config
 from .published_artifacts import read_artifact_json, relative_data_path
@@ -243,10 +243,14 @@ def _partition_paths(root: Path, table: str) -> list[Path]:
     if not index_name:
         return []
     index_path = root / index_name
-    if not index_path.is_file():
-        return []
     try:
-        rows = pq.read_table(index_path, columns=["path"]).to_pydict().get("path", [])
+        if index_path.is_file():
+            rows = pq.read_table(index_path, columns=["path"]).to_pydict().get("path", [])
+        elif is_cloud_mode():
+            frame = select_rows(index_path, columns=["path"])
+            rows = frame["path"].tolist() if "path" in frame.columns else []
+        else:
+            return []
     except Exception:
         return []
     return list(dict.fromkeys(DATA_ROOT / str(value) for value in rows if value))
@@ -269,7 +273,11 @@ def _table_source(table: str, *, loc_id: str | None = None) -> str:
 def _table_source_for_roots(table: str, roots: list[Path]) -> str:
     paths: list[str] = []
     for root in roots:
-        paths.extend(_sql_path(path) for path in _partition_paths(root, table) if path.is_file())
+        paths.extend(
+            _sql_path(path)
+            for path in _partition_paths(root, table)
+            if is_cloud_mode() or path.is_file()
+        )
     if not paths:
         return ""
     joined = ", ".join(f"'{path}'" for path in paths)
@@ -479,12 +487,14 @@ def identities(loc_ids: list[str]) -> list[dict[str, Any]]:
     requested = list(dict.fromkeys(str(item).strip() for item in loc_ids if str(item).strip()))
     if not requested or not reference_graph_available():
         return []
-    root = active_reference_graph_root()
+    source = _table_source("identities")
+    if not source:
+        return []
     placeholders = ", ".join("?" for _ in requested)
     connection = _connection()
     try:
         cursor = connection.execute(
-            f"SELECT {_identity_columns()} FROM read_parquet({_table_source('identities')}, union_by_name=True) "
+            f"SELECT {_identity_columns()} FROM read_parquet({source}, union_by_name=True) "
             f"WHERE loc_id IN ({placeholders})",
             requested,
         )
