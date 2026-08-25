@@ -120,7 +120,11 @@ def _filter_and_sort(
         out = out[out[sort_col] >= float(min_share)].copy()
     if out.empty:
         return out
-    out = out.sort_values([sort_col, "intersection_area"], ascending=[False, False])
+    sort_columns = [column for column in (sort_col, "intersection_area") if column in out.columns]
+    if not sort_columns and "is_primary" in out.columns:
+        sort_columns = ["is_primary"]
+    if sort_columns:
+        out = out.sort_values(sort_columns, ascending=[False] * len(sort_columns))
     if limit is not None:
         out = out.head(max(1, int(limit))).copy()
     return out.reset_index(drop=True)
