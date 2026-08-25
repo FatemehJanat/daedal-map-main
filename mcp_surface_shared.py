@@ -70,7 +70,7 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "how_geometry_works",
             "title": "How Geometry MCP Works",
-            "description": "Free family-level orientation for the DaedalMap geography/geometry MCP. Explains the catalog-driven global baseline, automatic country enrichment, loc_id spine, discovery and resolution workflows, and shape/export workflow. Use get_tool_help for one exact tool after reading this overview.",
+            "description": "Free starting guide for the DaedalMap geography/geometry MCP. Call this first to learn the loc_id model, discover current country coverage, and structure fast requests around one country Admin0-3 partition or one Admin1-owned Admin4-5 partition at a time. It includes valid workflows for point lookup and bounded shape retrieval. Use get_tool_help for one exact tool afterward.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

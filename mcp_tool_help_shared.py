@@ -247,9 +247,62 @@ def geometry_family_help_payload(
     return {
         "ok": True,
         "tool_name": "how_geometry_works",
-        "summary": "DaedalMap Geometry MCP deterministically resolves geography onto the shared loc_id spine, inspects identities and relationships, returns shapes, and prepares bounded exports.",
-        "core_rule": "Translate the user's intent into a strict geometry tool call, normalize onto loc_id, then request only the identity, relationship, or shape detail the user actually needs.",
+        "summary": "Start here before using DaedalMap geometry tools. The tools resolve coordinates and identifiers onto the loc_id spine, inspect geography, and return bounded shape results.",
+        "core_rule": "Keep each call aligned with the stored geometry partitions: one country for Admin0-3 work, and one Admin1 region at a time for Admin4 or deeper work.",
         "coverage": capabilities,
+        "start_here": [
+            {
+                "step": 1,
+                "tool": "read_geometry_catalog",
+                "arguments": {"view": "countries"},
+                "purpose": "Confirm that the country and requested admin depth are currently available.",
+            },
+            {
+                "step": 2,
+                "tool": "get_tool_help",
+                "arguments": {"tool_name": "<tool selected below>"},
+                "purpose": "Read the exact input schema before constructing the call.",
+            },
+            {
+                "step": 3,
+                "purpose": "Use one of the partition-aware workflows below and keep identifiers as strings.",
+            },
+        ],
+        "storage_model": {
+            "country_shallow_partition": {
+                "admin_levels": [0, 1, 2, 3],
+                "scope": "one country",
+                "rule": "A country-scoped call can reuse one shallow country partition.",
+            },
+            "admin_1_deep_partition": {
+                "admin_levels": [4, 5],
+                "scope": "one Admin1 region within one country",
+                "rule": "Deep geometry is stored by Admin1 owner. Put points or loc_ids from only one Admin1 region in each deep call.",
+            },
+            "why_scope_matters": "Opening and searching geometry partitions is the main cold-path cost. Item count still matters, but a same-partition batch is usually cheaper than a smaller batch spread across many regions.",
+        },
+        "request_rules": [
+            {
+                "request": "one exploratory point",
+                "rule": "Call resolve_point once. It may infer the country, Admin1 owner, and deepest available result.",
+            },
+            {
+                "request": "multiple points through Admin3",
+                "rule": "Use one country_scope and one target_admin_level. Split multi-country input into separate calls.",
+            },
+            {
+                "request": "multiple points at Admin4 or Admin5",
+                "rule": "First resolve the points to Admin1, group them by returned Admin1 loc_id, then call resolve_point once per Admin1 group at the deeper target.",
+            },
+            {
+                "request": "geometry for known deep loc_ids",
+                "rule": "Group loc_ids by country and Admin1 owner. Call check_geometry or get_geometry once per Admin1 group.",
+            },
+            {
+                "request": "Admin4 or Admin5 coverage across an entire country",
+                "rule": "Enumerate the country's Admin1 regions and make one bounded MCP call per Admin1 region. Do not submit one nationwide deep batch.",
+            },
+        ],
         "interaction_contract": {
             "natural_language_owner": "calling_client_llm",
             "execution_input": "strict_json_schema",
@@ -268,16 +321,41 @@ def geometry_family_help_payload(
                 "steps": ["resolve_point", "loc_id_info only when details are requested", "check_geometry then get_geometry only when shapes are requested"],
             },
             {
+                "name": "country_scoped_admin_0_through_3_points",
+                "example": {
+                    "tool": "resolve_point",
+                    "arguments": {
+                        "points": [{"lat": 45.039641, "lon": -103.313618}],
+                        "country_scope": "USA",
+                        "target_admin_level": 3,
+                    },
+                },
+                "steps": ["confirm coverage", "send points from one country", "reuse the returned loc_id chain"],
+            },
+            {
+                "name": "admin_4_or_5_points_across_multiple_regions",
+                "steps": [
+                    "call resolve_point with one country_scope and target_admin_level 1",
+                    "group points by the returned Admin1 loc_id",
+                    "call resolve_point separately for each Admin1 group with target_admin_level 4 or 5",
+                ],
+                "important": "The current schema does not accept an admin_1_scope argument. The grouping is expressed by putting only one Admin1 region's points in each call.",
+            },
+            {
+                "name": "known_loc_ids_to_shapes",
+                "steps": [
+                    "group deep loc_ids by country and Admin1 owner",
+                    "call check_geometry once per group",
+                    "call get_geometry for the same group only when bbox, centroid, or polygon output is needed",
+                ],
+            },
+            {
                 "name": "known_or_suspected_dataset_identifiers",
                 "steps": ["identify_reference_system on representative or all distinct string keys", "use the unambiguous geography_binding", "estimate_conversion_job", "create_conversion_job within the advertised hosted limit (7,500 rows by default)", "get_job_status to retrieve the completed result"],
             },
             {
                 "name": "one_external_reference",
                 "steps": ["list_reference_systems when support is unknown", "resolve_reference to loc_id", "convert_reference only when another external system is requested"],
-            },
-            {
-                "name": "shapes_and_exports",
-                "steps": ["check_geometry", "get_geometry for bounded metadata/polygons", "resolve_loc_id_scope", "estimate_geometry_package", "create_geometry_export", "get_job_status"],
             },
             {
                 "name": "relationships_and_time",
@@ -293,7 +371,8 @@ def geometry_family_help_payload(
             "loc_id is the reserve geography identifier used by data packs and geometry tools.",
             "Known identifier crosswalks bypass point and polygon rediscovery.",
             "A mixed-vintage point chain is context, not strict stored parentage.",
-            "Use bbox/centroid by default; full polygons and exports are opt-in and bounded.",
+            "Use bbox/centroid by default; full polygons are opt-in and more tightly bounded.",
+            "Batch limits are safety ceilings, not a promise that unrelated partitions should be mixed in one call.",
             "Paying raises hosted throughput; it does not unlock a different geometry truth set.",
         ],
         "input_question": str(question or "").strip() or None,
