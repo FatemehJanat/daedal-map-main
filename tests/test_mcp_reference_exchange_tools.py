@@ -954,6 +954,46 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertNotIn("candidate_countries", payload["capabilities"])
         self.assertNotIn("country_programs", payload["capabilities"])
 
+    def test_read_geometry_catalog_country_view_is_catalog_driven(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.load_geometry_catalog",
+            return_value={
+                "schema_version": "1.1.1",
+                "country_profiles": [{
+                    "country_code": "NZL",
+                    "label": "New Zealand",
+                    "release_status": "published",
+                    "release_version": "1.0.0",
+                    "admin_levels": [{"level": 0}, {"level": 3}],
+                    "query_layout_manifest": "geometry/countries/NZL/releases/geometry/r/runtime/admin_spine/manifest.json",
+                    "reference_graph_manifest": "geometry/countries/NZL/releases/geometry/r/runtime/reference_graph/manifest.json",
+                }],
+                "country_family_coverage": [{
+                    "country_code": "NZL",
+                    "active_admin_depth": 3,
+                    "available_family_ids": ["administrative", "place_or_municipality"],
+                    "families": [{
+                        "family_id": "place_or_municipality",
+                        "label": "Places",
+                        "available": True,
+                        "publication_status": "published",
+                    }],
+                }],
+            },
+        ):
+            payload = _tool_call(self.client, "read_geometry_catalog", {"view": "countries"})
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["counts"]["country_profiles"], 1)
+        self.assertEqual(payload["countries"][0]["country_code"], "NZL")
+        self.assertEqual(payload["countries"][0]["active_admin_depth"], 3)
+        self.assertEqual(
+            payload["countries"][0]["available_family_ids"],
+            ["administrative", "place_or_municipality"],
+        )
+        self.assertTrue(payload["countries"][0]["query_layout_available"])
+        self.assertTrue(payload["countries"][0]["reference_graph_available"])
+
     def test_read_geometry_catalog_full_view_does_not_expose_internal_country_candidates(self) -> None:
         with mock.patch(
             "mapmover.runtime.reference_exchange.load_geometry_catalog",
@@ -980,6 +1020,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 "geometry_products": [
                     {"product_id": "active", "release_state": "published", "admin_coverage": {}},
                     {"product_id": "internal", "release_state": "candidate_blocked", "admin_coverage": {}},
+                    {"product_id": "local_candidate", "release_state": "adopted_local_candidate", "admin_coverage": {}},
                 ],
             },
         ):
@@ -987,6 +1028,49 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         self.assertEqual([item["product_id"] for item in payload["products"]], ["active"])
         self.assertEqual(payload["counts"]["geometry_products"], 1)
+        self.assertEqual(payload["catalog_surface"], "published")
+
+    def test_read_geometry_catalog_allows_wip_projection_only_for_local_loopback(self) -> None:
+        catalog = {
+            "geometry_products": [
+                {"product_id": "active", "release_state": "published", "admin_coverage": {}},
+                {"product_id": "internal", "release_state": "candidate_blocked", "admin_coverage": {}},
+                {"product_id": "local_candidate", "release_state": "adopted_local_candidate", "admin_coverage": {}},
+            ],
+        }
+        with (
+            mock.patch("mapmover.routes.mcp.is_local_loopback_request", return_value=True),
+            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value=catalog),
+        ):
+            payload = _tool_call(
+                self.client,
+                "read_geometry_catalog",
+                {"view": "products", "read_wip": True},
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["catalog_surface"], "wip")
+        self.assertEqual(
+            [item["product_id"] for item in payload["products"]],
+            ["active", "internal", "local_candidate"],
+        )
+        self.assertEqual(payload["counts"]["geometry_products"], 3)
+
+    def test_read_geometry_catalog_denies_wip_projection_for_hosted_callers(self) -> None:
+        with (
+            mock.patch("mapmover.routes.mcp.is_local_loopback_request", return_value=False),
+            mock.patch("mapmover.runtime.reference_exchange.read_geometry_catalog") as reader,
+        ):
+            payload = _tool_call(
+                self.client,
+                "read_geometry_catalog",
+                {"view": "full", "read_wip": True},
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["catalog_surface"], "published")
+        self.assertEqual(payload["error"]["code"], "wip_geometry_catalog_not_available")
+        reader.assert_not_called()
 
     def test_read_geometry_catalog_logs_runtime_analytics(self) -> None:
         with (

@@ -619,12 +619,48 @@ def list_reference_systems() -> dict[str, Any]:
 
 
 def _public_catalog_records(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    return public_geometry_catalog_records(catalog, key)
+    """Return the MCP published lane, excluding every candidate lifecycle."""
+    filtered_catalog = dict(catalog)
+    filtered_rows: list[dict[str, Any]] = []
+    for item in catalog.get(key) or []:
+        if not isinstance(item, dict):
+            continue
+        states = {
+            str(item.get(field) or "").strip().lower()
+            for field in (
+                "status", "release_state", "release_status",
+                "publication_status", "runtime_state", "candidate_state",
+            )
+            if str(item.get(field) or "").strip()
+        }
+        if any("candidate" in state for state in states):
+            continue
+        if any(
+            token in state
+            for state in states
+            for token in ("staged", "prepar", "research", "blocked", "in_progress", "wip")
+        ):
+            continue
+        if key == "country_profiles":
+            release_status = str(item.get("release_status") or "").strip().lower()
+            if release_status and release_status not in {"approved_for_publication", "published"}:
+                continue
+        filtered_rows.append(item)
+    filtered_catalog[key] = filtered_rows
+    return public_geometry_catalog_records(filtered_catalog, key)
 
 
-def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
+def _geometry_catalog_records(
+    catalog: dict[str, Any], key: str, *, read_wip: bool,
+) -> list[dict[str, Any]]:
+    if not read_wip:
+        return _public_catalog_records(catalog, key)
+    return [dict(item) for item in catalog.get(key) or [] if isinstance(item, dict)]
+
+
+def _geometry_catalog_counts(catalog: dict[str, Any], *, read_wip: bool = False) -> dict[str, int]:
     counts = {
-        key: len(_public_catalog_records(catalog, key))
+        key: len(_geometry_catalog_records(catalog, key, read_wip=read_wip))
         for key in (
             "geometry_collections",
             "geometry_banks",
@@ -636,12 +672,63 @@ def _geometry_catalog_counts(catalog: dict[str, Any]) -> dict[str, int]:
             "named_reference_objects",
         )
     }
+    counts["country_profiles"] = len(_geometry_catalog_records(catalog, "country_profiles", read_wip=read_wip))
     return counts
 
 
-def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+def _geometry_catalog_countries(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
+    """Project the catalog-owned active country and family inventory."""
+    coverage_by_country = {
+        str(item.get("country_code") or "").strip().upper(): item
+        for item in catalog.get("country_family_coverage") or []
+        if isinstance(item, dict) and str(item.get("country_code") or "").strip()
+    }
+    countries: list[dict[str, Any]] = []
+    for profile in _geometry_catalog_records(catalog, "country_profiles", read_wip=read_wip):
+        country_code = str(profile.get("country_code") or "").strip().upper()
+        if not country_code:
+            continue
+        coverage = coverage_by_country.get(country_code) or {}
+        levels = [
+            int(item["level"])
+            for item in profile.get("admin_levels") or []
+            if isinstance(item, dict) and str(item.get("level", "")).isdigit()
+        ]
+        families = [
+            {
+                "family_id": family.get("family_id"),
+                "label": family.get("label"),
+                "publication_status": family.get("publication_status"),
+                "native_tier_names": family.get("native_tier_names") or [],
+                "gap_or_disposition": family.get("gap_or_disposition"),
+            }
+            for family in coverage.get("families") or []
+            if isinstance(family, dict) and (read_wip or family.get("available") is True)
+        ]
+        country = {
+            "country_code": country_code,
+            "label": profile.get("label") or coverage.get("label") or country_code,
+            "release_version": profile.get("release_version"),
+            "active_admin_depth": coverage.get("active_admin_depth") if coverage.get("active_admin_depth") is not None else (max(levels) if levels else None),
+            "available_family_ids": list(coverage.get("available_family_ids") or []),
+            "families": families,
+            "query_layout_available": bool(profile.get("query_layout_manifest")),
+            "reference_graph_available": bool(profile.get("reference_graph_manifest")),
+        }
+        if read_wip:
+            country.update({
+                "release_status": profile.get("release_status"),
+                "publication_status": profile.get("publication_status"),
+                "runtime_state": profile.get("runtime_state"),
+                "candidate_state": profile.get("candidate_state"),
+            })
+        countries.append(country)
+    return sorted(countries, key=lambda item: (str(item.get("label") or ""), item["country_code"]))
+
+
+def _geometry_catalog_admin_coverage(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    assets = _public_catalog_records(catalog, "geometry_products")
+    assets = _geometry_catalog_records(catalog, "geometry_products", read_wip=read_wip)
     for asset in assets:
         if not isinstance(asset, dict):
             continue
@@ -673,9 +760,9 @@ def _geometry_catalog_admin_coverage(catalog: dict[str, Any]) -> list[dict[str, 
     return rows
 
 
-def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+def _geometry_catalog_bridges(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for artifact in _public_catalog_records(catalog, "bridge_artifacts"):
+    for artifact in _geometry_catalog_records(catalog, "bridge_artifacts", read_wip=read_wip):
         if not isinstance(artifact, dict):
             continue
         source_license = artifact.get("source_license") if isinstance(artifact.get("source_license"), dict) else {}
@@ -695,9 +782,9 @@ def _geometry_catalog_bridges(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _geometry_catalog_products(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+def _geometry_catalog_products(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for package in _public_catalog_records(catalog, "geometry_products"):
+    for package in _geometry_catalog_records(catalog, "geometry_products", read_wip=read_wip):
         if not isinstance(package, dict):
             continue
         coverage = package.get("admin_coverage") if isinstance(package.get("admin_coverage"), dict) else {}
@@ -717,11 +804,13 @@ def _geometry_catalog_products(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit: int) -> dict[str, Any]:
+def _geometry_catalog_named_reference_objects(
+    catalog: dict[str, Any], *, limit: int, read_wip: bool = False,
+) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     items = [
         item
-        for item in _public_catalog_records(catalog, "named_reference_objects")
+        for item in _geometry_catalog_records(catalog, "named_reference_objects", read_wip=read_wip)
     ]
     for item in items[: max(0, limit)]:
         rows.append({
@@ -738,8 +827,9 @@ def _geometry_catalog_named_reference_objects(catalog: dict[str, Any], *, limit:
 
 def read_geometry_catalog(
     *, view: str = "summary", limit: int | None = 50, country_scope: str | None = None,
+    read_wip: bool = False,
 ) -> dict[str, Any]:
-    """Return an agent-oriented view of the live geometry catalog."""
+    """Return an agent-oriented published or explicitly authorized WIP view."""
     catalog = load_geometry_catalog()
     try:
         from .reference_graph import reference_graph_families, where_is_geography_data
@@ -754,11 +844,12 @@ def read_geometry_catalog(
     base = {
         "ok": True,
         "view": selected_view,
+        "catalog_surface": "wip" if read_wip else "published",
         "schema_version": catalog.get("schema_version") or catalog.get("_schema_version"),
         "generated_at": catalog.get("generated_at"),
         "download_url": "https://downloads.daedalmap.com/downloadable/geometry/geometry_catalog.json",
         "app_summary_endpoint": "https://app.daedalmap.com/api/v1/geometry/catalog",
-        "counts": _geometry_catalog_counts(catalog),
+        "counts": _geometry_catalog_counts(catalog, read_wip=read_wip),
         "capabilities": geometry_capability_summary(catalog),
         "runtime_data_source": data_source,
         "runtime_reference_families": graph_families,
@@ -766,6 +857,11 @@ def read_geometry_catalog(
             "start_here": "Use capabilities for the concise current coverage model. Use summary or a focused inventory view only when more catalog detail is needed.",
             "loc_id_rule": "Shape and data tools are keyed to DaedalMap loc_id. If an input is not a loc_id, call resolve_reference first.",
             "bulk_rule": "Prepared bulk point requests should provide country_scope and target_admin_level; geometry exports should preflight before create.",
+            "wip_rule": (
+                "This local-only view may contain staged, blocked, incomplete, or otherwise non-callable records. Use full to inspect complete lifecycle detail."
+                if read_wip else
+                "This is the published projection. Staged, blocked, and in-progress records are excluded."
+            ),
         },
     }
     selected_country = str(country_scope or "").strip().upper()
@@ -789,19 +885,23 @@ def read_geometry_catalog(
     if selected_view == "summary":
         return _clean_json({
             **base,
-            "collections": _public_catalog_records(catalog, "geometry_collections"),
-            "families": _public_catalog_records(catalog, "geometry_families"),
-            "admin_coverage": _geometry_catalog_admin_coverage(catalog),
+            "collections": _geometry_catalog_records(catalog, "geometry_collections", read_wip=read_wip),
+            "families": _geometry_catalog_records(catalog, "geometry_families", read_wip=read_wip),
+            "admin_coverage": _geometry_catalog_admin_coverage(catalog, read_wip=read_wip),
         })
     if selected_view == "admin_coverage":
-        return _clean_json({**base, "admin_coverage": _geometry_catalog_admin_coverage(catalog)})
+        return _clean_json({**base, "admin_coverage": _geometry_catalog_admin_coverage(catalog, read_wip=read_wip)})
+    if selected_view == "countries":
+        return _clean_json({**base, "countries": _geometry_catalog_countries(catalog, read_wip=read_wip)})
     if selected_view == "bridges":
-        return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog)})
+        return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog, read_wip=read_wip)})
     if selected_view == "products":
-        return _clean_json({**base, "products": _geometry_catalog_products(catalog)})
+        return _clean_json({**base, "products": _geometry_catalog_products(catalog, read_wip=read_wip)})
     if selected_view == "named_reference_objects":
-        return _clean_json({**base, "named_reference_objects": _geometry_catalog_named_reference_objects(catalog, limit=row_limit)})
+        return _clean_json({**base, "named_reference_objects": _geometry_catalog_named_reference_objects(catalog, limit=row_limit, read_wip=read_wip)})
     if selected_view == "full":
+        if read_wip:
+            return _clean_json({**base, "catalog": catalog})
         return _clean_json({
             **base,
             "catalog": {
@@ -821,7 +921,7 @@ def read_geometry_catalog(
         "ok": False,
         "error": {
             "code": "invalid_view",
-            "message": "view must be one of capabilities, summary, admin_coverage, bridges, products, named_reference_objects, or full",
+            "message": "view must be one of capabilities, summary, countries, admin_coverage, bridges, products, named_reference_objects, or full",
         },
     })
 

@@ -2798,6 +2798,31 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
     payload = _ensure_request_id(arguments, "read_geometry_catalog")
     request_id = str(payload.get("request_id") or "")
     view = str(payload.get("view") or "summary").strip() or "summary"
+    read_wip = bool(payload.get("read_wip", False))
+    if read_wip and not is_local_loopback_request(request):
+        error_payload = {
+            "request_id": request_id,
+            "ok": False,
+            "catalog_surface": "published",
+            "error": {
+                "code": "wip_geometry_catalog_not_available",
+                "message": "The WIP geometry catalog is available only through a local loopback MCP connection.",
+            },
+        }
+        _log_mcp_tool_usage_event(
+            request,
+            request_id=request_id,
+            tool_name="read_geometry_catalog",
+            capability_id="geometry_catalog_discovery",
+            decision="deny",
+            started_at=started_at,
+            row_count=0,
+            query_granularity="single",
+            response_payload=error_payload,
+            error_code="wip_geometry_catalog_not_available",
+            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view, "read_wip": True},
+        )
+        return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
     try:
         from mapmover.runtime.reference_exchange import read_geometry_catalog
 
@@ -2806,6 +2831,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
             view=view,
             limit=payload.get("limit"),
             country_scope=payload.get("country_scope"),
+            read_wip=read_wip,
         )
         stages = {"catalog_lookup_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
@@ -2821,7 +2847,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
             query_granularity="single",
             response_payload=error_payload,
             error_code="geometry_catalog_read_failed",
-            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view},
+            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view, "read_wip": read_wip},
         )
         return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
 
@@ -2844,7 +2870,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
             query_granularity="single",
             response_payload=error_payload,
             error_code=((result.get("error") or {}).get("code") if isinstance(result.get("error"), dict) else "invalid_view"),
-            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view},
+            metadata={"event": "geometry_catalog_discovery", "tool_mode": "discovery", "quantity": 0, "view": view, "read_wip": read_wip},
         )
         return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
 
@@ -2863,6 +2889,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
             "tool_mode": "discovery",
             "quantity": row_count,
             "view": view,
+            "read_wip": read_wip,
             **_compute_metadata(response_payload=result_payload, stages=stages, input_count=1, output_count=row_count),
         },
     )

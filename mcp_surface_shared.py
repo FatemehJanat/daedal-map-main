@@ -226,13 +226,13 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "read_geometry_catalog",
             "title": "Read Geometry Catalog",
-            "description": "Free geography discovery. Reads the DaedalMap geometry catalog in an agent-friendly form so coverage updates automatically flow into MCP discovery. Use view='capabilities' first for the global baseline and enhanced countries; use focused inventory views for families, banks, crosswalk products, and named objects. No payment required.",
+            "description": "Free geography discovery. Reads the published DaedalMap geometry catalog projection by default, excluding staged and candidate work. Use view='capabilities' first for the global baseline and enhanced countries; use focused inventory views for families, banks, crosswalk products, and named objects. A local loopback MCP may set read_wip=true for internal review. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "view": {
                         "type": "string",
-                        "enum": ["capabilities", "summary", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
+                        "enum": ["capabilities", "summary", "countries", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
                         "description": "Catalog view to return. Use capabilities for the concise first-user coverage model. Default summary for compatibility.",
                     },
                     "limit": {
@@ -244,6 +244,10 @@ def build_tool_definitions() -> list[dict]:
                     "country_scope": {
                         "type": "string",
                         "description": "Optional ISO3 country code for view='capabilities'. Returns the selected country's baseline, active depth, families, and query guidance.",
+                    },
+                    "read_wip": {
+                        "type": "boolean",
+                        "description": "Local loopback MCP only. When true, reads the internal geometry catalog projection, including staged and in-progress records. Hosted/public MCP requests are denied. Default false.",
                     },
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
