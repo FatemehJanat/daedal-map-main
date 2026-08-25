@@ -21,6 +21,23 @@ const PIN_HIT_LAYER_ID = 'geometry-inventory-small-country-hit';
 const PIN_IMAGE_PREFIX = 'geometry-inventory-pin';
 const PIN_FALLBACK_COLOR = '#6b7280';
 
+/**
+ * MapLibre symbol image for a small-country marker. Keep the fill tied to the
+ * catalog-owned admin-depth ramp while the white keyline remains legible over
+ * both land and water. Values come from the inventory payload, but validate
+ * them before interpolating into SVG markup so malformed metadata cannot turn
+ * into executable image content.
+ */
+function pinSvg(color) {
+  const fill = /^#[0-9a-f]{6}$/i.test(String(color || ''))
+    ? String(color)
+    : PIN_FALLBACK_COLOR;
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="34" viewBox="0 0 28 34">'
+    + `<path fill="${fill}" stroke="#fff" stroke-width="2" d="M14 1C7.37 1 2 6.37 2 13c0 8.7 12 20 12 20s12-11.3 12-20C26 6.37 20.63 1 14 1Z"/>`
+    + '<circle cx="14" cy="13" r="4" fill="#fff" fill-opacity=".92"/>'
+    + '</svg>';
+}
+
 export function setDependencies(deps) {
   MapAdapter = deps.MapAdapter;
 }
