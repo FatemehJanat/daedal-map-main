@@ -31,7 +31,10 @@ def _is_cloud_mode() -> bool:
 
 
 def _fetch_geometry_catalog_from_s3() -> dict[str, Any] | None:
-    payload = read_artifact_json("geometry/geometry_catalog.json", lane="published")
+    # The runtime-selected immutable lane is normally published. Release smoke
+    # deliberately selects staging and must evaluate that catalog as one
+    # coherent activation snapshot.
+    payload = read_artifact_json("geometry/geometry_catalog.json", lane="active")
     return payload if isinstance(payload, dict) else None
 
 

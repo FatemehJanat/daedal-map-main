@@ -1,7 +1,13 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from mapmover.runtime import reference_graph
+from mapmover.runtime import geometry_catalog, reference_graph
+
+
+def test_cloud_geometry_catalog_follows_selected_active_lane() -> None:
+    with patch.object(geometry_catalog, "read_artifact_json", return_value={"schema_version": "1.1.1"}) as reader:
+        assert geometry_catalog._fetch_geometry_catalog_from_s3() == {"schema_version": "1.1.1"}
+    reader.assert_called_once_with("geometry/geometry_catalog.json", lane="active")
 
 
 def test_cloud_reference_graph_discovery_is_catalog_owned(tmp_path: Path) -> None:

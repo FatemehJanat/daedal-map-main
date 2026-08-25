@@ -66,7 +66,9 @@ def clear_admin_spine_query_cache() -> None:
 @lru_cache(maxsize=64)
 def _published_layout_manifest_available(iso3: str, relative_path: str) -> bool:
     try:
-        payload = read_artifact_json(relative_path, lane="published")
+        # Follow the runtime's selected immutable lane. Hosted production sets
+        # active=published; release smoke may deliberately set active=staging.
+        payload = read_artifact_json(relative_path, lane="active")
     except Exception:
         return False
     return bool(

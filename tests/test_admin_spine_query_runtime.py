@@ -4,6 +4,22 @@ from unittest.mock import patch
 from mapmover.runtime import admin_spine_query
 
 
+def test_cloud_manifest_check_follows_the_selected_active_lane() -> None:
+    payload = {
+        "status": "PASS", "country": "GBR",
+        "layout_policy": "national_admin_0_3_plus_admin_1_owned_deep",
+    }
+    with patch.object(admin_spine_query, "read_artifact_json", return_value=payload) as reader:
+        admin_spine_query._published_layout_manifest_available.cache_clear()
+        assert admin_spine_query._published_layout_manifest_available(
+            "GBR", "geometry/countries/GBR/releases/geometry/r/runtime/admin_spine/manifest.json"
+        ) is True
+    reader.assert_called_once_with(
+        "geometry/countries/GBR/releases/geometry/r/runtime/admin_spine/manifest.json",
+        lane="active",
+    )
+
+
 def test_cloud_layout_availability_comes_from_published_catalog() -> None:
     catalog = {
         "country_profiles": [{
