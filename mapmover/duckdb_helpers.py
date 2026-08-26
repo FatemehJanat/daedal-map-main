@@ -1415,6 +1415,14 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
             log.warning("prewarm hurricanes preload-range failed: %s", exc)
 
     # --- wildfires (the same global + USA + CAN union as the route) ---------
+    # This is a deliberately broad multi-source union. Do not make it a
+    # startup/readiness dependency by default: even predicate-pushed remote
+    # reads can consume the entire interactive budget on a cold deployment.
+    # A scheduled warmer may opt in once the process is ready.
+    if os.environ.get("PREWARM_WILDFIRES", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        log.info("prewarm wildfires skipped (set PREWARM_WILDFIRES=1 for background warming)")
+        log.info("Pre-warmer complete")
+        return
     wf_base = global_dir / "disasters/wildfires/by_year_enriched"
     preload_ck = make_preload_cache_key("wildfires", min_area_km2=500, include_perimeter=True)
     if cache_get(preload_ck) is None:
