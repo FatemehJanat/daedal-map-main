@@ -52,6 +52,7 @@ from .runtime.country_geography import (
     get_country_supported_deep_admin_levels,
 )
 from .runtime.admin_spine_query import (
+    layout_available as admin_spine_layout_available,
     load_rows_by_loc_ids as load_admin_spine_query_rows,
     resolve_point as resolve_admin_spine_query_point,
 )
@@ -3660,6 +3661,12 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
             continue
         by_iso3.setdefault(loc_id.split("-", 1)[0].upper(), []).append(loc_id)
     for iso3, country_ids in by_iso3.items():
+        # An admitted query layout is authoritative for current admin-family
+        # geometry in that country. Claim both hits and misses so a deliberately
+        # absent loc_id used by check/preflight calls does not fall through to a
+        # broad reference-graph geometry scan over object storage.
+        if admin_spine_layout_available(iso3):
+            query_layout_ids.update(country_ids)
         query_rows = load_admin_spine_query_rows(iso3, country_ids, columns=query_metadata_columns)
         if query_rows is None or query_rows.empty:
             continue

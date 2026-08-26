@@ -191,6 +191,20 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         query_mock.assert_called_once()
         graph_mock.assert_called_once_with([], columns=unittest.mock.ANY)
 
+    def test_missing_admin_id_does_not_fall_through_authoritative_layout(self):
+        import pandas as pd
+
+        with (
+            patch("mapmover.geometry_handlers.admin_spine_layout_available", return_value=True),
+            patch("mapmover.geometry_handlers.load_admin_spine_query_rows", return_value=pd.DataFrame()) as query_mock,
+            patch("mapmover.geometry_handlers.load_reference_graph_geometry", return_value=pd.DataFrame()) as graph_mock,
+        ):
+            metadata = get_selection_geometry_metadata(["CAN-NOPE"])
+
+        self.assertEqual(metadata, [])
+        query_mock.assert_called_once()
+        graph_mock.assert_called_once_with([], columns=unittest.mock.ANY)
+
     def test_sidechain_metadata_skips_admin_query_layout(self):
         import pandas as pd
 
