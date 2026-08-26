@@ -48,6 +48,7 @@ from mapmover.caller_identity import (
     resolve_caller_identity,
 )
 from mapmover.logging_analytics import hash_ip_for_analytics, log_app_error, log_route_request_event
+from mapmover.mcp_admission import MCPAdmissionMiddleware
 from mapmover.security import (
     get_allowed_origins,
     get_client_ip,
@@ -234,7 +235,13 @@ def _apply_surface_headers(response, request: Request, surface: str) -> None:
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin"
         return
     if surface == "agent_api_mcp":
-        response.headers["Cache-Control"] = "no-store"
+        # GET metadata is immutable for a deployment and is frequently polled
+        # by registries. Let clients/edges absorb that traffic. JSON-RPC POSTs,
+        # including tools/list and execution, remain private and uncacheable.
+        if request.method in {"GET", "HEAD"}:
+            response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300"
+        else:
+            response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
         response.headers["Vary"] = "Accept, Accept-Encoding, Authorization, Origin, MCP-Protocol-Version"
         return
@@ -436,6 +443,8 @@ async def static_no_cache(request: Request, call_next):
     request.state.analytics_metadata = {
         **(getattr(request.state, "analytics_metadata", {}) or {}),
         **caller_identity.as_analytics_fields(),
+        "railway_replica_id": str(os.getenv("RAILWAY_REPLICA_ID", "") or "").strip() or None,
+        "railway_replica_region": str(os.getenv("RAILWAY_REPLICA_REGION", "") or "").strip() or None,
     }
     if local_unrestricted:
         request.state.analytics_metadata = {
@@ -577,6 +586,12 @@ async def static_no_cache(request: Request, call_next):
         metadata=getattr(request.state, "analytics_metadata", None),
     )
     return response
+
+
+# Register this after the decorator middleware so Starlette places the pure
+# ASGI guard outermost. Floods are rejected before auth/session work, response
+# compression, CORS processing, and JSON parsing.
+app.add_middleware(MCPAdmissionMiddleware)
 
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

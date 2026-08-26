@@ -6,6 +6,7 @@ import math
 import numbers
 import time
 import uuid
+from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -199,6 +200,7 @@ def _tool_allowed_for_facade(tool_name: str, pack_id: str | None) -> bool:
     return True if allowed is None else tool_name in allowed
 
 
+@lru_cache(maxsize=64)
 def _facade_tools(pack_id: str | None) -> list[dict[str, Any]]:
     allowed = _facade_tool_names(pack_id)
     tools = _tool_definitions()
@@ -1354,6 +1356,7 @@ def _ensure_request_id(arguments: dict[str, Any], tool_name: str) -> dict[str, A
     return normalized
 
 
+@lru_cache(maxsize=1)
 def _tool_definitions() -> list[dict[str, Any]]:
     definitions = build_tool_definitions()
     claim = str(geometry_capability_summary().get("public_claim") or "").strip()
