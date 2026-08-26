@@ -628,34 +628,7 @@ def list_reference_systems() -> dict[str, Any]:
 
 def _public_catalog_records(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
     """Return the MCP published lane, excluding every candidate lifecycle."""
-    filtered_catalog = dict(catalog)
-    filtered_rows: list[dict[str, Any]] = []
-    for item in catalog.get(key) or []:
-        if not isinstance(item, dict):
-            continue
-        states = {
-            str(item.get(field) or "").strip().lower()
-            for field in (
-                "status", "release_state", "release_status",
-                "publication_status", "runtime_state", "candidate_state",
-            )
-            if str(item.get(field) or "").strip()
-        }
-        if any("candidate" in state for state in states):
-            continue
-        if any(
-            token in state
-            for state in states
-            for token in ("staged", "prepar", "research", "blocked", "in_progress", "wip")
-        ):
-            continue
-        if key == "country_profiles":
-            release_status = str(item.get("release_status") or "").strip().lower()
-            if release_status and release_status not in {"approved_for_publication", "published"}:
-                continue
-        filtered_rows.append(item)
-    filtered_catalog[key] = filtered_rows
-    return public_geometry_catalog_records(filtered_catalog, key)
+    return published_geometry_catalog_records(catalog, key)
 
 
 def _geometry_catalog_records(

@@ -1,4 +1,9 @@
-from geometry_catalog_shared import build_geometry_capability_summary, public_geometry_catalog_records
+from geometry_catalog_shared import (
+    build_geometry_capability_summary,
+    build_published_geometry_catalog,
+    public_geometry_catalog_records,
+    published_geometry_catalog_records,
+)
 
 
 def test_capability_summary_exposes_only_global_baseline_and_admitted_enrichment() -> None:
@@ -124,3 +129,47 @@ def test_public_country_profile_hides_release_lane_and_unavailable_packages() ->
     assert profile["qa_highlights"] == ["The maintained spine passes."]
     assert "state" not in profile["family_coverage"][0]
     assert [item["package_id"] for item in profile["package_recipes"]] == ["ready"]
+
+
+def test_published_records_exclude_every_candidate_lifecycle() -> None:
+    rows = published_geometry_catalog_records({"geometry_products": [
+        {"product_id": "published", "release_state": "published"},
+        {"product_id": "candidate_pass", "release_state": "candidate_pass"},
+        {"product_id": "local", "status": "adopted_local_candidate"},
+    ]}, "geometry_products")
+
+    assert [item["product_id"] for item in rows] == ["published"]
+
+
+def test_downloadable_projection_filters_wip_records_and_unavailable_families() -> None:
+    catalog = {
+        "generated_at": "2026-08-24T00:00:00Z",
+        "catalog_fingerprint": "canonical-fingerprint",
+        "global_admin_baseline": [{"country_code": "USA", "max_admin_level": 2}],
+        "country_profiles": [
+            {"country_code": "USA", "release_status": "published"},
+            {"country_code": "TST", "release_status": "candidate_pass"},
+        ],
+        "country_family_coverage": [{
+            "country_code": "USA",
+            "candidate_admin_depth": 5,
+            "families": [
+                {"family_id": "administrative", "available": True, "state": "published"},
+                {"family_id": "watershed", "available": False, "state": "researching"},
+            ],
+        }],
+        "geometry_products": [
+            {"product_id": "published", "release_state": "published"},
+            {"product_id": "wip", "release_state": "candidate"},
+        ],
+    }
+
+    published = build_published_geometry_catalog(catalog)
+
+    assert published["source_catalog_fingerprint"] == "canonical-fingerprint"
+    assert [item["product_id"] for item in published["geometry_products"]] == ["published"]
+    assert [item["country_code"] for item in published["country_profiles"]] == ["USA"]
+    coverage = published["country_family_coverage"][0]
+    assert coverage["available_family_ids"] == ["administrative"]
+    assert [item["family_id"] for item in coverage["families"]] == ["administrative"]
+    assert "candidate_admin_depth" not in coverage

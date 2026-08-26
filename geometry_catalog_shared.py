@@ -8,7 +8,25 @@ claims.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from typing import Any
+
+
+GEOMETRY_CATALOG_RECORD_KEYS = (
+    "country_profiles",
+    "geometry_collections",
+    "geometry_families",
+    "geometry_banks",
+    "geometry_products",
+    "release_packages",
+    "bridge_artifacts",
+    "external_reference_bridges",
+    "compatibility_releases",
+    "resolver_groups",
+    "named_reference_objects",
+)
 
 
 def _as_int(value: Any) -> int | None:
@@ -84,6 +102,97 @@ def public_geometry_catalog_records(catalog: dict[str, Any], key: str) -> list[d
             }
         rows.append(public_item)
     return rows
+
+
+def published_geometry_catalog_records(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Return records admitted to the public MCP and download surfaces."""
+    filtered_catalog = dict(catalog)
+    filtered_rows: list[dict[str, Any]] = []
+    for item in catalog.get(key) or []:
+        if not isinstance(item, dict):
+            continue
+        states = {
+            str(item.get(field) or "").strip().lower()
+            for field in (
+                "status", "release_state", "release_status",
+                "publication_status", "runtime_state", "candidate_state",
+            )
+            if str(item.get(field) or "").strip()
+        }
+        if any("candidate" in state for state in states):
+            continue
+        if any(
+            token in state
+            for state in states
+            for token in ("staged", "prepar", "research", "blocked", "in_progress", "wip")
+        ):
+            continue
+        if key == "country_profiles":
+            release_status = str(item.get("release_status") or "").strip().lower()
+            if release_status and release_status not in {"approved_for_publication", "published"}:
+                continue
+        filtered_rows.append(item)
+    filtered_catalog[key] = filtered_rows
+    return public_geometry_catalog_records(filtered_catalog, key)
+
+
+def _without_candidate_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _without_candidate_fields(item)
+            for key, item in value.items()
+            if not str(key).startswith("candidate_")
+        }
+    if isinstance(value, list):
+        return [_without_candidate_fields(item) for item in value]
+    return value
+
+
+def build_published_geometry_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    """Build the downloadable catalog without internal lifecycle records."""
+    result = copy.deepcopy(catalog)
+    for key in GEOMETRY_CATALOG_RECORD_KEYS:
+        result[key] = published_geometry_catalog_records(catalog, key)
+
+    published_country_codes = {
+        _country_code(item.get("country_code"))
+        for item in result.get("country_profiles") or []
+        if isinstance(item, dict) and _country_code(item.get("country_code"))
+    }
+    coverage_rows: list[dict[str, Any]] = []
+    for raw_row in public_geometry_catalog_records(catalog, "country_family_coverage"):
+        country_code = _country_code(raw_row.get("country_code"))
+        if country_code != "GLOBAL" and country_code not in published_country_codes:
+            continue
+        row = _without_candidate_fields(raw_row)
+        families = [
+            _without_candidate_fields(family)
+            for family in raw_row.get("families") or []
+            if isinstance(family, dict) and family.get("available") is True
+        ]
+        row["families"] = families
+        row["available_family_ids"] = sorted({
+            str(family.get("family_id") or "").strip()
+            for family in families
+            if str(family.get("family_id") or "").strip()
+        })
+        coverage_rows.append(row)
+    result["country_family_coverage"] = coverage_rows
+    result = _without_candidate_fields(result)
+    result["purpose"] = (
+        "Published geometry capability and discovery catalog. Internal candidate and WIP "
+        "lifecycle records are excluded."
+    )
+    result["capability_summary"] = build_geometry_capability_summary(result)
+    result["source_catalog_fingerprint"] = catalog.get("catalog_fingerprint")
+    fingerprint_payload = {
+        key: value for key, value in result.items()
+        if key not in {"generated_at", "catalog_fingerprint"}
+    }
+    result["catalog_fingerprint"] = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return result
 
 
 def build_geometry_capability_summary(catalog: dict[str, Any]) -> dict[str, Any]:

@@ -16,7 +16,11 @@ from typing import Any
 from ..paths import GEOMETRY_DIR
 from ..runtime_config import force_remote_data_reads, get_data_plane_mode
 from .published_artifacts import read_artifact_json
-from geometry_catalog_shared import build_geometry_capability_summary, public_geometry_catalog_records
+from geometry_catalog_shared import (
+    build_geometry_capability_summary,
+    published_geometry_catalog_records,
+    public_geometry_catalog_records,
+)
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
