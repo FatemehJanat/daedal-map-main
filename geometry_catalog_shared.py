@@ -22,11 +22,27 @@ GEOMETRY_CATALOG_RECORD_KEYS = (
     "geometry_products",
     "release_packages",
     "bridge_artifacts",
+    "reference_systems",
+    "crosswalks",
     "external_reference_bridges",
     "compatibility_releases",
     "resolver_groups",
     "named_reference_objects",
 )
+
+
+def merge_crosswalk_catalog(
+    geometry_catalog: dict[str, Any], crosswalk_catalog: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach the separately generated canonical crosswalk contract."""
+    if not isinstance(crosswalk_catalog, dict) or not crosswalk_catalog:
+        return geometry_catalog
+    result = dict(geometry_catalog)
+    result["reference_systems"] = list(crosswalk_catalog.get("reference_systems") or [])
+    result["crosswalks"] = list(crosswalk_catalog.get("crosswalks") or [])
+    result["crosswalk_summary"] = dict(crosswalk_catalog.get("summary") or {})
+    result["crosswalk_registry_fingerprint"] = crosswalk_catalog.get("registry_fingerprint")
+    return result
 
 
 def _as_int(value: Any) -> int | None:
@@ -131,6 +147,8 @@ def published_geometry_catalog_records(catalog: dict[str, Any], key: str) -> lis
             release_status = str(item.get("release_status") or "").strip().lower()
             if release_status and release_status not in {"approved_for_publication", "published"}:
                 continue
+        if key in {"crosswalks", "reference_systems"} and item.get("callable") is not True:
+            continue
         filtered_rows.append(item)
     filtered_catalog[key] = filtered_rows
     return public_geometry_catalog_records(filtered_catalog, key)

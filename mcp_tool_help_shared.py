@@ -81,10 +81,10 @@ TOOL_GUIDANCE: dict[str, dict[str, Any]] = {
         ["catalog fingerprint", "bank releases", "source licenses"]
     ),
     "list_reference_systems": _g(
-        ["You need to discover which external geography systems and vintages are exchangeable."],
+        ["You need the canonical published list of callable crosswalks, systems, and vintages for a country."],
         ["Converting a value", "Resolving coordinates"],
-        {}, ["systems", "reserve_system", "bridge artifacts", "vintages"],
-        ["identify_reference_system", "resolve_reference", "convert_reference"], ["source authority", "license", "bridge vintage"]
+        {"country_scope": "USA"}, ["systems", "crosswalks", "reserve_system", "bridge artifacts", "vintages"],
+        ["identify_reference_system", "resolve_reference", "convert_reference"], ["source authority", "license", "relationship vintage", "crosswalk_id"]
     ),
     "identify_reference_system": _g(
         ["You have unknown geography identifiers or want to verify a declared system, level, vintage, and matching shape bank."],
@@ -276,7 +276,7 @@ def geometry_family_help_payload(
             },
             "reference_families": {
                 "rule": "Postal areas, places, watersheds, electoral districts, Indigenous regions, weather zones, water bodies, and other families are independent reference systems unless the catalog says they belong to the selected spine.",
-                "discovery": "Use the country's available_family_ids, then list_reference_systems when identifier exchange support is needed.",
+                "discovery": "Use the country's available_family_ids, then list_reference_systems(country_scope='<ISO3>') for the canonical published and callable crosswalk subset. Family coverage alone does not promise a conversion.",
             },
             "catalog_authority": "Coverage is generated from admitted releases. Do not assume that every country has the same depth, families, or physical query layout.",
             "query_cost": "Opening and searching geometry partitions is the main cold-path cost. Item count still matters, but calls aligned with the catalog's query guidance are usually faster than calls spread across unrelated regions or families.",

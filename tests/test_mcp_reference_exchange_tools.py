@@ -1122,6 +1122,33 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(analytics["metadata"]["compute"]["output_count"], 2)
         self.assertIn("catalog_lookup_ms", analytics["metadata"]["compute"]["stage_ms"])
 
+    def test_list_reference_systems_denies_wip_on_hosted_request(self) -> None:
+        payload = _tool_call(self.client, "list_reference_systems", {"read_wip": True})
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "wip_crosswalk_catalog_not_available")
+
+    def test_list_reference_systems_allows_wip_on_local_loopback(self) -> None:
+        app = FastAPI()
+        app.include_router(mcp_router)
+        local_client = TestClient(app, client=("127.0.0.1", 50000))
+        expected = {"ok": True, "systems": [], "crosswalks": [{"crosswalk_id": "candidate"}]}
+        with mock.patch(
+            "mapmover.runtime.reference_exchange.list_reference_systems", return_value=expected,
+        ) as listing, mock.patch(
+            "mapmover.routes.mcp.is_local_loopback_request", return_value=True,
+        ):
+            payload = _tool_call(
+                local_client,
+                "list_reference_systems",
+                {"country_scope": "CAN", "include_crosswalks": True, "read_wip": True},
+            )
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["systems"], [])
+        self.assertEqual(payload["crosswalks"], expected["crosswalks"])
+        listing.assert_called_once_with(country_scope="CAN", include_crosswalks=True, read_wip=True)
+
     def test_resolve_reference_tool_resolves_zip_to_loc_id(self) -> None:
         payload = _tool_call(
             self.client,

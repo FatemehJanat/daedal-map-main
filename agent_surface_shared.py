@@ -108,7 +108,7 @@ def geography_workflow_section() -> str:
         "2. What a loc_id is connected to: call `loc_id_info` with `include_references=true`; add `include_hierarchy=true` for its strict stored ancestry.\n"
         "3. Outside code or name to loc_id: call `resolve_reference`. If the input system is unknown, call `identify_reference_system` first. Use `convert_reference` only when another reference system is the desired output.\n"
         "4. Shape lookup: call `check_geometry` for availability, then `get_geometry`. Metadata, bbox, and centroid are the default; set `include_polygon=true` only when shape coordinates are needed.\n"
-        "5. Coverage discovery: call `read_geometry_catalog` with `view=capabilities` and `country_scope=<ISO3>`, or `list_reference_systems` for usable crosswalks. A catalog family alone does not promise a conversion path.\n"
+        "5. Coverage discovery: call `read_geometry_catalog` with `view=capabilities` and `country_scope=<ISO3>`, or `list_reference_systems` with `country_scope=<ISO3>` for the canonical published crosswalk registry. Only callable crosswalks appear publicly; preserve all matches and weights. A catalog family alone does not promise a conversion path.\n"
         "6. Relationship between two loc_ids: call `compare_geographies`. For descendants under one parent and level, call `resolve_loc_id_scope`.\n"
         "7. Batch rule: use bounded arrays where supported; split deep work by country, level, and Admin1 owner.\n"
         "8. If the right path is unclear: call `how_geometry_works`, then `get_tool_help` for one exact tool.\n"

@@ -223,7 +223,7 @@ def build_tool_definitions() -> list[dict]:
                 "properties": {
                     "view": {
                         "type": "string",
-                        "enum": ["capabilities", "summary", "countries", "admin_coverage", "bridges", "products", "named_reference_objects", "full"],
+                        "enum": ["capabilities", "summary", "countries", "admin_coverage", "bridges", "crosswalks", "products", "named_reference_objects", "full"],
                         "description": "Catalog view to return. Use capabilities for the concise first-user coverage model. Default summary for compatibility.",
                     },
                     "limit": {
@@ -249,10 +249,13 @@ def build_tool_definitions() -> list[dict]:
         {
             "name": "list_reference_systems",
             "title": "List Geographic Reference Systems",
-            "description": "Free geography utility. Lists the currently exchangeable geographic reference systems in DaedalMap, including catalog-backed geometry families, bridge artifacts, row counts, vintages, target levels, and source license metadata. Call this first when you need to know whether ZIP/ZCTA, NWS zones, tribal areas, marine ids, NUTS-style regional ids, or other systems can be exchanged through loc_id. No payment required.",
+            "description": "Free geography utility. Reads the canonical crosswalk registry and lists published, callable geographic reference systems, direct crosswalks, bridge artifacts, row counts, vintages, target levels, and source license metadata. Pass country_scope whenever the country is known. Call this first to learn whether ZIP/ZCTA, postal, census, electoral, watershed, health, tribal, marine, or other identifiers can be exchanged through loc_id. Public calls never expose WIP or relationship-only records. No payment required.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "country_scope": {"type": "string", "description": "Optional ISO3 country filter. Use this for a focused country capability answer."},
+                    "include_crosswalks": {"type": "boolean", "description": "Include actionable source-to-target crosswalk records. Default true."},
+                    "read_wip": {"type": "boolean", "description": "Local loopback MCP only. Include staged or non-callable preprocessing records for operator review. Default false."},
                     "request_id": {"type": "string", "description": "Optional caller-supplied request id for tracing."},
                 },
                 "additionalProperties": False,

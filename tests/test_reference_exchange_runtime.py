@@ -172,6 +172,64 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertIn("overlay_nws_fire_weather_zone", systems)
         self.assertGreaterEqual(len(payload["bridges"]), 1)
 
+    def test_country_reference_listing_returns_canonical_actionable_crosswalks(self) -> None:
+        payload = list_reference_systems(country_scope="USA")
+
+        self.assertEqual(payload["country_scope"], "USA")
+        self.assertGreaterEqual(payload["crosswalk_count"], 38)
+        self.assertTrue(payload["crosswalks"])
+        self.assertTrue(all(item["country_code"] == "USA" for item in payload["crosswalks"]))
+        self.assertTrue(all(item["callable"] for item in payload["crosswalks"]))
+        self.assertIn("overlay_zcta", {item["system"] for item in payload["systems"]})
+
+    def test_crosswalk_listing_reports_sparse_local_availability_without_changing_catalog_truth(self) -> None:
+        catalog = {
+            "crosswalks": [{
+                "crosswalk_id": "can_example",
+                "country_code": "CAN",
+                "source_system": "postal_area",
+                "target_system": "admin_2",
+                "artifact_path": "geometry/countries/CAN/relationships/not_installed.parquet",
+                "publication_status": "published",
+                "callable": True,
+            }],
+            "reference_systems": [],
+            "bridge_artifacts": [],
+            "geometry_families": [],
+        }
+        with (
+            mock.patch.object(reference_exchange, "load_geometry_catalog", return_value=catalog),
+            mock.patch.object(reference_exchange, "is_cloud_mode", return_value=False),
+        ):
+            local = list_reference_systems(country_scope="CAN")
+        with (
+            mock.patch.object(reference_exchange, "load_geometry_catalog", return_value=catalog),
+            mock.patch.object(reference_exchange, "is_cloud_mode", return_value=True),
+        ):
+            cloud = list_reference_systems(country_scope="CAN")
+
+        self.assertEqual(local["crosswalk_count"], 1)
+        self.assertEqual(local["active_data_plane_crosswalk_count"], 0)
+        self.assertFalse(local["crosswalks"][0]["available_in_active_data_plane"])
+        self.assertEqual(cloud["active_data_plane_crosswalk_count"], 1)
+        self.assertTrue(cloud["crosswalks"][0]["available_in_active_data_plane"])
+
+    def test_direct_official_zcta_to_tract_crosswalk_preserves_matches(self) -> None:
+        payload = convert_reference(
+            from_system="zip",
+            value="00601",
+            to_system="admin_3",
+            iso3="USA",
+            limit=5,
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["from_system"], "overlay_zcta")
+        self.assertEqual(payload["to_system"], "admin_3")
+        self.assertTrue(payload["results"])
+        self.assertTrue(all(item["crosswalk_id"] for item in payload["results"]))
+        self.assertTrue(all(item["relationship_vintage"] == "census_2020" for item in payload["results"]))
+
     def test_resolve_zip_alias_to_loc_id_uses_bridge_overlap(self) -> None:
         payload = resolve_reference(
             from_system="zip",

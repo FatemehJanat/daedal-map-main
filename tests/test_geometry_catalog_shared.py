@@ -173,3 +173,20 @@ def test_downloadable_projection_filters_wip_records_and_unavailable_families() 
     assert coverage["available_family_ids"] == ["administrative"]
     assert [item["family_id"] for item in coverage["families"]] == ["administrative"]
     assert "candidate_admin_depth" not in coverage
+
+
+def test_downloadable_projection_exposes_only_callable_crosswalks() -> None:
+    published = build_published_geometry_catalog({
+        "crosswalks": [
+            {"crosswalk_id": "callable", "publication_status": "published", "callable": True},
+            {"crosswalk_id": "relationship-only", "publication_status": "published", "callable": False},
+            {"crosswalk_id": "wip", "publication_status": "wip", "callable": True},
+        ],
+        "reference_systems": [
+            {"reference_system_id": "ready", "publication_status": "published", "callable": True},
+            {"reference_system_id": "held", "publication_status": "published", "callable": False},
+        ],
+    })
+
+    assert [item["crosswalk_id"] for item in published["crosswalks"]] == ["callable"]
+    assert [item["reference_system_id"] for item in published["reference_systems"]] == ["ready"]

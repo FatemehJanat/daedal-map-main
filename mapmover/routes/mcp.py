@@ -2716,11 +2716,27 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "list_reference_systems")
     request_id = str(payload.get("request_id") or "")
+    read_wip = bool(payload.get("read_wip", False))
+    if read_wip and not is_local_loopback_request(request):
+        error_payload = {
+            "request_id": request_id,
+            "ok": False,
+            "catalog_surface": "published",
+            "error": {
+                "code": "wip_crosswalk_catalog_not_available",
+                "message": "The WIP crosswalk catalog is available only through a local loopback MCP connection.",
+            },
+        }
+        return _jsonrpc_response(_tool_result(error_payload, is_error=True), rpc_request_id)
     try:
         from mapmover.runtime.reference_exchange import list_reference_systems
 
         runtime_started = time.perf_counter()
-        result = list_reference_systems()
+        result = list_reference_systems(
+            country_scope=payload.get("country_scope"),
+            include_crosswalks=payload.get("include_crosswalks", True) is not False,
+            read_wip=read_wip,
+        )
         stages = {"catalog_lookup_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "reference_systems_failed", "message": str(exc)}}

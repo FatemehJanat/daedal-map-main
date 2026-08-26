@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from ..duckdb_helpers import is_cloud_mode
+from ..duckdb_helpers import is_cloud_mode, select_rows
 from ..geometry_handlers import get_location_info, get_selection_geometries, get_selection_geometry_metadata
 from ..paths import DATA_ROOT
 from .admin_hierarchy import infer_admin_level_from_loc_id
@@ -26,6 +26,7 @@ from .geography_reference import (
 from .geometry_catalog import (
     geometry_capability_summary,
     load_geometry_catalog,
+    published_geometry_catalog_records,
     public_geometry_catalog_records,
     resolve_geometry_name,
 )
@@ -437,7 +438,9 @@ SELF_RESOLVING_RESOLVERS = frozenset({
     "admin geometry name and point resolver",
 })
 
-_ALWAYS_EXCHANGEABLE_ROLES = frozenset({"reserve", "exact_identifier_system", "external_reference_bridge"})
+_ALWAYS_EXCHANGEABLE_ROLES = frozenset({
+    "reserve", "exact_identifier_system", "external_reference_bridge", "canonical_reference_system",
+})
 
 
 def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> None:
@@ -450,14 +453,6 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
     role = str(system.get("role") or "")
     resolver = str(system.get("resolver") or "").strip().lower()
     name = str(system.get("system") or "")
-    if role in _ALWAYS_EXCHANGEABLE_ROLES:
-        system["exchangeable"] = True
-        system["exchange_via"] = (
-            "reserve" if role == "reserve" else
-            "typed_external_reference_edges" if role == "external_reference_bridge" else
-            "exact_identifier_crosswalk"
-        )
-        return
     if name in bridged_systems:
         system["exchangeable"] = True
         system["exchange_via"] = "bridge_artifact"
@@ -465,6 +460,15 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
     if resolver in SELF_RESOLVING_RESOLVERS:
         system["exchangeable"] = True
         system["exchange_via"] = "self_resolving_geometry"
+        return
+    if role in _ALWAYS_EXCHANGEABLE_ROLES:
+        system["exchangeable"] = True
+        system["exchange_via"] = (
+            "reserve" if role == "reserve" else
+            "canonical_crosswalk" if role == "canonical_reference_system" else
+            "typed_external_reference_edges" if role == "external_reference_bridge" else
+            "exact_identifier_crosswalk"
+        )
         return
     system["exchangeable"] = False
     system["exchange_via"] = None
@@ -508,9 +512,108 @@ def _resolve_eez_by_country(text: str) -> dict[str, Any] | None:
     }
 
 
-def list_reference_systems() -> dict[str, Any]:
+def _catalog_crosswalks(
+    *, country_scope: str | None = None, read_wip: bool = False,
+) -> list[dict[str, Any]]:
+    """Return canonical crosswalk records; source manifests never reach callers."""
+    country = str(country_scope or "").strip().upper()
+    records = []
+    for item in load_geometry_catalog().get("crosswalks") or []:
+        if not isinstance(item, dict):
+            continue
+        if not read_wip and (
+            item.get("publication_status") != "published" or item.get("callable") is not True
+        ):
+            continue
+        if country and str(item.get("country_code") or "").upper() != country:
+            continue
+        record = dict(item)
+        path = _direct_crosswalk_path(record)
+        record["available_in_active_data_plane"] = bool(
+            record.get("callable")
+            and (is_cloud_mode() or (path is not None and path.is_file()))
+        )
+        records.append(record)
+    return records
+
+
+def _direct_crosswalk_path(record: dict[str, Any]) -> Path | None:
+    path = str(record.get("artifact_path") or "").strip()
+    return DATA_ROOT / path if path else None
+
+
+def _direct_crosswalk_matches(
+    *, from_system: str, value: str, to_system: str | None, iso3: str, limit: int,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Execute one typed relationship artifact in either direction."""
+    source_system = _normalize_system(from_system)
+    target_system = _normalize_system(to_system) if to_system else None
+    text = str(value or "").strip()
+    normalized = _normalize_source_loc_id(source_system, text, iso3)
+    catalog_records = _catalog_crosswalks(country_scope=iso3)
+    ordered_records = sorted(
+        catalog_records,
+        key=lambda item: str(item.get("source_system") or "") != source_system,
+    )
+    for record in ordered_records:
+        if record.get("execution_strategy") not in {"direct_relationship_artifact", "admin_bridge"}:
+            continue
+        forward = str(record.get("source_system") or "") == source_system
+        reverse = str(record.get("target_system") or "") == source_system
+        if target_system:
+            forward = forward and str(record.get("target_system") or "") == target_system
+            reverse = reverse and str(record.get("source_system") or "") == target_system
+        if not forward and not reverse:
+            continue
+        path = _direct_crosswalk_path(record)
+        if path is None or (not is_cloud_mode() and not path.is_file()):
+            continue
+        input_prefix = "source" if forward else "target"
+        output_prefix = "target" if forward else "source"
+        frame = select_rows(
+            path,
+            exact_filters={f"{input_prefix}_loc_id": normalized},
+            order_by=f"rank_by_{input_prefix}_area",
+            limit=max(1, min(int(limit or 10), 100)),
+        )
+        if frame.empty:
+            frame = select_rows(
+                path,
+                exact_filters={f"{input_prefix}_id": text},
+                order_by=f"rank_by_{input_prefix}_area",
+                limit=max(1, min(int(limit or 10), 100)),
+            )
+        if frame.empty:
+            continue
+        rows = []
+        for raw in frame.to_dict(orient="records"):
+            rows.append({
+                "system": record.get(f"{'target' if forward else 'source'}_system"),
+                "value": raw.get(f"{output_prefix}_loc_id") or raw.get(f"{output_prefix}_id"),
+                "reference_id": raw.get(f"{output_prefix}_id"),
+                "name": raw.get(f"{output_prefix}_name"),
+                "source_area_share": raw.get("source_area_share"),
+                "target_area_share": raw.get("target_area_share"),
+                "is_primary": raw.get("is_primary"),
+                "relationship_vintage": raw.get("relationship_vintage") or record.get("relationship_vintage"),
+                "crosswalk_id": record.get("crosswalk_id"),
+                "direction": "forward" if forward else "reverse",
+                "input_loc_id": raw.get(f"{input_prefix}_loc_id"),
+                "input_reference_id": raw.get(f"{input_prefix}_id"),
+                "input_name": raw.get(f"{input_prefix}_name"),
+                "input_family_id": record.get(f"{'source' if forward else 'target'}_family_id"),
+            })
+        return record, rows
+    return None, []
+
+
+def list_reference_systems(
+    *, country_scope: str | None = None, include_crosswalks: bool = True,
+    read_wip: bool = False,
+) -> dict[str, Any]:
     """Return the currently discoverable reference systems and bridges."""
     catalog = load_geometry_catalog()
+    country = str(country_scope or "").strip().upper()
     systems: dict[str, dict[str, Any]] = {
         LOC_ID_SYSTEM: {
             "system": LOC_ID_SYSTEM,
@@ -518,7 +621,9 @@ def list_reference_systems() -> dict[str, Any]:
             "role": "reserve",
             "bidirectional": True,
         },
-        "us_census_geoid": {
+    }
+    if not country or country == "USA":
+        systems["us_census_geoid"] = {
             "system": "us_census_geoid",
             "label": "US Census GEOID",
             "role": "exact_identifier_system",
@@ -527,13 +632,60 @@ def list_reference_systems() -> dict[str, Any]:
             "supported_vintages": ["2020"],
             "resolver": "exact_identifier_crosswalk",
             "bidirectional": False,
-        },
-    }
+        }
+    canonical_crosswalks = _catalog_crosswalks(country_scope=country, read_wip=read_wip)
+    canonical_systems = [
+        item for item in catalog.get("reference_systems") or []
+        if isinstance(item, dict)
+        and (not country or str(item.get("country_code") or "").upper() == country)
+        and (read_wip or item.get("callable") is True)
+    ]
+    for entry in canonical_systems:
+        system = str(entry.get("system") or "").strip()
+        if not system:
+            continue
+        entry_country = str(entry.get("country_code") or "").strip().upper()
+        current = systems.get(system)
+        if current and current.get("role") != "canonical_reference_system":
+            scopes = set(current.get("country_scopes") or [])
+            if entry_country:
+                scopes.add(entry_country)
+            current["country_scopes"] = sorted(scopes)
+            continue
+        if current:
+            scopes = set(current.get("country_scopes") or [])
+            if current.get("country_scope"):
+                scopes.add(str(current["country_scope"]))
+            if entry_country:
+                scopes.add(entry_country)
+            current.update({
+                "country_scope": entry_country if len(scopes) == 1 else None,
+                "country_scopes": sorted(scopes),
+                "exchangeable": bool(current.get("exchangeable") or entry.get("callable")),
+                "exchange_via": "canonical_crosswalk" if current.get("exchangeable") or entry.get("callable") else None,
+                "input_crosswalk_count": int(current.get("input_crosswalk_count") or 0) + int(entry.get("input_crosswalk_count") or 0),
+                "output_crosswalk_count": int(current.get("output_crosswalk_count") or 0) + int(entry.get("output_crosswalk_count") or 0),
+            })
+            continue
+        systems[system] = {
+            "system": system,
+            "label": entry.get("label") or system.replace("_", " ").title(),
+            "role": "canonical_reference_system",
+            "country_scope": entry_country or None,
+            "country_scopes": [entry_country] if entry_country else [],
+            "family_id": entry.get("family_id"),
+            "exchangeable": bool(entry.get("callable")),
+            "exchange_via": "canonical_crosswalk" if entry.get("callable") else None,
+            "input_crosswalk_count": entry.get("input_crosswalk_count"),
+            "output_crosswalk_count": entry.get("output_crosswalk_count"),
+        }
     for adapter in admitted_external_adapters():
         if adapter_available(adapter):
             systems[adapter.system] = adapter_public_entry(adapter)
     for family in catalog.get("geometry_families") or []:
         if not isinstance(family, dict):
+            continue
+        if country:
             continue
         system = str(family.get("family") or "").strip()
         if not system:
@@ -543,17 +695,26 @@ def list_reference_systems() -> dict[str, Any]:
         # a second, target-admin-steerable authority path.
         if get_external_adapter(system):
             continue
-        systems.setdefault(system, {
+        existing = systems.get(system)
+        if existing:
+            if family.get("resolver"):
+                existing["resolver"] = family.get("resolver")
+            if family.get("feature_count") is not None:
+                existing["feature_count"] = family.get("feature_count")
+            continue
+        systems[system] = {
             "system": system,
             "label": family.get("label") or system,
             "role": "geometry_family",
             "feature_count": family.get("feature_count"),
             "resolver": family.get("resolver"),
-        })
+        }
     try:
         from .reference_graph import reference_graph_families
 
         for family in reference_graph_families():
+            if country:
+                continue
             system = str(family.get("family") or "").strip()
             if not system:
                 continue
@@ -573,6 +734,9 @@ def list_reference_systems() -> dict[str, Any]:
     bridged_systems: set[str] = set()
     for artifact in catalog.get("bridge_artifacts") or []:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
+            continue
+        artifact_path = str(artifact.get("artifact_path") or "")
+        if country and f"_{country}.parquet" not in artifact_path:
             continue
         source = str(artifact.get("source_family") or "").strip()
         if get_external_adapter(source):
@@ -623,6 +787,13 @@ def list_reference_systems() -> dict[str, Any]:
             "families with no built bridge; resolve_reference and convert_reference will refuse them."
         ),
         "bridges": bridges,
+        "country_scope": country or None,
+        "active_data_plane": "cloud" if is_cloud_mode() else "local",
+        "crosswalks": canonical_crosswalks if include_crosswalks else [],
+        "crosswalk_count": len(canonical_crosswalks),
+        "active_data_plane_crosswalk_count": sum(
+            1 for item in canonical_crosswalks if item.get("available_in_active_data_plane")
+        ),
     })
 
 
@@ -647,6 +818,8 @@ def _geometry_catalog_counts(catalog: dict[str, Any], *, read_wip: bool = False)
             "geometry_banks",
             "geometry_families",
             "bridge_artifacts",
+            "crosswalks",
+            "reference_systems",
             "geometry_products",
             "release_packages",
             "resolver_groups",
@@ -876,6 +1049,21 @@ def read_geometry_catalog(
         return _clean_json({**base, "countries": _geometry_catalog_countries(catalog, read_wip=read_wip)})
     if selected_view == "bridges":
         return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog, read_wip=read_wip)})
+    if selected_view == "crosswalks":
+        records = _geometry_catalog_records(catalog, "crosswalks", read_wip=read_wip)
+        if selected_country:
+            records = [
+                item for item in records
+                if str(item.get("country_code") or "").upper() == selected_country
+            ]
+        return _clean_json({
+            **base,
+            "country_scope": selected_country or None,
+            "crosswalks": records[:row_limit],
+            "returned": min(len(records), row_limit),
+            "total": len(records),
+            "truncated": len(records) > row_limit,
+        })
     if selected_view == "products":
         return _clean_json({**base, "products": _geometry_catalog_products(catalog, read_wip=read_wip)})
     if selected_view == "named_reference_objects":
@@ -893,6 +1081,8 @@ def read_geometry_catalog(
                 "geometry_families": _public_catalog_records(catalog, "geometry_families"),
                 "geometry_banks": _public_catalog_records(catalog, "geometry_banks"),
                 "bridge_artifacts": _public_catalog_records(catalog, "bridge_artifacts"),
+                "reference_systems": _public_catalog_records(catalog, "reference_systems"),
+                "crosswalks": _public_catalog_records(catalog, "crosswalks"),
                 "resolver_groups": _public_catalog_records(catalog, "resolver_groups"),
                 "named_reference_objects": _public_catalog_records(catalog, "named_reference_objects"),
             },
@@ -902,7 +1092,7 @@ def read_geometry_catalog(
         "ok": False,
         "error": {
             "code": "invalid_view",
-            "message": "view must be one of capabilities, summary, countries, admin_coverage, bridges, products, named_reference_objects, or full",
+            "message": "view must be one of capabilities, summary, countries, admin_coverage, bridges, crosswalks, products, named_reference_objects, or full",
         },
     })
 
@@ -1098,6 +1288,28 @@ def resolve_reference(
         bridge_vintage=bridge_vintage,
     )
     if not artifact:
+        direct_record, direct_matches = _direct_crosswalk_matches(
+            from_system=system,
+            value=text,
+            to_system=None,
+            iso3=iso3,
+            limit=limit or 10,
+        )
+        if direct_record and direct_matches:
+            primary = direct_matches[0]
+            return _clean_json({
+                "ok": True,
+                "from_system": system,
+                "input": value,
+                "normalized_input": primary.get("input_reference_id") or text,
+                "resolved_loc_id": primary.get("input_loc_id"),
+                "resolved_family": primary.get("input_family_id"),
+                "match_type": "canonical_crosswalk_identity",
+                "crosswalk_id": direct_record.get("crosswalk_id"),
+                "relationship_vintage": direct_record.get("relationship_vintage"),
+                "matches": direct_matches,
+                "match_count": len(direct_matches),
+            })
         try:
             from .reference_graph import identity as graph_identity, resolve_alias
 
@@ -1399,6 +1611,27 @@ def convert_reference(
 ) -> dict[str, Any]:
     """Convert a value from one reference system to another through ``loc_id``."""
     target = _normalize_system(to_system)
+    direct_record, direct_results = _direct_crosswalk_matches(
+        from_system=from_system,
+        value=value,
+        to_system=target,
+        iso3=iso3,
+        limit=limit or 10,
+    )
+    if direct_record and direct_results:
+        return _clean_json({
+            "ok": True,
+            "from_system": _normalize_system(from_system),
+            "input": value,
+            "to_system": target,
+            "loc_id": direct_results[0].get("input_loc_id"),
+            "results": direct_results,
+            "crosswalk": {
+                "crosswalk_id": direct_record.get("crosswalk_id"),
+                "relationship_vintage": direct_record.get("relationship_vintage"),
+                "cardinality": direct_record.get("cardinality"),
+            },
+        })
     resolved = resolve_reference(
         from_system=from_system,
         value=value,

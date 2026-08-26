@@ -18,12 +18,31 @@ from ..runtime_config import force_remote_data_reads, get_data_plane_mode
 from .published_artifacts import read_artifact_json
 from geometry_catalog_shared import (
     build_geometry_capability_summary,
+    merge_crosswalk_catalog,
     published_geometry_catalog_records,
     public_geometry_catalog_records,
 )
 
 
 CATALOG_PATH = GEOMETRY_DIR / "geometry_catalog.json"
+CROSSWALK_CATALOG_PATH = GEOMETRY_DIR / "crosswalk_catalog.json"
+
+
+def _merge_crosswalks(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("crosswalks"):
+        return payload
+    crosswalks = None
+    if _is_cloud_mode():
+        try:
+            crosswalks = read_artifact_json("downloadable/geometry/crosswalk_catalog.json", lane="active")
+        except Exception:
+            crosswalks = None
+    if not isinstance(crosswalks, dict) and not force_remote_data_reads():
+        try:
+            crosswalks = json.loads(CROSSWALK_CATALOG_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            crosswalks = None
+    return merge_crosswalk_catalog(payload, crosswalks)
 
 
 def _normalize(value: str | None) -> str:
@@ -49,7 +68,7 @@ def load_geometry_catalog() -> dict[str, Any]:
         try:
             payload = _fetch_geometry_catalog_from_s3()
             if isinstance(payload, dict):
-                return payload
+                return _merge_crosswalks(payload)
         except Exception:
             pass
 
@@ -57,7 +76,7 @@ def load_geometry_catalog() -> dict[str, Any]:
         try:
             payload = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
-                return payload
+                return _merge_crosswalks(payload)
         except (OSError, json.JSONDecodeError):
             pass
 
