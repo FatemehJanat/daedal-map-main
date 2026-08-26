@@ -1433,14 +1433,19 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
             for source_name, preferred_path, fallback_path in regional_sources:
                 source_path = preferred_path if is_cloud_mode() or preferred_path.exists() else fallback_path
                 try:
-                    regional_df = select_rows(source_path)
+                    # Push the rolling-window predicate into DuckDB. These
+                    # regional files are large; loading the complete object
+                    # and slicing timestamps in pandas kept startup disaster
+                    # prewarm running indefinitely in hosted mode.
+                    regional_df = select_filtered_event_rows(
+                        source_path,
+                        start=preload_start,
+                        end=preload_end,
+                        min_value_filters={"area_km2": 500},
+                    )
                     if regional_df.empty:
                         continue
                     regional_df["timestamp"] = pd.to_datetime(regional_df["timestamp"], errors="coerce")
-                    regional_df = regional_df[
-                        (regional_df["timestamp"] >= pd.to_datetime(preload_start))
-                        & (regional_df["timestamp"] <= pd.to_datetime(preload_end))
-                    ]
                     if "area_km2" in regional_df.columns:
                         regional_df = regional_df[regional_df["area_km2"] >= 500]
                     elif "burned_acres" in regional_df.columns:
@@ -1459,14 +1464,12 @@ def prewarm_disaster_sources(global_dir: Path) -> None:
             ]
             global_df = select_filtered_partitioned_rows(
                 year_files,
+                start=preload_start,
+                end=preload_end,
                 min_value_filters={"area_km2": 500},
             )
             if not global_df.empty:
                 global_df["timestamp"] = pd.to_datetime(global_df["timestamp"], errors="coerce")
-                global_df = global_df[
-                    (global_df["timestamp"] >= pd.to_datetime(preload_start))
-                    & (global_df["timestamp"] <= pd.to_datetime(preload_end))
-                ]
                 if "land_cover" not in global_df.columns:
                     global_df["land_cover"] = ""
                 if "source" not in global_df.columns:
