@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +167,32 @@ class PublishedArtifactTests(unittest.TestCase):
 
         self.assertEqual(uri, "s3://bucket/published/large.parquet")
         client.get_object.assert_not_called()
+
+    def test_recent_cache_path_is_not_unlinked_during_eviction(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "PUBLISHED_ARTIFACT_CACHE_DIR": temp_dir,
+            "PUBLISHED_ARTIFACT_CACHE_QUOTA_MB": "1",
+            "PUBLISHED_ARTIFACT_CACHE_EVICTION_GRACE_SECONDS": "120",
+        }, clear=True):
+            objects = Path(temp_dir) / "objects" / "aa"
+            objects.mkdir(parents=True)
+            recent = objects / "recent.parquet"
+            recent.write_bytes(b"x" * 800_000)
+            entries = {
+                "recent": {
+                    "local_path": str(recent),
+                    "bytes": recent.stat().st_size,
+                    "last_accessed": time.time(),
+                }
+            }
+
+            admitted = published_artifacts._evict_for(
+                entries, 800_000, keep_key="incoming"
+            )
+
+            self.assertFalse(admitted)
+            self.assertTrue(recent.is_file())
+            self.assertIn("recent", entries)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import math
 import numbers
 import time
 import uuid
-from functools import lru_cache
+from functools import lru_cache, wraps
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -28,6 +28,11 @@ from pack_registry_shared import (
 from mapmover.data_loading import load_api_catalog, load_api_pack_detail
 from mapmover.live_earthquake_usgs import fetch_live_earthquakes
 from mapmover.live_volcano_smithsonian import fetch_live_volcanoes
+from mapmover.mcp_execution import (
+    MCPExecutionCapacityError,
+    MCPExecutionTimeoutError,
+    run_mcp_blocking,
+)
 from mapmover.runtime.geometry_catalog import geometry_capability_summary
 from mapmover.routes.api_query import execute_query_dataset_payload
 from mapmover.api_query_commercial import (
@@ -63,6 +68,31 @@ from tool_access_shared import (
 
 
 router = APIRouter()
+
+
+def _guard_mcp_execution(tool_name: str):
+    """Convert shared worker capacity/timeouts into stable MCP tool errors."""
+
+    def decorate(function):
+        @wraps(function)
+        async def guarded(request: Request, arguments: dict[str, Any], rpc_request_id: Any, *args, **kwargs):
+            try:
+                return await function(request, arguments, rpc_request_id, *args, **kwargs)
+            except (MCPExecutionCapacityError, MCPExecutionTimeoutError) as exc:
+                timeout = isinstance(exc, MCPExecutionTimeoutError)
+                code = "mcp_execution_timeout" if timeout else "mcp_execution_capacity"
+                payload = {
+                    "request_id": str(arguments.get("request_id") or ""),
+                    "ok": False,
+                    "tool_name": tool_name,
+                    "retry_after": 5 if timeout else 2,
+                    "error": {"code": code, "message": str(exc)},
+                }
+                return _jsonrpc_response(_tool_result(payload, is_error=True), rpc_request_id)
+
+        return guarded
+
+    return decorate
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {MCP_PROTOCOL_VERSION, "2024-11-05"}
@@ -1769,7 +1799,9 @@ async def _execute_paid_tool(request: Request, tool_name: str, arguments: dict[s
 async def _execute_live_earthquake_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "get_live_earthquake_events")
     try:
-        result = fetch_live_earthquakes(
+        result = await run_mcp_blocking(
+            "get_live_earthquake_events",
+            fetch_live_earthquakes,
             request_id=str(payload.get("request_id") or ""),
             hours=payload.get("hours"),
             start_time=payload.get("start_time"),
@@ -1859,6 +1891,7 @@ def _shape_resolve_point_payload(raw: Any, request_id: str) -> dict[str, Any]:
     }
 
 
+@_guard_mcp_execution("resolve_point")
 async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "resolve_point")
@@ -2154,7 +2187,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
             valid_points.append({"index": index, "row_index": row_index, "id": caller_point_id, "lat": lat, "lon": lon})
         resolver_stages: dict[str, int] = {}
         try:
-            raw_results = resolve_points_to_locations(
+            raw_results = await run_mcp_blocking(
+                "resolve_point",
+                resolve_points_to_locations,
                 valid_points,
                 include_geometry=include_geometry,
                 timing_ms=resolver_stages,
@@ -2343,7 +2378,9 @@ async def _execute_resolve_point_tool(request: Request, arguments: dict[str, Any
         country_scope = str(payload.get("country_scope") or payload.get("country_hint") or "").strip().upper() or None
         runtime_started = time.perf_counter()
         resolver_stages: dict[str, int] = {}
-        raw_results = resolve_points_to_locations(
+        raw_results = await run_mcp_blocking(
+            "resolve_point",
+            resolve_points_to_locations,
             [{"lon": lon, "lat": lat}],
             include_geometry=False,
             timing_ms=resolver_stages,
@@ -2408,6 +2445,7 @@ def _parse_children_by_level(value: Any) -> Any:
     return value
 
 
+@_guard_mcp_execution("loc_id_info")
 async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "loc_id_info")
@@ -2500,7 +2538,10 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
                 rpc_request_id,
             )
         runtime_started = time.perf_counter()
-        results = [_loc_id_info_item(loc_id, payload) for loc_id in loc_ids]
+        results = await run_mcp_blocking(
+            "loc_id_info",
+            lambda: [_loc_id_info_item(loc_id, payload) for loc_id in loc_ids],
+        )
         stages = {"metadata_fetch_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
@@ -2565,7 +2606,8 @@ async def _execute_loc_id_info_tool(request: Request, arguments: dict[str, Any],
             rpc_request_id,
         )
     runtime_started = time.perf_counter()
-    result = {"request_id": request_id, **_loc_id_info_item(loc_id, payload)}
+    item = await run_mcp_blocking("loc_id_info", _loc_id_info_item, loc_id, payload)
+    result = {"request_id": request_id, **item}
     stages = {"metadata_fetch_ms": _elapsed_ms(runtime_started)}
     if result.get("error"):
         _log_mcp_tool_usage_event(
@@ -2715,6 +2757,7 @@ def _normalize_tool_error(value: Any, *, default_code: str, default_message: str
     return {"code": default_code, "message": default_message}
 
 
+@_guard_mcp_execution("list_reference_systems")
 async def _execute_list_reference_systems_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "list_reference_systems")
@@ -2735,7 +2778,9 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
         from mapmover.runtime.reference_exchange import list_reference_systems
 
         runtime_started = time.perf_counter()
-        result = list_reference_systems(
+        result = await run_mcp_blocking(
+            "list_reference_systems",
+            list_reference_systems,
             country_scope=payload.get("country_scope"),
             include_crosswalks=payload.get("include_crosswalks", True) is not False,
             read_wip=read_wip,
@@ -2783,6 +2828,7 @@ async def _execute_list_reference_systems_tool(request: Request, arguments: dict
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
+@_guard_mcp_execution("identify_reference_system")
 async def _execute_identify_reference_system_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "identify_reference_system")
@@ -2821,7 +2867,9 @@ async def _execute_identify_reference_system_tool(request: Request, arguments: d
         from mapmover.runtime.reference_identification import identify_reference_system
 
         runtime_started = time.perf_counter()
-        result = identify_reference_system(
+        result = await run_mcp_blocking(
+            "identify_reference_system",
+            identify_reference_system,
             identifiers,
             expected=payload.get("expected"),
             country_scope=payload.get("country_scope"),
@@ -2858,6 +2906,7 @@ async def _execute_identify_reference_system_tool(request: Request, arguments: d
     return _jsonrpc_response(_tool_result(result_payload, is_error=not allowed), rpc_request_id)
 
 
+@_guard_mcp_execution("read_geometry_catalog")
 async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "read_geometry_catalog")
@@ -2892,7 +2941,9 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
         from mapmover.runtime.reference_exchange import read_geometry_catalog
 
         runtime_started = time.perf_counter()
-        result = read_geometry_catalog(
+        result = await run_mcp_blocking(
+            "read_geometry_catalog",
+            read_geometry_catalog,
             view=view,
             limit=payload.get("limit"),
             country_scope=payload.get("country_scope"),
@@ -2961,6 +3012,7 @@ async def _execute_read_geometry_catalog_tool(request: Request, arguments: dict[
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
+@_guard_mcp_execution("resolve_reference")
 async def _execute_resolve_reference_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "resolve_reference")
@@ -2999,19 +3051,13 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
             access_error["batch_id"] = batch_id
             return _jsonrpc_response(_tool_result(access_error, is_error=True), rpc_request_id)
         runtime_started = time.perf_counter()
-        results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
-                continue
-            row_payload = {**base_payload, **item}
-            result = _resolve_reference_item(row_payload)
-            if item.get("row_index") is not None:
-                result["row_index"] = item.get("row_index")
-            elif item.get("id") is not None:
-                result["id"] = item.get("id")
-            results.append(result)
+        results = await run_mcp_blocking(
+            "resolve_reference",
+            _resolve_reference_items,
+            items,
+            base_payload,
+        )
         stages = {"crosswalk_lookup_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
@@ -3077,7 +3123,8 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
                 response.headers[key] = value
         return response
     runtime_started = time.perf_counter()
-    result = {"request_id": request_id, **_resolve_reference_item(payload)}
+    item = await run_mcp_blocking("resolve_reference", _resolve_reference_item, payload)
+    result = {"request_id": request_id, **item}
     stages = {"crosswalk_lookup_ms": _elapsed_ms(runtime_started)}
     if not result.get("ok"):
         result["error"] = _normalize_tool_error(
@@ -3150,6 +3197,7 @@ def _resolve_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "from_system": from_system, "input": value, "error": {"code": "resolve_reference_failed", "message": str(exc)}}
 
 
+@_guard_mcp_execution("convert_reference")
 async def _execute_convert_reference_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "convert_reference")
@@ -3188,19 +3236,13 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
             access_error["batch_id"] = batch_id
             return _jsonrpc_response(_tool_result(access_error, is_error=True), rpc_request_id)
         runtime_started = time.perf_counter()
-        results = []
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
-                continue
-            row_payload = {**base_payload, **item}
-            result = _convert_reference_item(row_payload)
-            if item.get("row_index") is not None:
-                result["row_index"] = item.get("row_index")
-            elif item.get("id") is not None:
-                result["id"] = item.get("id")
-            results.append(result)
+        results = await run_mcp_blocking(
+            "convert_reference",
+            _convert_reference_items,
+            items,
+            base_payload,
+        )
         stages = {"conversion_lookup_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
@@ -3266,7 +3308,8 @@ async def _execute_convert_reference_tool(request: Request, arguments: dict[str,
                 response.headers[key] = value
         return response
     runtime_started = time.perf_counter()
-    result = {"request_id": request_id, **_convert_reference_item(payload)}
+    item = await run_mcp_blocking("convert_reference", _convert_reference_item, payload)
+    result = {"request_id": request_id, **item}
     stages = {"conversion_lookup_ms": _elapsed_ms(runtime_started)}
     if not result.get("ok"):
         result["error"] = _normalize_tool_error(
@@ -3360,6 +3403,49 @@ def _compare_geographies_item(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": {"code": "compare_geographies_failed", "message": str(exc)}}
 
 
+def _resolve_reference_items(items: list[Any], base_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+            continue
+        result = _resolve_reference_item({**base_payload, **item})
+        if item.get("row_index") is not None:
+            result["row_index"] = item.get("row_index")
+        elif item.get("id") is not None:
+            result["id"] = item.get("id")
+        results.append(result)
+    return results
+
+
+def _convert_reference_items(items: list[Any], base_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+            continue
+        result = _convert_reference_item({**base_payload, **item})
+        if item.get("row_index") is not None:
+            result["row_index"] = item.get("row_index")
+        elif item.get("id") is not None:
+            result["id"] = item.get("id")
+        results.append(result)
+    return results
+
+
+def _compare_geographies_items(items: list[Any], base_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
+            continue
+        result = dict(_compare_geographies_item({**base_payload, **item}))
+        result["row_index"] = item.get("row_index", item.get("id", index))
+        results.append(result)
+    return results
+
+
+@_guard_mcp_execution("compare_geographies")
 async def _execute_compare_geographies_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "compare_geographies")
@@ -3383,15 +3469,13 @@ async def _execute_compare_geographies_tool(request: Request, arguments: dict[st
             )
             return _jsonrpc_response(_tool_result(result_payload, is_error=True), rpc_request_id)
         base_payload = {key: value for key, value in payload.items() if key not in {"items", "request_id", "batch_id"}}
-        results = []
         runtime_started = time.perf_counter()
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                results.append({"row_index": index, "ok": False, "error": {"code": "invalid_item", "message": "each item must be an object"}})
-                continue
-            result = dict(_compare_geographies_item({**base_payload, **item}))
-            result["row_index"] = item.get("row_index", item.get("id", index))
-            results.append(result)
+        results = await run_mcp_blocking(
+            "compare_geographies",
+            _compare_geographies_items,
+            items,
+            base_payload,
+        )
         result_payload = {
             "request_id": request_id,
             "batch_id": batch_id,
@@ -3428,7 +3512,8 @@ async def _execute_compare_geographies_tool(request: Request, arguments: dict[st
         return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
     runtime_started = time.perf_counter()
-    result = {"request_id": request_id, **_compare_geographies_item(payload)}
+    item = await run_mcp_blocking("compare_geographies", _compare_geographies_item, payload)
+    result = {"request_id": request_id, **item}
     ok = bool(result.get("ok"))
     _log_mcp_tool_usage_event(
         request,
@@ -3457,6 +3542,7 @@ async def _execute_compare_geographies_tool(request: Request, arguments: dict[st
     return _jsonrpc_response(_tool_result(result, is_error=not ok), rpc_request_id)
 
 
+@_guard_mcp_execution("get_geometry")
 async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "get_geometry")
@@ -3518,7 +3604,13 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
             from mapmover.runtime.reference_exchange import get_geometry_references
 
             runtime_started = time.perf_counter()
-            result = get_geometry_references(loc_ids, include_polygon=include_polygon, include_info=include_info)
+            result = await run_mcp_blocking(
+                "get_geometry",
+                get_geometry_references,
+                loc_ids,
+                include_polygon=include_polygon,
+                include_info=include_info,
+            )
             stages = {"geometry_fetch_ms": _elapsed_ms(runtime_started)}
         except Exception as exc:
             error_payload = _batch_error_payload(request_id=request_id, batch_id=batch_id, code="get_geometry_failed", message=str(exc), loc_id_count=len(loc_ids))
@@ -3599,7 +3691,9 @@ async def _execute_get_geometry_tool(request: Request, arguments: dict[str, Any]
         from mapmover.runtime.reference_exchange import get_geometry_reference
 
         runtime_started = time.perf_counter()
-        result = get_geometry_reference(loc_id, include_polygon=include_polygon)
+        result = await run_mcp_blocking(
+            "get_geometry", get_geometry_reference, loc_id, include_polygon=include_polygon
+        )
         stages = {"geometry_fetch_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "get_geometry_failed", "message": str(exc)}}
@@ -3931,6 +4025,7 @@ async def _execute_geometry_job_runtime_tool(request: Request, arguments: dict[s
     return response
 
 
+@_guard_mcp_execution("check_geometry")
 async def _execute_check_geometry_tool(request: Request, arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     started_at = time.perf_counter()
     payload = _ensure_request_id(arguments, "check_geometry")
@@ -4001,7 +4096,9 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
             from mapmover.runtime.reference_exchange import get_geometry_availability
 
             runtime_started = time.perf_counter()
-            result = get_geometry_availability([str(loc_id) for loc_id in loc_ids])
+            result = await run_mcp_blocking(
+                "check_geometry", get_geometry_availability, [str(loc_id) for loc_id in loc_ids]
+            )
             stages = {"geometry_availability_ms": _elapsed_ms(runtime_started)}
         except Exception as exc:
             _stamp_mcp_tool_analytics(
@@ -4101,7 +4198,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
         from mapmover.runtime.reference_exchange import get_geometry_availability
 
         runtime_started = time.perf_counter()
-        result = get_geometry_availability([loc_id])
+        result = await run_mcp_blocking("check_geometry", get_geometry_availability, [loc_id])
         stages = {"geometry_availability_ms": _elapsed_ms(runtime_started)}
     except Exception as exc:
         error_payload = {"request_id": request_id, "error": {"code": "check_geometry_failed", "message": str(exc)}}
@@ -4171,7 +4268,9 @@ def _normalize_crosswalk_share(value: Any) -> float | None:
 async def _execute_live_volcano_tool(arguments: dict[str, Any], rpc_request_id: Any) -> Response:
     payload = _ensure_request_id(arguments, "get_live_volcano_events")
     try:
-        result = fetch_live_volcanoes(
+        result = await run_mcp_blocking(
+            "get_live_volcano_events",
+            fetch_live_volcanoes,
             request_id=str(payload.get("request_id") or ""),
             days=payload.get("days"),
             start_time=payload.get("start_time"),

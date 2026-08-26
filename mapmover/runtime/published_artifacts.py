@@ -197,6 +197,25 @@ def artifact_cache_revalidate_seconds() -> int:
         return 300
 
 
+def artifact_cache_eviction_grace_seconds() -> int:
+    """Minimum age before a cached path may be unlinked.
+
+    ``path_to_uri`` hands local paths to DuckDB after releasing the cache lock.
+    Without a grace window, a concurrent hydration can evict that path between
+    resolution and ``read_parquet()``, producing a missing-file race.  The
+    grace is longer than the hosted query budget; when no old entry is safe to
+    evict, hydration simply falls back to the authoritative S3 URI.
+    """
+
+    try:
+        return max(
+            0,
+            int(os.environ.get("PUBLISHED_ARTIFACT_CACHE_EVICTION_GRACE_SECONDS", "120")),
+        )
+    except (TypeError, ValueError):
+        return 120
+
+
 def _cache_eligible(ref: PublishedArtifactRef) -> bool:
     if not artifact_cache_enabled():
         _CACHE_STATS["bypassed_disabled"] += 1
@@ -340,8 +359,14 @@ def _evict_for(entries: dict[str, dict[str, Any]], incoming_bytes: int, *, keep_
     if quota <= 0 or incoming_bytes > quota:
         return False
     existing_bytes = sum(int(entry.get("bytes") or 0) for entry in entries.values())
+    safe_before = time.time() - artifact_cache_eviction_grace_seconds()
     candidates = sorted(
-        ((key, entry) for key, entry in entries.items() if key != keep_key),
+        (
+            (key, entry)
+            for key, entry in entries.items()
+            if key != keep_key
+            and float(entry.get("last_accessed") or 0) <= safe_before
+        ),
         key=lambda item: (float(item[1].get("last_accessed") or 0), item[0]),
     )
     for key, _entry in candidates:
@@ -487,6 +512,7 @@ def artifact_cache_status() -> dict[str, Any]:
             "quota_bytes": artifact_cache_quota_bytes(),
             "max_file_bytes": artifact_cache_max_file_bytes(),
             "revalidate_seconds": artifact_cache_revalidate_seconds(),
+            "eviction_grace_seconds": artifact_cache_eviction_grace_seconds(),
             **_CACHE_STATS,
         }
 
