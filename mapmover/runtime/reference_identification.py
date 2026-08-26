@@ -475,9 +475,24 @@ def identify_reference_system(
             candidate["source_levels"] = evidence.get("source_levels") or []
             candidates.append(candidate)
 
-    for candidate in _reference_graph_candidates(values, country_scope=country):
-        if not expected_system or candidate["system"] == expected_system:
-            candidates.append(candidate)
+    # An explicitly declared system with complete maintained adapter evidence
+    # does not need a second lookup through the reference graph. That graph
+    # search exists to discover or corroborate an unknown/partial system; in a
+    # hosted cold process it can otherwise hydrate alias partitions across the
+    # object store after the answer is already known.
+    expected_system_fully_matched = bool(expected_system) and any(
+        candidate.get("system") == expected_system
+        and candidate.get("match_count") == len(values)
+        and candidate.get("method") in {
+            "exact_identifier_crosswalk",
+            "typed_external_equivalence",
+        }
+        for candidate in candidates
+    )
+    if not expected_system_fully_matched:
+        for candidate in _reference_graph_candidates(values, country_scope=country):
+            if not expected_system or candidate["system"] == expected_system:
+                candidates.append(candidate)
 
     # Merge duplicate systems while preferring the candidate with more exact
     # evidence. This can occur when a graph alias and a format adapter agree.
