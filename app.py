@@ -293,7 +293,12 @@ async def lifespan(app: FastAPI):
         from mapmover.paths import GLOBAL_DIR
         tasks = ["control_catalogs", "public_pack_catalog", "api_catalog"]
         if is_cloud_mode():
-            tasks.extend(["disasters", "catalog_default_loads", "geometry"])
+            tasks.extend(["catalog_default_loads", "geometry"])
+            # Disaster overlays are broad, multi-source reads. Keep them out
+            # of startup readiness; a scheduled warmer can opt in after the
+            # process is healthy.
+            if os.environ.get("PREWARM_DISASTERS", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                tasks.append("disasters")
         begin_prewarm(tasks)
 
         def prewarm_control_then_public_catalog() -> None:
@@ -320,7 +325,7 @@ async def lifespan(app: FastAPI):
             name="prewarm-api-catalog",
         )
         t_api_catalog.start()
-        if is_cloud_mode():
+        if is_cloud_mode() and os.environ.get("PREWARM_DISASTERS", "0").strip().lower() in {"1", "true", "yes", "on"}:
             t_disaster = threading.Thread(
                 target=run_prewarm_task,
                 args=("disasters", prewarm_disaster_sources, GLOBAL_DIR),
