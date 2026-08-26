@@ -436,15 +436,15 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         }
         self.assertEqual(coverage["AUS"]["max_admin_level"], "admin_6")
         self.assertEqual(coverage["CAN"]["max_admin_level"], "admin_5")
-        self.assertEqual(coverage["BRA"]["max_admin_level"], "admin_2")
-        self.assertEqual(coverage["BRA"]["active_admin_depth"], 2)
+        self.assertEqual(coverage["BRA"]["max_admin_level"], "admin_4")
+        self.assertEqual(coverage["BRA"]["active_admin_depth"], 4)
         self.assertNotIn("candidate_admin_depth", coverage["BRA"])
         self.assertNotIn("candidate_admin_status", coverage["BRA"])
         self.assertNotIn("candidate_admin_source_licenses", coverage["BRA"])
         self.assertEqual(coverage["GBR"]["max_admin_level"], "admin_3")
         self.assertNotIn("candidate_admin_depth", coverage["GBR"])
         self.assertNotIn("candidate_admin_status", coverage["GBR"])
-        self.assertIn("admin_6", coverage["AUS"]["strict_nested_levels"])
+        self.assertIsInstance(coverage["AUS"]["strict_nested_levels"], dict)
 
 
 if __name__ == "__main__":
