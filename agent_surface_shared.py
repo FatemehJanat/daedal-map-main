@@ -80,7 +80,7 @@ def facade_transport_lines(app_origin: str) -> str:
 
 
 def geography_tools_section(app_origin: str) -> str:
-    """Registry-driven markdown block for the free geography/utility tool families.
+    """Registry-driven markdown block for geography/utility tool families.
 
     Tool families (e.g. geography) are not data packs, so they are not in
     published_pack_ids(); they are surfaced here from tool_family_ids() so the
@@ -99,6 +99,21 @@ def geography_tools_section(app_origin: str) -> str:
             f"  - also reachable on the umbrella `{base}/mcp`; no payment required"
         )
     return "\n".join(blocks)
+
+
+def geography_workflow_section() -> str:
+    """Return question-first instructions for the current geography MCP roster."""
+    return (
+        "1. New to the family: call `how_geometry_works`, then `get_tool_help` for the exact tool you choose.\n"
+        "2. What geography exists in a country: call `read_geometry_catalog` with `view=capabilities` and `country_scope=<ISO3>`.\n"
+        "3. What usable crosswalks exist: call `list_reference_systems`; a catalog family alone does not promise a conversion path.\n"
+        "4. Point to loc_id: call `resolve_point`. For a bounded batch use `points`, one `country_scope`, and one `target_admin_level`; split deep all-country work by country and Admin1 owner.\n"
+        "5. Outside code or name to loc_id: call `resolve_reference`. If the input system is unknown, call `identify_reference_system` first. Use `convert_reference` only when another reference system is the desired output.\n"
+        "6. What a loc_id is connected to: call `loc_id_info` with `include_references=true`; add `include_hierarchy=true` for its strict stored ancestry. The same tool accepts bounded `loc_ids`.\n"
+        "7. Shape lookup: call `check_geometry` for availability, then `get_geometry`. Metadata, bbox, and centroid are the default; set `include_polygon=true` only when shape coordinates are needed. Group large calls by country, level, and Admin1 owner.\n"
+        "8. Relationship between two loc_ids: call `compare_geographies`. For descendants under one parent and level, call `resolve_loc_id_scope`.\n"
+        "9. Bounded advanced operations: `estimate_geometry_package` -> `create_geometry_export`, or `estimate_conversion_job` -> `create_conversion_job`; read a completed bounded result with `get_job_status`. Durable queued artifacts remain a future builder capability."
+    )
 
 
 def pack_sentence() -> str:
@@ -134,10 +149,10 @@ def agent_ai_plugin_description_for_model(*, app_origin: str, docs_origin: str, 
     base += (
         "All packs share a loc_id key (ISO3 for countries, hierarchical for sub-national) "
         "enabling cross-pack joins on a single column with no geography normalization. "
-        "Free geography tools use loc_id as the reserve identifier: list_reference_systems, "
-        "resolve_reference, convert_reference, check_geometry, get_geometry, resolve_point, "
-        "and loc_id_info. Use loc_ids on check_geometry/get_geometry/loc_id_info or points "
-        "on resolve_point for bounded batches. "
+        "Geography tools use loc_id as the reserve identifier. Start with how_geometry_works, "
+        "read_geometry_catalog for country and family coverage, or list_reference_systems for "
+        "usable crosswalks. Use identify_reference_system when an input column is unknown. "
+        "resolve_point, loc_id_info, check_geometry, and get_geometry accept bounded batches. "
         "request_id is optional but recommended for tracing and idempotency. "
         f"{free_vs_paid_sentence()}"
     )
@@ -180,6 +195,8 @@ def render_app_llms_txt() -> str:
         "## Geography utility tools (free)\n"
         "Free loc_id-spine tools: reverse geocode coordinates to administrative areas, fetch boundaries, and walk the loc_id hierarchy. Map any spatial reference onto the same loc_id the data packs use.\n"
         f"{geography_tools_section('https://app.daedalmap.com')}\n\n"
+        "### Choose the tool by question\n"
+        f"{geography_workflow_section()}\n\n"
         "## App UI\n"
         "- Human-facing app: https://app.daedalmap.com\n"
         "- Website and docs: https://daedalmap.com\n"
@@ -237,6 +254,8 @@ def render_site_llms_txt(*, app_origin: str = "https://app.daedalmap.com", site_
         "## Geography utility tools (free)\n\n"
         "A free utility tool family on the loc_id spine - reverse geocode coordinates, fetch boundaries, and walk the loc_id hierarchy to map any spatial reference onto the same loc_id the data packs use.\n\n"
         f"{geography_tools_section(app_origin)}\n\n"
+        "### Choose the tool by question\n\n"
+        f"{geography_workflow_section()}\n\n"
         "## Current live contract\n\n"
         "- MCP discovery first is valid: read `server.json`, then call `tools/list`, then use a named tool or `query_dataset`\n"
         "- Free discovery first: `guide`, `catalog`, and pack detail\n"
@@ -309,6 +328,8 @@ def render_site_llms_full(*, app_origin: str = "https://app.daedalmap.com", site
         "## Geography utility tools (free)\n\n"
         "Beyond the data packs, DaedalMap exposes a free geography/geocoding utility family on the loc_id spine. These are free tools, not a queryable dataset pack: reverse geocode coordinates to administrative areas, fetch boundaries and bounding boxes, and walk the loc_id hierarchy. They are the on-ramp that maps any spatial reference onto the same loc_id the paid data packs use.\n\n"
         f"{geography_tools_section(app_origin)}\n\n"
+        "### Choose the tool by question\n\n"
+        f"{geography_workflow_section()}\n\n"
         "## Registry summary\n\n"
         "DaedalMap is a remote MCP server and hosted geographic data API for deterministic,\n"
         f"geography-aware queries across curated packs: {pack_sentence()}.\n"
