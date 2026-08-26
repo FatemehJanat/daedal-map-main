@@ -100,7 +100,7 @@ _ADAPTERS = {
             "overture_gers_county", "overture_gers_region",
         ),
         identifier_pattern=r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-        pointer_path="geometry/bridges/gers/external_reference/overture_gers/current.json",
+        pointer_path="geometry/external_references/overture_gers/current.json",
         external_id_column="gers_division_id",
         internal_id_column="loc_id",
         source_release_column="overture_release",

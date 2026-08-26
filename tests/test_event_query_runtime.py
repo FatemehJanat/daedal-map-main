@@ -208,10 +208,10 @@ class EventQueryRuntimeTests(unittest.TestCase):
 
         self.assertEqual([row["latitude"] for row in rows], [1.0, 2.0])
 
-    def test_dataset_query_expands_declared_sidechain_admin_bridge(self):
+    def test_dataset_query_expands_declared_family_admin_crosswalk(self):
         with tempfile.TemporaryDirectory() as tmp:
             source_path = Path(tmp) / "classification.parquet"
-            bridge_path = Path(tmp) / "overlay_tribal_to_admin_3_USA.parquet"
+            crosswalk_path = Path(tmp) / "overlay_tribal_to_admin_3_USA.parquet"
             pd.DataFrame(
                 [
                     {"loc_id": "USA-AZ-005-945000", "year": 2024, "disadvantaged": True},
@@ -239,7 +239,7 @@ class EventQueryRuntimeTests(unittest.TestCase):
                         "is_primary": True,
                         "primary_policy": "largest_source_area_share",
                         "source_centroid_target_loc_id": "USA-AZ-005-945000",
-                        "bridge_vintage": "test",
+                        "relationship_vintage": "test",
                         "area_crs": "EPSG:5070",
                     },
                     {
@@ -260,11 +260,11 @@ class EventQueryRuntimeTests(unittest.TestCase):
                         "is_primary": False,
                         "primary_policy": "largest_source_area_share",
                         "source_centroid_target_loc_id": "USA-AZ-005-945000",
-                        "bridge_vintage": "test",
+                        "relationship_vintage": "test",
                         "area_crs": "EPSG:5070",
                     },
                 ]
-            ).to_parquet(bridge_path, index=False)
+            ).to_parquet(crosswalk_path, index=False)
             spec = ApiSourceSpec(
                 source_id="cejst_classification",
                 pack_id="cejst",
@@ -282,12 +282,12 @@ class EventQueryRuntimeTests(unittest.TestCase):
                 },
                 filterable_fields={"loc_id", "year", "disadvantaged"},
                 sortable_fields={"loc_id", "year", "disadvantaged"},
-                sidechain_admin_bridges=(
+                family_admin_crosswalks=(
                     {
                         "source_family": "overlay_tribal",
                         "target_admin_level": "admin_3",
                         "iso3": "USA",
-                        "bridge_path": str(bridge_path),
+                        "crosswalk_path": str(crosswalk_path),
                     },
                 ),
             )

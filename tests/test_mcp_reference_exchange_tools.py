@@ -78,8 +78,8 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertNotIn("loc_id_references", tool_names)
         self.assertNotIn("get_boundary", tool_names)
         self.assertNotIn("loc_id_hierarchy", tool_names)
-        self.assertNotIn("sidechain_to_admin", tool_names)
-        self.assertNotIn("admin_to_sidechain", tool_names)
+        self.assertNotIn("family_to_admin", tool_names)
+        self.assertNotIn("admin_to_family", tool_names)
 
     def test_geography_facade_has_pre_one_registry_identity(self) -> None:
         envelope = _mcp_call(
@@ -912,7 +912,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                         },
                     }
                 ],
-                "bridge_artifacts": [{"source_family": "overlay_zcta", "status": "complete"}],
+                "crosswalk_artifacts": [{"source_family": "overlay_zcta", "status": "complete"}],
                 "geometry_collections": [],
                 "release_packages": [],
                 "resolver_groups": [],
@@ -1104,7 +1104,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 return_value={
                     "ok": True,
                     "systems": [{"system": "daedalmap.loc_id"}, {"system": "overlay_zcta"}],
-                    "bridges": [],
+                    "crosswalk_artifacts": [],
                 },
             ),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
@@ -1164,7 +1164,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["normalized_input"], "USA-Z-00601")
         self.assertEqual(payload["resolved_loc_id"], "USA-PR-001")
-        self.assertEqual(payload["match_type"], "bridge_overlap")
+        self.assertEqual(payload["match_type"], "crosswalk_overlap")
 
     def test_resolve_reference_tool_selects_historical_identity_as_of_date(self) -> None:
         payload = _tool_call(
@@ -1204,7 +1204,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(payload["resolved_count"], 1)
         self.assertEqual(payload["unresolved_count"], 1)
         # The real analytics rows carry compute.input_count/output_count and
-        # bridge_lookup_ms; other tests assert the shared shape with mocks.
+        # crosswalk_lookup_ms; other tests assert the shared shape with mocks.
 
     def test_resolve_reference_tool_uses_per_tool_batch_limit_override(self) -> None:
         with mock.patch.dict("os.environ", {"MCP_TOOL_BATCH_LIMIT_RESOLVE_REFERENCE": "1"}):
@@ -1223,7 +1223,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         with (
             mock.patch(
                 "mapmover.runtime.reference_exchange.resolve_reference",
-                return_value={"ok": False, "from_system": "zip", "input": "not-real", "error": "no bridge artifact found"},
+                return_value={"ok": False, "from_system": "zip", "input": "not-real", "error": "no crosswalk artifact found"},
             ),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
@@ -1235,7 +1235,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "not_found")
-        self.assertEqual(payload["error"]["message"], "no bridge artifact found")
+        self.assertEqual(payload["error"]["message"], "no crosswalk artifact found")
         self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
 
     def test_convert_reference_tool_composes_through_loc_id(self) -> None:
@@ -1284,7 +1284,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         with (
             mock.patch(
                 "mapmover.runtime.reference_exchange.convert_reference",
-                return_value={"ok": False, "from_system": "zip", "input": "not-real", "to_system": "nws_fire", "error": "no bridge artifact found"},
+                return_value={"ok": False, "from_system": "zip", "input": "not-real", "to_system": "nws_fire", "error": "no crosswalk artifact found"},
             ),
             mock.patch("mapmover.routes.mcp.log_api_query_event") as analytics_mock,
         ):
@@ -1296,7 +1296,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "not_found")
-        self.assertEqual(payload["error"]["message"], "no bridge artifact found")
+        self.assertEqual(payload["error"]["message"], "no crosswalk artifact found")
         self.assertEqual(analytics_mock.call_args.kwargs["error_code"], "not_found")
 
     def test_convert_reference_tool_rejects_empty_target_results(self) -> None:
@@ -1766,10 +1766,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertEqual(row["daedalmap_source_vintage"], "census_2020")
         self.assertIsNone(created["artifact"])
 
-    def test_large_conversion_coalesces_distinct_bridge_requests(self) -> None:
+    def test_large_conversion_coalesces_distinct_crosswalk_requests(self) -> None:
         items = [{"value": f"postal-{index:03d}"} for index in range(25)]
         batched = [
-            {"ok": True, "resolved_loc_id": f"USA-CA-{index:03d}", "match_type": "bridge_overlap"}
+            {"ok": True, "resolved_loc_id": f"USA-CA-{index:03d}", "match_type": "crosswalk_overlap"}
             for index in range(25)
         ]
         with (

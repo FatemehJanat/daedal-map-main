@@ -102,7 +102,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertNotIn("overlay_zcta", systems)
         self.assertIn("us_census_geoid", payload["concurring_systems"])
 
-    def test_retired_usa_sidechain_ids_fetch_canonical_graph_shapes(self) -> None:
+    def test_retired_usa_family_ids_fetch_canonical_graph_shapes(self) -> None:
         payload = get_geometry_references(
             ["USA-Z-10035", "USA-TRIBAL-2430"],
             include_polygon=False,
@@ -170,7 +170,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertIn("us_census_geoid", systems)
         self.assertIn("overlay_zcta", systems)
         self.assertIn("overlay_nws_fire_weather_zone", systems)
-        self.assertGreaterEqual(len(payload["bridges"]), 1)
+        self.assertGreaterEqual(len(payload["crosswalk_artifacts"]), 1)
 
     def test_country_reference_listing_returns_canonical_actionable_crosswalks(self) -> None:
         payload = list_reference_systems(country_scope="USA")
@@ -194,7 +194,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
                 "callable": True,
             }],
             "reference_systems": [],
-            "bridge_artifacts": [],
+            "crosswalk_artifacts": [],
             "geometry_families": [],
         }
         with (
@@ -230,7 +230,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertTrue(all(item["crosswalk_id"] for item in payload["results"]))
         self.assertTrue(all(item["relationship_vintage"] == "census_2020" for item in payload["results"]))
 
-    def test_resolve_zip_alias_to_loc_id_uses_bridge_overlap(self) -> None:
+    def test_resolve_zip_alias_to_loc_id_uses_crosswalk_overlap(self) -> None:
         payload = resolve_reference(
             from_system="zip",
             value="00601",
@@ -241,11 +241,11 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["normalized_input"], "USA-Z-00601")
         self.assertEqual(payload["resolved_loc_id"], "USA-PR-001")
-        self.assertEqual(payload["match_type"], "bridge_overlap")
+        self.assertEqual(payload["match_type"], "crosswalk_overlap")
         self.assertGreaterEqual(payload["match_count"], 1)
         self.assertEqual(payload["matches"][0]["target"]["loc_id"], "USA-PR-001")
 
-    def test_resolve_noaa_fire_zone_alias_to_loc_id_uses_bridge_overlap(self) -> None:
+    def test_resolve_noaa_fire_zone_alias_to_loc_id_uses_crosswalk_overlap(self) -> None:
         payload = resolve_reference(
             from_system="nws_fire",
             value="AKZ317",
@@ -258,7 +258,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["resolved_loc_id"], "USA-AK-282")
         self.assertEqual(payload["matches"][0]["source"]["family"], "overlay_nws_fire_weather_zone")
 
-    def test_loc_id_references_returns_reverse_sidechain_overlaps(self) -> None:
+    def test_loc_id_references_returns_reverse_family_overlaps(self) -> None:
         payload = loc_id_references(
             "USA-PR-001",
             systems=["zcta"],
@@ -311,7 +311,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["results"], [])
         self.assertEqual(payload["error"]["code"], "unsupported_target_system")
 
-    def test_unknown_bridge_system_returns_clean_error(self) -> None:
+    def test_unknown_crosswalk_system_returns_clean_error(self) -> None:
         payload = resolve_reference(
             from_system="huc",
             value="01080201",
@@ -319,7 +319,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         )
 
         self.assertFalse(payload["ok"])
-        self.assertIn("no bridge artifact", payload["error"])
+        self.assertIn("no crosswalk artifact", payload["error"])
 
     def test_historical_country_resolution_is_time_scoped(self) -> None:
         in_2000 = resolve_reference(from_system="iso3166_3", value="YUG", as_of="2000")
@@ -333,20 +333,20 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
             {"SRB", "MNE"},
         )
 
-    def test_cloud_mode_keeps_catalog_bridge_artifacts_without_local_file(self) -> None:
+    def test_cloud_mode_keeps_catalog_crosswalk_artifacts_without_local_file(self) -> None:
         artifact = {
             "status": "complete",
             "source_family": "overlay_zcta",
             "target_admin_level": "admin_2",
-            "artifact_path": "published/geometry/bridges/overlay_zcta_to_admin_2_USA.parquet",
+            "artifact_path": "published/geometry/countries/USA/crosswalks/measured/overlay_zcta_to_admin_2_USA.parquet",
             "row_count": 10,
-            "bridge_vintage": "usa_geometry_current",
+            "relationship_vintage": "usa_geometry_current",
         }
         with (
-            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"bridge_artifacts": [artifact]}),
+            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"crosswalk_artifacts": [artifact]}),
             mock.patch("mapmover.runtime.reference_exchange.is_cloud_mode", return_value=True),
         ):
-            artifacts = reference_exchange._bridge_artifacts(
+            artifacts = reference_exchange._crosswalk_artifacts(
                 source_family="zip",
                 target_admin_level="admin_2",
                 iso3="USA",
@@ -354,19 +354,19 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
 
         self.assertEqual(artifacts, [artifact])
 
-    def test_bridge_family_alias_selects_the_underlying_artifact(self) -> None:
+    def test_crosswalk_family_alias_selects_the_underlying_artifact(self) -> None:
         artifact = {
             "status": "complete",
             "source_family": "overlay_zcta",
             "source_family_aliases": ["postal_area"],
             "target_admin_level": "admin_2",
-            "artifact_path": "published/geometry/bridges/overlay_zcta_to_admin_2_USA.parquet",
+            "artifact_path": "published/geometry/countries/USA/crosswalks/measured/overlay_zcta_to_admin_2_USA.parquet",
         }
         with (
-            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"bridge_artifacts": [artifact]}),
+            mock.patch("mapmover.runtime.reference_exchange.load_geometry_catalog", return_value={"crosswalk_artifacts": [artifact]}),
             mock.patch("mapmover.runtime.reference_exchange.is_cloud_mode", return_value=True),
         ):
-            artifacts = reference_exchange._bridge_artifacts(
+            artifacts = reference_exchange._crosswalk_artifacts(
                 source_family="postal_area",
                 target_admin_level="admin_2",
                 iso3="USA",
@@ -396,7 +396,7 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
     def test_listed_systems_declare_whether_they_are_actually_exchangeable(self) -> None:
         listing = list_reference_systems()
         systems = {row["system"]: row for row in listing["systems"]}
-        bridged = {str(row.get("source_system") or "") for row in listing["bridges"]}
+        connected = {str(row.get("source_system") or "") for row in listing["crosswalk_artifacts"]}
 
         for system in systems.values():
             self.assertIn("exchangeable", system, f"{system['system']} must declare exchangeability")
@@ -405,34 +405,34 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         self.assertEqual(systems[LOC_ID_SYSTEM]["exchange_via"], "reserve")
         self.assertTrue(systems["us_census_geoid"]["exchangeable"])
 
-        for name in bridged:
+        for name in connected:
             if name in systems:
-                self.assertTrue(systems[name]["exchangeable"], f"{name} owns a bridge and must be exchangeable")
-                self.assertEqual(systems[name]["exchange_via"], "bridge_artifact")
+                self.assertTrue(systems[name]["exchangeable"], f"{name} owns a crosswalk and must be exchangeable")
+                self.assertEqual(systems[name]["exchange_via"], "crosswalk_artifact")
 
-        # A family with no bridge and no self-resolving resolver cannot be
+        # A family with no crosswalk and no self-resolving resolver cannot be
         # converted, so it must not be advertised as if it could be.
         for system in systems.values():
             if system.get("exchangeable"):
                 continue
-            self.assertNotIn(system["system"], bridged)
+            self.assertNotIn(system["system"], connected)
             self.assertIsNone(system["exchange_via"])
-            self.assertEqual(system["exchange_status"], "no_bridge_artifact")
+            self.assertEqual(system["exchange_status"], "no_crosswalk_artifact")
 
         self.assertEqual(
             listing["exchangeable_count"] + listing["listed_only_count"],
             listing["system_count"],
         )
 
-    def test_self_resolving_families_stay_exchangeable_without_a_bridge(self) -> None:
+    def test_self_resolving_families_stay_exchangeable_without_a_crosswalk(self) -> None:
         listing = list_reference_systems()
         systems = {row["system"]: row for row in listing["systems"]}
-        bridged = {str(row.get("source_system") or "") for row in listing["bridges"]}
+        connected = {str(row.get("source_system") or "") for row in listing["crosswalk_artifacts"]}
 
         for name in ("water_body", "admin_boundary"):
             if name not in systems:
                 continue
-            self.assertNotIn(name, bridged)
+            self.assertNotIn(name, connected)
             self.assertTrue(systems[name]["exchangeable"])
             self.assertEqual(systems[name]["exchange_via"], "self_resolving_geometry")
 

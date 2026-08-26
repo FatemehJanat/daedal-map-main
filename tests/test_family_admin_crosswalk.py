@@ -1,10 +1,10 @@
 import pandas as pd
 
-from mapmover.runtime.sidechain_admin_bridge import resolve_sidechain_to_admin
+from mapmover.runtime.family_admin_crosswalk import resolve_family_to_admin
 
 
-def test_identity_bridge_without_overlap_metrics_is_supported(tmp_path) -> None:
-    bridge_path = tmp_path / "identity_bridge.parquet"
+def test_identity_crosswalk_without_overlap_metrics_is_supported(tmp_path) -> None:
+    crosswalk_path = tmp_path / "identity_crosswalk.parquet"
     pd.DataFrame([{
         "source_family": "ibge_municipality",
         "source_loc_id": "3550308",
@@ -15,15 +15,15 @@ def test_identity_bridge_without_overlap_metrics_is_supported(tmp_path) -> None:
         "target_name": "Sao Paulo",
         "is_primary": True,
         "primary_policy": "representative_point",
-        "bridge_vintage": "2022",
-    }]).to_parquet(bridge_path, index=False)
+        "relationship_vintage": "2022",
+    }]).to_parquet(crosswalk_path, index=False)
 
-    payload = resolve_sidechain_to_admin(
+    payload = resolve_family_to_admin(
         "3550308",
         source_family="ibge_municipality",
         target_admin_level="admin_2",
         iso3="BRA",
-        bridge_path=bridge_path,
+        crosswalk_path=crosswalk_path,
     )
 
     assert payload["ok"] is True

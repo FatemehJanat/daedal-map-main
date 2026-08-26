@@ -1,6 +1,6 @@
 """Internal geometry crosswalk lookup helpers.
 
-This module keeps Census bridge and crosswalk artifacts queryable from both
+This module keeps Census crosswalk artifacts queryable from both
 local data roots and cloud/R2 runtime mode. It intentionally does not define a
 public API or MCP contract; those surfaces should wrap this helper later.
 """
@@ -15,12 +15,14 @@ import pandas as pd
 
 from ..duckdb_helpers import is_cloud_mode, select_rows
 from ..paths import DATA_ROOT
-from .sidechain_admin_bridge import admin_level_name
+from .family_admin_crosswalk import admin_level_name
 
 
-CENSUS_BRIDGE_ROOT = DATA_ROOT / "geometry" / "bridges" / "census"
-CENSUS_CROSSWALK_ROOT = DATA_ROOT / "geometry" / "crosswalks" / "census"
-CENSUS_ZCTA_BRIDGE_MANIFEST = CENSUS_BRIDGE_ROOT / "census_zcta_bridge_manifest.json"
+CENSUS_CROSSWALK_ROOT = (
+    DATA_ROOT / "geometry" / "countries" / "USA" / "crosswalks" / "official" / "census"
+)
+CENSUS_ZCTA_CROSSWALK_ROOT = CENSUS_CROSSWALK_ROOT
+CENSUS_ZCTA_CROSSWALK_MANIFEST = CENSUS_CROSSWALK_ROOT / "census_zcta_crosswalk_manifest.json"
 CENSUS_CROSSWALK_MANIFEST = CENSUS_CROSSWALK_ROOT / "census_geometry_crosswalk_manifest.json"
 
 
@@ -155,9 +157,9 @@ def _manifest_relative_artifact(entry: dict[str, Any], root: Path) -> Path:
 
 
 @lru_cache(maxsize=4)
-def load_census_zcta_bridge_manifest() -> dict[str, Any]:
-    if CENSUS_ZCTA_BRIDGE_MANIFEST.exists():
-        with CENSUS_ZCTA_BRIDGE_MANIFEST.open("r", encoding="utf-8") as f:
+def load_census_zcta_crosswalk_manifest() -> dict[str, Any]:
+    if CENSUS_ZCTA_CROSSWALK_MANIFEST.exists():
+        with CENSUS_ZCTA_CROSSWALK_MANIFEST.open("r", encoding="utf-8") as f:
             return json.load(f)
     return {"schema_version": "1.0.0", "status": "missing", "artifacts": []}
 
@@ -193,16 +195,16 @@ def list_census_crosswalks() -> list[dict[str, Any]]:
     return out
 
 
-def census_zcta_bridge_path(*, target_admin_level: str | int, iso3: str = "USA") -> Path:
+def census_zcta_crosswalk_path(*, target_admin_level: str | int, iso3: str = "USA") -> Path:
     level = admin_level_name(target_admin_level)
     country = str(iso3 or "USA").strip().upper()
-    manifest = load_census_zcta_bridge_manifest()
+    manifest = load_census_zcta_crosswalk_manifest()
     for entry in manifest.get("artifacts") or []:
         if not isinstance(entry, dict):
             continue
         if entry.get("target_admin_level") == level:
-            return _manifest_relative_artifact(entry, CENSUS_BRIDGE_ROOT)
-    return CENSUS_BRIDGE_ROOT / f"census_zcta_to_{level}_{country}.parquet"
+            return _manifest_relative_artifact(entry, CENSUS_ZCTA_CROSSWALK_ROOT)
+    return CENSUS_ZCTA_CROSSWALK_ROOT / f"census_zcta_to_{level}_{country}.parquet"
 
 
 def census_crosswalk_path(
@@ -251,7 +253,7 @@ def resolve_census_zcta_to_admin(
     """Resolve a ZCTA to ranked admin-spine matches using Census files."""
     normalized_source = normalize_zcta_loc_id(source_loc_id, iso3=iso3)
     target_level = admin_level_name(target_admin_level)
-    path = census_zcta_bridge_path(target_admin_level=target_level, iso3=iso3)
+    path = census_zcta_crosswalk_path(target_admin_level=target_level, iso3=iso3)
     rows = _read_filtered_rows(path, {"source_loc_id": normalized_source})
     rows = _sort_limit(rows, sort_col="source_area_share", min_share=min_source_area_share, limit=limit)
     matches = [_row_payload(row) for _, row in rows.iterrows()]
@@ -279,7 +281,7 @@ def resolve_census_admin_to_zctas(
 ) -> dict[str, Any]:
     """Resolve an admin loc_id to ranked overlapping ZCTAs using Census files."""
     target_level = admin_level_name(target_admin_level)
-    path = census_zcta_bridge_path(target_admin_level=target_level, iso3=iso3)
+    path = census_zcta_crosswalk_path(target_admin_level=target_level, iso3=iso3)
     rows = _read_filtered_rows(path, {"target_loc_id": str(target_loc_id or "").strip()})
     rows = _sort_limit(rows, sort_col="target_area_share", min_share=min_target_area_share, limit=limit)
     matches = [_row_payload(row) for _, row in rows.iterrows()]

@@ -1075,7 +1075,7 @@ def get_server_description(pack_id: str | None = None) -> str:
         return (
             f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE} {coverage_prefix}"
             "The calling LLM translates the user's natural-language request into strict tool JSON; geometry execution tools do not accept prose unless a schema explicitly says they do. Call get_tool_help before an unfamiliar tool. On error, inspect error, warnings, guidance, and clarification; ask the user only when clarification.required is true. "
-            "Start with free discovery: call read_geometry_catalog with view='capabilities' for the current global baseline and catalog-admitted country enrichment; use its focused inventory views for admin depths, shape-backed families, bridges, named geometries, and package availability. Then call list_reference_systems to see supported exchange systems, bridge vintages, counts, and license/source context. "
+            "Start with free discovery: call read_geometry_catalog with view='capabilities' for the current global baseline and catalog-admitted country enrichment; use its focused inventory views for admin depths, shape-backed families, crosswalks, named geometries, and package availability. Then call list_reference_systems to see supported exchange systems, relationship vintages, counts, and license/source context. "
             "For coordinates, call resolve_point with lat/lon or points; it returns only the compact complete latest-available chain and defaults to the deepest served tier. Do not request geometry or relationship detail in that call. "
             "When the caller asks for details about that chain, pass its stack loc_ids to loc_id_info; use get_geometry only for shapes and compare_geographies only for overlap, topology, validity, or successor questions. Mixed-vintage point context is not strict parentage. "
             "For a user dataset with unknown or informally declared geography keys, call identify_reference_system on representative or all distinct identifiers, then pass an unambiguous geography_binding to the conversion-job tools. For one known outside geography code or name, call resolve_reference. For bulk geometry, call resolve_loc_id_scope only for one strict hierarchy, then estimate_geometry_package before create_geometry_export. "
@@ -1196,7 +1196,7 @@ def _provenance_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "license": "licenses",
         "license_id": "licenses",
         "source_license": "licenses",
-        "bridge_artifact": "artifacts",
+        "crosswalk_artifact": "artifacts",
         "artifact_id": "artifacts",
         "artifact_path": "artifacts",
     }
@@ -2690,8 +2690,8 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                     systems=systems,
                     iso3=payload.get("iso3"),
                     target_admin_level=payload.get("target_admin_level"),
-                    min_share=_normalize_bridge_share(payload.get("min_share")),
-                    limit_per_system=_normalize_bridge_limit(payload.get("limit_per_system")) or 10,
+                    min_share=_normalize_crosswalk_share(payload.get("min_share")),
+                    limit_per_system=_normalize_crosswalk_limit(payload.get("limit_per_system")) or 10,
                 )
                 result["references"] = references
                 if isinstance(references.get("references"), list):
@@ -3009,7 +3009,7 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
             elif item.get("id") is not None:
                 result["id"] = item.get("id")
             results.append(result)
-        stages = {"bridge_lookup_ms": _elapsed_ms(runtime_started)}
+        stages = {"crosswalk_lookup_ms": _elapsed_ms(runtime_started)}
         result_payload = {
             "request_id": request_id,
             "batch_id": batch_id,
@@ -3075,7 +3075,7 @@ async def _execute_resolve_reference_tool(request: Request, arguments: dict[str,
         return response
     runtime_started = time.perf_counter()
     result = {"request_id": request_id, **_resolve_reference_item(payload)}
-    stages = {"bridge_lookup_ms": _elapsed_ms(runtime_started)}
+    stages = {"crosswalk_lookup_ms": _elapsed_ms(runtime_started)}
     if not result.get("ok"):
         result["error"] = _normalize_tool_error(
             result.get("error"),
@@ -3136,9 +3136,9 @@ def _resolve_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
             value=value,
             iso3=str(payload.get("iso3") or "USA"),
             target_admin_level=payload.get("target_admin_level", "admin_2"),
-            bridge_vintage=payload.get("bridge_vintage"),
-            min_share=_normalize_bridge_share(payload.get("min_share")),
-            limit=_normalize_bridge_limit(payload.get("limit")) or 10,
+            relationship_vintage=payload.get("relationship_vintage"),
+            min_share=_normalize_crosswalk_share(payload.get("min_share")),
+            limit=_normalize_crosswalk_limit(payload.get("limit")) or 10,
             country_hint=payload.get("country_hint"),
             admin_level_hint=payload.get("admin_level_hint"),
             as_of=payload.get("as_of"),
@@ -3327,9 +3327,9 @@ def _convert_reference_item(payload: dict[str, Any]) -> dict[str, Any]:
             to_system=to_system,
             iso3=str(payload.get("iso3") or "USA"),
             target_admin_level=payload.get("target_admin_level", "admin_2"),
-            bridge_vintage=payload.get("bridge_vintage"),
-            min_share=_normalize_bridge_share(payload.get("min_share")),
-            limit=_normalize_bridge_limit(payload.get("limit")) or 10,
+            relationship_vintage=payload.get("relationship_vintage"),
+            min_share=_normalize_crosswalk_share(payload.get("min_share")),
+            limit=_normalize_crosswalk_limit(payload.get("limit")) or 10,
         )
     except Exception as exc:
         return {"ok": False, "from_system": from_system, "input": value, "to_system": to_system, "error": {"code": "convert_reference_failed", "message": str(exc)}}
@@ -4145,7 +4145,7 @@ async def _execute_check_geometry_tool(request: Request, arguments: dict[str, An
     return _jsonrpc_response(_tool_result(result_payload), rpc_request_id)
 
 
-def _normalize_bridge_limit(value: Any) -> int | None:
+def _normalize_crosswalk_limit(value: Any) -> int | None:
     if value is None or value == "":
         return None
     try:
@@ -4155,7 +4155,7 @@ def _normalize_bridge_limit(value: Any) -> int | None:
     return max(1, min(limit, 100))
 
 
-def _normalize_bridge_share(value: Any) -> float | None:
+def _normalize_crosswalk_share(value: Any) -> float | None:
     if value is None or value == "":
         return None
     try:

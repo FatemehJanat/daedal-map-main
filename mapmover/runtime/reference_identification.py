@@ -19,7 +19,7 @@ from .external_reference_adapters import (
     external_system_aliases,
     identifier_matches,
 )
-from .sidechain_admin_bridge import admin_level_name
+from .family_admin_crosswalk import admin_level_name
 
 
 US_CENSUS_GEOID_SYSTEM = "us_census_geoid"

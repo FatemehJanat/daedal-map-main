@@ -57,7 +57,7 @@ class ApiSourceSpec:
     delimited_hierarchical_filter_fields: tuple[str, ...] = ()
     derive_usa_iso3166_2_prefixes: bool = False
     filter_value_aliases: dict[str, dict[str, tuple[Any, ...]]] = field(default_factory=dict)
-    sidechain_admin_bridges: tuple[dict[str, Any], ...] = ()
+    family_admin_crosswalks: tuple[dict[str, Any], ...] = ()
     default_limit: int = DEFAULT_LIMIT
     max_limit: int = MAX_LIMIT
     metadata_source_id: str | None = None
@@ -540,7 +540,7 @@ def _metadata_filter_value_aliases(
     )
 
 
-def _normalize_sidechain_admin_bridges(value: Any) -> tuple[dict[str, Any], ...]:
+def _normalize_family_admin_crosswalks(value: Any) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     normalized: list[dict[str, Any]] = []
@@ -551,25 +551,25 @@ def _normalize_sidechain_admin_bridges(value: Any) -> tuple[dict[str, Any], ...]
         target_admin_level = str(item.get("target_admin_level") or "").strip()
         if not source_family or not target_admin_level:
             continue
-        bridge: dict[str, Any] = {
+        crosswalk: dict[str, Any] = {
             "source_family": source_family,
             "target_admin_level": target_admin_level,
         }
         if item.get("iso3"):
-            bridge["iso3"] = str(item.get("iso3") or "").strip().upper()
-        if item.get("bridge_path"):
-            bridge["bridge_path"] = str(item.get("bridge_path") or "").strip()
+            crosswalk["iso3"] = str(item.get("iso3") or "").strip().upper()
+        if item.get("crosswalk_path"):
+            crosswalk["crosswalk_path"] = str(item.get("crosswalk_path") or "").strip()
         if item.get("min_source_area_share") is not None:
             try:
-                bridge["min_source_area_share"] = float(item.get("min_source_area_share"))
+                crosswalk["min_source_area_share"] = float(item.get("min_source_area_share"))
             except (TypeError, ValueError):
                 pass
         if item.get("limit") is not None:
             try:
-                bridge["limit"] = int(item.get("limit"))
+                crosswalk["limit"] = int(item.get("limit"))
             except (TypeError, ValueError):
                 pass
-        normalized.append(bridge)
+        normalized.append(crosswalk)
     return tuple(normalized)
 
 
@@ -700,27 +700,27 @@ def _expand_hierarchical_prefixes_for_spec(spec: ApiSourceSpec, prefixes: list[s
         if spec.derive_usa_iso3166_2_prefixes or prefix.upper().startswith("USA-"):
             for alias in _usa_admin1_aliases_for_region_id(prefix):
                 append_candidate(alias)
-        for bridge in spec.sidechain_admin_bridges:
-            source_family = str(bridge.get("source_family") or "").strip()
+        for crosswalk in spec.family_admin_crosswalks:
+            source_family = str(crosswalk.get("source_family") or "").strip()
             if not source_family:
                 continue
             try:
                 from .runtime.geography_reference import classify_loc_id_family
-                from .runtime.sidechain_admin_bridge import resolve_sidechain_to_admin
+                from .runtime.family_admin_crosswalk import resolve_family_to_admin
             except Exception:
                 continue
             if classify_loc_id_family(prefix) != source_family:
                 continue
-            bridge_path_raw = str(bridge.get("bridge_path") or "").strip()
-            bridge_path = Path(bridge_path_raw) if bridge_path_raw else None
-            result = resolve_sidechain_to_admin(
+            crosswalk_path_raw = str(crosswalk.get("crosswalk_path") or "").strip()
+            crosswalk_path = Path(crosswalk_path_raw) if crosswalk_path_raw else None
+            result = resolve_family_to_admin(
                 prefix,
                 source_family=source_family,
-                target_admin_level=str(bridge.get("target_admin_level") or "").strip(),
-                iso3=str(bridge.get("iso3") or "USA").strip().upper(),
-                bridge_path=bridge_path,
-                min_source_area_share=bridge.get("min_source_area_share"),
-                limit=bridge.get("limit"),
+                target_admin_level=str(crosswalk.get("target_admin_level") or "").strip(),
+                iso3=str(crosswalk.get("iso3") or "USA").strip().upper(),
+                crosswalk_path=crosswalk_path,
+                min_source_area_share=crosswalk.get("min_source_area_share"),
+                limit=crosswalk.get("limit"),
             )
             for overlap in result.get("overlaps") or []:
                 append_candidate(overlap.get("match_loc_id"))
@@ -916,9 +916,9 @@ def _build_dynamic_source_spec(source_id: str) -> ApiSourceSpec | None:
             "derive_usa_iso3166_2_prefixes",
         ),
         filter_value_aliases=_metadata_filter_value_aliases(metadata, source_defaults),
-        sidechain_admin_bridges=_normalize_sidechain_admin_bridges(
-            metadata.get("sidechain_admin_bridges")
-            or source_defaults.get("sidechain_admin_bridges")
+        family_admin_crosswalks=_normalize_family_admin_crosswalks(
+            metadata.get("family_admin_crosswalks")
+            or source_defaults.get("family_admin_crosswalks")
         ),
         default_limit=int(metadata.get("default_limit") or source_defaults["default_limit"]),
         max_limit=int(metadata.get("max_limit") or source_defaults["max_limit"]),

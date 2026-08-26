@@ -1,7 +1,7 @@
 """Internal geographic reference exchange helpers.
 
 This module treats ``loc_id`` as the reserve geographic identifier and every
-external or adjacent geography family as a reference system that can be bridged
+external or adjacent geography family as a reference system that can be connected
 to or from it. Public MCP tools should wrap these functions instead of carrying
 their own ZIP, NWS, tribal, or admin-specific conversion logic.
 """
@@ -44,11 +44,11 @@ from .external_reference_adapters import (
 )
 from .geography_relationships import resolve_historical_country_reference
 from .loc_id_resolution import resolve_admin_text_to_loc_id
-from .sidechain_admin_bridge import (
+from .family_admin_crosswalk import (
     admin_level_name,
-    resolve_admin_to_sidechains,
-    resolve_sidechain_to_admin,
-    resolve_sidechains_to_admin,
+    resolve_admin_to_family,
+    resolve_family_to_admin,
+    resolve_family_ids_to_admin,
 )
 
 
@@ -356,15 +356,15 @@ def _first_populated(mapping: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _catalog_bridge_path(artifact: dict[str, Any]) -> Path | None:
+def _catalog_crosswalk_path(artifact: dict[str, Any]) -> Path | None:
     rel = str(artifact.get("artifact_path") or "").strip()
     if not rel:
         return None
     return DATA_ROOT / rel
 
 
-def _bridge_source_names(artifact: dict[str, Any]) -> set[str]:
-    """Return every normalized family name that may select a bridge."""
+def _crosswalk_source_names(artifact: dict[str, Any]) -> set[str]:
+    """Return every normalized family name that may select a crosswalk."""
     values = [artifact.get("source_family"), *(artifact.get("source_family_aliases") or [])]
     return {
         _normalize_system(str(value))
@@ -373,35 +373,35 @@ def _bridge_source_names(artifact: dict[str, Any]) -> set[str]:
     }
 
 
-def _bridge_artifacts(
+def _crosswalk_artifacts(
     *,
     source_family: str | None = None,
     target_admin_level: int | str | None = None,
     iso3: str | None = None,
-    bridge_vintage: str | None = None,
+    relationship_vintage: str | None = None,
 ) -> list[dict[str, Any]]:
     source = _normalize_system(source_family) if source_family else None
     level = admin_level_name(target_admin_level) if target_admin_level not in (None, "") else None
     country = str(iso3 or "").strip().upper()
-    vintage = str(bridge_vintage or "").strip()
+    vintage = str(relationship_vintage or "").strip()
     out: list[dict[str, Any]] = []
-    for artifact in load_geometry_catalog().get("bridge_artifacts") or []:
+    for artifact in load_geometry_catalog().get("crosswalk_artifacts") or []:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
             continue
-        if source and source not in _bridge_source_names(artifact):
+        if source and source not in _crosswalk_source_names(artifact):
             continue
         if level and str(artifact.get("target_admin_level") or "").strip().lower() != level:
             continue
-        path = _catalog_bridge_path(artifact)
+        path = _catalog_crosswalk_path(artifact)
         if country and path and f"_{country.lower()}.parquet" not in path.name.lower():
             continue
-        if vintage and str(artifact.get("bridge_vintage") or "") != vintage:
+        if vintage and str(artifact.get("relationship_vintage") or "") != vintage:
             continue
         if path and (path.exists() or is_cloud_mode()):
             out.append(artifact)
     out.sort(
         key=lambda item: (
-            str(item.get("bridge_vintage") or "") != "usa_geometry_current",
+            str(item.get("relationship_vintage") or "") != "usa_geometry_current",
             -int(item.get("row_count") or 0),
             str(item.get("artifact_path") or ""),
         )
@@ -409,8 +409,8 @@ def _bridge_artifacts(
     return out
 
 
-def _first_bridge_artifact(**filters: Any) -> dict[str, Any] | None:
-    artifacts = _bridge_artifacts(**filters)
+def _first_crosswalk_artifact(**filters: Any) -> dict[str, Any] | None:
+    artifacts = _crosswalk_artifacts(**filters)
     return artifacts[0] if artifacts else None
 
 
@@ -427,11 +427,11 @@ def _normalize_source_loc_id(source_family: str, value: str, iso3: str) -> str:
     return text
 
 
-"""Resolvers that reach loc_id on their own, without a bridge artifact.
+"""Resolvers that reach loc_id on their own, without a crosswalk artifact.
 
 A family carrying one of these answers name and point lookups directly, so it
-stays exchangeable even though it owns no bridge row. Every other geometry or
-reference-graph family needs a built bridge before a conversion can succeed.
+stays exchangeable even though it owns no crosswalk row. Every other geometry or
+reference-graph family needs a built crosswalk before a conversion can succeed.
 """
 SELF_RESOLVING_RESOLVERS = frozenset({
     "named geometry catalog",
@@ -443,7 +443,7 @@ _ALWAYS_EXCHANGEABLE_ROLES = frozenset({
 })
 
 
-def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> None:
+def _mark_exchangeability(system: dict[str, Any], crosswalk_systems: set[str]) -> None:
     """Record whether a listed system can actually be converted through loc_id.
 
     Listing a family the conversion tools will refuse sends agents into
@@ -453,9 +453,9 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
     role = str(system.get("role") or "")
     resolver = str(system.get("resolver") or "").strip().lower()
     name = str(system.get("system") or "")
-    if name in bridged_systems:
+    if name in crosswalk_systems:
         system["exchangeable"] = True
-        system["exchange_via"] = "bridge_artifact"
+        system["exchange_via"] = "crosswalk_artifact"
         return
     if resolver in SELF_RESOLVING_RESOLVERS:
         system["exchangeable"] = True
@@ -472,7 +472,7 @@ def _mark_exchangeability(system: dict[str, Any], bridged_systems: set[str]) -> 
         return
     system["exchangeable"] = False
     system["exchange_via"] = None
-    system["exchange_status"] = "no_bridge_artifact"
+    system["exchange_status"] = "no_crosswalk_artifact"
 
 
 def _resolve_eez_by_country(text: str) -> dict[str, Any] | None:
@@ -556,7 +556,7 @@ def _direct_crosswalk_matches(
         key=lambda item: str(item.get("source_system") or "") != source_system,
     )
     for record in ordered_records:
-        if record.get("execution_strategy") not in {"direct_relationship_artifact", "admin_bridge"}:
+        if record.get("execution_strategy") not in {"direct_relationship_artifact", "measured_relationship_artifact"}:
             continue
         forward = str(record.get("source_system") or "") == source_system
         reverse = str(record.get("target_system") or "") == source_system
@@ -611,7 +611,7 @@ def list_reference_systems(
     *, country_scope: str | None = None, include_crosswalks: bool = True,
     read_wip: bool = False,
 ) -> dict[str, Any]:
-    """Return the currently discoverable reference systems and bridges."""
+    """Return the currently discoverable reference systems and crosswalks."""
     catalog = load_geometry_catalog()
     country = str(country_scope or "").strip().upper()
     systems: dict[str, dict[str, Any]] = {
@@ -730,9 +730,9 @@ def list_reference_systems(
     except Exception:
         pass
 
-    bridges = []
-    bridged_systems: set[str] = set()
-    for artifact in catalog.get("bridge_artifacts") or []:
+    crosswalks = []
+    crosswalk_systems: set[str] = set()
+    for artifact in catalog.get("crosswalk_artifacts") or []:
         if not isinstance(artifact, dict) or str(artifact.get("status") or "") != "complete":
             continue
         artifact_path = str(artifact.get("artifact_path") or "")
@@ -744,24 +744,24 @@ def list_reference_systems(
         level = str(artifact.get("target_admin_level") or "").strip()
         # A family renamed by the area-depth migration answers to both names.
         # Without this the canonical name looks unreachable even though its
-        # bridge exists and is complete.
+        # crosswalk exists and is complete.
         for alias in artifact.get("source_family_aliases") or []:
             alias_name = str(alias).strip()
             if alias_name:
-                bridged_systems.add(alias_name)
+                crosswalk_systems.add(alias_name)
         if source:
-            bridged_systems.add(source)
+            crosswalk_systems.add(source)
             systems.setdefault(source, {
                 "system": source,
                 "label": source.replace("_", " ").title(),
                 "role": "reference_system",
             })
-        bridges.append({
+        crosswalks.append({
             "source_system": source,
             "target_system": LOC_ID_SYSTEM,
             "target_family": artifact.get("target_family"),
             "target_admin_level": level,
-            "bridge_vintage": artifact.get("bridge_vintage"),
+            "relationship_vintage": artifact.get("relationship_vintage"),
             "row_count": artifact.get("row_count"),
             "source_count": artifact.get("source_count"),
             "target_count": artifact.get("target_count"),
@@ -770,7 +770,7 @@ def list_reference_systems(
         })
 
     for system in systems.values():
-        _mark_exchangeability(system, bridged_systems)
+        _mark_exchangeability(system, crosswalk_systems)
     ordered = sorted(systems.values(), key=lambda row: (not row.get("exchangeable"), str(row.get("system") or "")))
     exchangeable_count = sum(1 for row in ordered if row.get("exchangeable"))
     return _clean_json({
@@ -782,11 +782,11 @@ def list_reference_systems(
         "listed_only_count": len(ordered) - exchangeable_count,
         "exchangeability_note": (
             "A system is exchangeable only when it has a real resolution path: the loc_id reserve, an exact "
-            "identifier crosswalk, a self-resolving named or admin geometry resolver, or a complete bridge "
+            "identifier crosswalk, a self-resolving named or admin geometry resolver, or a complete crosswalk "
             "artifact to loc_id. Systems with exchangeable=false are discoverable geometry or reference-graph "
-            "families with no built bridge; resolve_reference and convert_reference will refuse them."
+            "families with no built crosswalk; resolve_reference and convert_reference will refuse them."
         ),
-        "bridges": bridges,
+        "crosswalk_artifacts": crosswalks,
         "country_scope": country or None,
         "active_data_plane": "cloud" if is_cloud_mode() else "local",
         "crosswalks": canonical_crosswalks if include_crosswalks else [],
@@ -817,7 +817,7 @@ def _geometry_catalog_counts(catalog: dict[str, Any], *, read_wip: bool = False)
             "geometry_collections",
             "geometry_banks",
             "geometry_families",
-            "bridge_artifacts",
+            "crosswalk_artifacts",
             "crosswalks",
             "reference_systems",
             "geometry_products",
@@ -914,9 +914,9 @@ def _geometry_catalog_admin_coverage(catalog: dict[str, Any], *, read_wip: bool 
     return rows
 
 
-def _geometry_catalog_bridges(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
+def _geometry_catalog_crosswalk_artifacts(catalog: dict[str, Any], *, read_wip: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for artifact in _geometry_catalog_records(catalog, "bridge_artifacts", read_wip=read_wip):
+    for artifact in _geometry_catalog_records(catalog, "crosswalk_artifacts", read_wip=read_wip):
         if not isinstance(artifact, dict):
             continue
         source_license = artifact.get("source_license") if isinstance(artifact.get("source_license"), dict) else {}
@@ -925,7 +925,7 @@ def _geometry_catalog_bridges(catalog: dict[str, Any], *, read_wip: bool = False
             "target_system": LOC_ID_SYSTEM,
             "target_family": artifact.get("target_family"),
             "target_admin_level": artifact.get("target_admin_level"),
-            "bridge_vintage": artifact.get("bridge_vintage"),
+            "relationship_vintage": artifact.get("relationship_vintage"),
             "status": artifact.get("status"),
             "row_count": artifact.get("row_count"),
             "source_count": artifact.get("source_count"),
@@ -1047,8 +1047,11 @@ def read_geometry_catalog(
         return _clean_json({**base, "admin_coverage": _geometry_catalog_admin_coverage(catalog, read_wip=read_wip)})
     if selected_view == "countries":
         return _clean_json({**base, "countries": _geometry_catalog_countries(catalog, read_wip=read_wip)})
-    if selected_view == "bridges":
-        return _clean_json({**base, "bridges": _geometry_catalog_bridges(catalog, read_wip=read_wip)})
+    if selected_view == "crosswalk_artifacts":
+        return _clean_json({
+            **base,
+            "crosswalk_artifacts": _geometry_catalog_crosswalk_artifacts(catalog, read_wip=read_wip),
+        })
     if selected_view == "crosswalks":
         records = _geometry_catalog_records(catalog, "crosswalks", read_wip=read_wip)
         if selected_country:
@@ -1080,7 +1083,7 @@ def read_geometry_catalog(
                 "geometry_collections": _public_catalog_records(catalog, "geometry_collections"),
                 "geometry_families": _public_catalog_records(catalog, "geometry_families"),
                 "geometry_banks": _public_catalog_records(catalog, "geometry_banks"),
-                "bridge_artifacts": _public_catalog_records(catalog, "bridge_artifacts"),
+                "crosswalk_artifacts": _public_catalog_records(catalog, "crosswalk_artifacts"),
                 "reference_systems": _public_catalog_records(catalog, "reference_systems"),
                 "crosswalks": _public_catalog_records(catalog, "crosswalks"),
                 "resolver_groups": _public_catalog_records(catalog, "resolver_groups"),
@@ -1092,7 +1095,7 @@ def read_geometry_catalog(
         "ok": False,
         "error": {
             "code": "invalid_view",
-            "message": "view must be one of capabilities, summary, countries, admin_coverage, bridges, crosswalks, products, named_reference_objects, or full",
+            "message": "view must be one of capabilities, summary, countries, admin_coverage, crosswalk_artifacts, crosswalks, products, named_reference_objects, or full",
         },
     })
 
@@ -1158,7 +1161,7 @@ def resolve_reference(
     value: str,
     iso3: str = "USA",
     target_admin_level: int | str | None = "admin_2",
-    bridge_vintage: str | None = None,
+    relationship_vintage: str | None = None,
     min_share: float | None = None,
     limit: int | None = 10,
     country_hint: str | None = None,
@@ -1180,7 +1183,7 @@ def resolve_reference(
         payload = resolve_external_reference(
             system,
             text,
-            # `iso3` historically defaults to USA for admin bridges, so using
+            # `iso3` defaults to USA for family/admin crosswalks, so using
             # it here would silently filter a Canadian external id. Only the
             # explicit country hint may constrain an external adapter.
             country_scope=country_hint or None,
@@ -1281,11 +1284,11 @@ def resolve_reference(
         return _clean_json(_direct_loc_id_result(text, request_system=system))
 
     level = admin_level_name(target_admin_level or "admin_2")
-    artifact = _first_bridge_artifact(
+    artifact = _first_crosswalk_artifact(
         source_family=system,
         target_admin_level=level,
         iso3=iso3,
-        bridge_vintage=bridge_vintage,
+        relationship_vintage=relationship_vintage,
     )
     if not artifact:
         direct_record, direct_matches = _direct_crosswalk_matches(
@@ -1333,15 +1336,15 @@ def resolve_reference(
             "ok": False,
             "from_system": system,
             "input": value,
-            "error": f"no bridge artifact found for {system} -> {level}",
+            "error": f"no crosswalk artifact found for {system} -> {level}",
         }
     source_loc_id = _normalize_source_loc_id(system, text, iso3)
-    result = resolve_sidechain_to_admin(
+    result = resolve_family_to_admin(
         source_loc_id,
         source_family=system,
         target_admin_level=level,
         iso3=iso3,
-        bridge_path=_catalog_bridge_path(artifact),
+        crosswalk_path=_catalog_crosswalk_path(artifact),
         min_source_area_share=min_share,
         limit=limit,
     )
@@ -1354,13 +1357,13 @@ def resolve_reference(
         "resolved_loc_id": primary.get("match_loc_id"),
         "resolved_family": "admin_boundary" if primary.get("match_loc_id") else None,
         "match_type": (
-            "bridge_overlap"
+            "crosswalk_overlap"
             if primary.get("source_area_share") is not None
-            else "bridge_identity"
+            else "crosswalk_identity"
         ),
-        "bridge": {
+        "crosswalk": {
             "artifact_path": artifact.get("artifact_path"),
-            "bridge_vintage": artifact.get("bridge_vintage"),
+            "relationship_vintage": artifact.get("relationship_vintage"),
             "target_admin_level": level,
         },
         "primary_match": primary,
@@ -1371,11 +1374,11 @@ def resolve_reference(
 
 
 def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Resolve reference requests while scanning each shared bridge only once.
+    """Resolve reference requests while scanning each shared crosswalk only once.
 
     Direct IDs, names, aliases, historical references, and family-to-family
     conversions retain their existing single-request paths. Only homogeneous
-    sidechain-to-admin bridge work is coalesced.
+    family-to-admin crosswalk work is coalesced.
     """
     results: list[dict[str, Any] | None] = [None] * len(requests)
     groups: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
@@ -1389,11 +1392,11 @@ def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, A
             continue
         level = admin_level_name(request.get("target_admin_level") or "admin_2")
         iso3 = str(request.get("iso3") or "USA").strip().upper()
-        artifact = _first_bridge_artifact(
+        artifact = _first_crosswalk_artifact(
             source_family=system,
             target_admin_level=level,
             iso3=iso3,
-            bridge_vintage=request.get("bridge_vintage"),
+            relationship_vintage=request.get("relationship_vintage"),
         )
         if not artifact:
             results[index] = resolve_reference(**request)
@@ -1402,7 +1405,7 @@ def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, A
             system,
             level,
             iso3,
-            str(_catalog_bridge_path(artifact) or ""),
+            str(_catalog_crosswalk_path(artifact) or ""),
             request.get("min_share"),
             int(request.get("limit") or 10),
         )
@@ -1413,35 +1416,35 @@ def resolve_references_batch(requests: list[dict[str, Any]]) -> list[dict[str, A
             _normalize_source_loc_id(system, str(request.get("value") or "").strip(), iso3)
             for _, request in members
         ]
-        batched = resolve_sidechains_to_admin(
+        batched = resolve_family_ids_to_admin(
             normalized,
             source_family=system,
             target_admin_level=level,
             iso3=iso3,
-            bridge_path=Path(artifact_path),
+            crosswalk_path=Path(artifact_path),
             min_source_area_share=min_share,
             limit=limit,
         )
         for (index, request), source_loc_id in zip(members, normalized):
-            bridge_result = batched.get(source_loc_id) or {}
-            primary = bridge_result.get("primary_match") or {}
+            crosswalk_result = batched.get(source_loc_id) or {}
+            primary = crosswalk_result.get("primary_match") or {}
             results[index] = _clean_json({
-                "ok": bool(bridge_result.get("ok")),
+                "ok": bool(crosswalk_result.get("ok")),
                 "from_system": system,
                 "input": request.get("value"),
                 "normalized_input": source_loc_id,
                 "resolved_loc_id": primary.get("match_loc_id"),
                 "resolved_family": "admin_boundary" if primary.get("match_loc_id") else None,
-                "match_type": "bridge_overlap",
-                "bridge": {
+                "match_type": "crosswalk_overlap",
+                "crosswalk": {
                     "artifact_path": str(Path(artifact_path).relative_to(DATA_ROOT)).replace("\\", "/") if artifact_path else None,
-                    "bridge_vintage": (primary or {}).get("bridge_vintage"),
+                    "relationship_vintage": (primary or {}).get("relationship_vintage"),
                     "target_admin_level": level,
                 },
                 "primary_match": primary,
-                "matches": bridge_result.get("overlaps") or [],
-                "match_count": bridge_result.get("overlap_count") or 0,
-                "error": bridge_result.get("error"),
+                "matches": crosswalk_result.get("overlaps") or [],
+                "match_count": crosswalk_result.get("overlap_count") or 0,
+                "error": crosswalk_result.get("error"),
             })
     return [result or {"ok": False, "error": "batch resolution produced no result"} for result in results]
 
@@ -1482,7 +1485,7 @@ def loc_id_references(
     inferred_level = infer_admin_level_from_loc_id(canonical)
     level = admin_level_name(target_admin_level if target_admin_level not in (None, "") else inferred_level)
     # The reserve id is authoritative for its own country. `iso3` retains a
-    # historical USA default for bridge calls and must not filter a CAN/BRA
+    # historical USA default for crosswalk calls and must not filter a CAN/BRA
     # reverse external-reference lookup out of existence.
     loc_country = canonical.split("-", 1)[0] if "-" in canonical else ""
     country = str(loc_country or iso3 or "").strip().upper()
@@ -1517,21 +1520,21 @@ def loc_id_references(
                 "geometry_confidence": edge.geometry_confidence,
             })
     if family in {"admin_0", "admin_local", "admin_geometry"} or inferred_level is not None:
-        for artifact in _bridge_artifacts(target_admin_level=level, iso3=country or None):
+        for artifact in _crosswalk_artifacts(target_admin_level=level, iso3=country or None):
             source = str(artifact.get("source_family") or "").strip()
             if get_external_adapter(source):
                 continue
-            source_names = _bridge_source_names(artifact)
+            source_names = _crosswalk_source_names(artifact)
             requested_names = sorted(requested & source_names)
             if requested and not requested_names:
                 continue
             output_system = requested_names[0] if requested_names else source
-            result = resolve_admin_to_sidechains(
+            result = resolve_admin_to_family(
                 canonical,
                 source_family=source,
                 target_admin_level=level,
                 iso3=country or "USA",
-                bridge_path=_catalog_bridge_path(artifact),
+                crosswalk_path=_catalog_crosswalk_path(artifact),
                 min_target_area_share=min_share,
                 limit=limit_per_system,
             )
@@ -1539,11 +1542,11 @@ def loc_id_references(
                 source_ref = overlap.get("source") or {}
                 references.append({
                     "system": output_system,
-                    "bridge_source_system": source,
+                    "crosswalk_source_system": source,
                     "value": source_ref.get("loc_id"),
                     "name": source_ref.get("name"),
-                    "role": "bridge_overlap",
-                    "bridge_vintage": overlap.get("bridge_vintage"),
+                    "role": "crosswalk_overlap",
+                    "relationship_vintage": overlap.get("relationship_vintage"),
                     "match_share": overlap.get("match_share"),
                     "match_rank": overlap.get("match_rank"),
                     "is_primary": overlap.get("is_primary"),
@@ -1603,7 +1606,7 @@ def convert_reference(
     to_system: str,
     iso3: str = "USA",
     target_admin_level: int | str | None = "admin_2",
-    bridge_vintage: str | None = None,
+    relationship_vintage: str | None = None,
     min_share: float | None = None,
     limit: int | None = 10,
     source_release: str | None = None,
@@ -1637,7 +1640,7 @@ def convert_reference(
         value=value,
         iso3=iso3,
         target_admin_level=target_admin_level,
-        bridge_vintage=bridge_vintage,
+        relationship_vintage=relationship_vintage,
         min_share=min_share,
         limit=limit,
         source_release=source_release,

@@ -788,7 +788,7 @@ async def resolve_reference_endpoint(req: Request):
             value=str(value),
             iso3=str(body.get("iso3") or "USA"),
             target_admin_level=body.get("target_admin_level", "admin_2"),
-            bridge_vintage=body.get("bridge_vintage"),
+            relationship_vintage=body.get("relationship_vintage"),
             min_share=body.get("min_share"),
             limit=body.get("limit", 10),
             country_hint=body.get("country_hint"),
@@ -849,7 +849,7 @@ async def convert_reference_endpoint(req: Request):
             to_system=str(to_system),
             iso3=str(body.get("iso3") or "USA"),
             target_admin_level=body.get("target_admin_level", "admin_2"),
-            bridge_vintage=body.get("bridge_vintage"),
+            relationship_vintage=body.get("relationship_vintage"),
             min_share=body.get("min_share"),
             limit=body.get("limit", 10),
         )

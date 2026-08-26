@@ -1417,7 +1417,7 @@ def _build_geometry_catalog_payload() -> dict:
     collections = public_geometry_catalog_records(catalog, "geometry_collections")
     banks = public_geometry_catalog_records(catalog, "geometry_banks")
     families = public_geometry_catalog_records(catalog, "geometry_families")
-    bridges = public_geometry_catalog_records(catalog, "bridge_artifacts")
+    crosswalk_artifacts = public_geometry_catalog_records(catalog, "crosswalk_artifacts")
     assets = public_geometry_catalog_records(catalog, "geometry_products")
     packages = public_geometry_catalog_records(catalog, "release_packages")
     named = public_geometry_catalog_records(catalog, "named_reference_objects")
@@ -1425,7 +1425,7 @@ def _build_geometry_catalog_payload() -> dict:
 
     country_codes = sorted({
         code
-        for item in [*banks, *bridges, *assets]
+        for item in [*banks, *crosswalk_artifacts, *assets]
         for code in _geometry_scope_codes(
             item.get("scope"),
             item.get("bank_id"),
@@ -1441,9 +1441,9 @@ def _build_geometry_catalog_payload() -> dict:
     family_cards = []
     for family in families:
         family_id = str(family.get("family") or "").strip()
-        family_bridges = [
-            bridge for bridge in bridges
-            if str(bridge.get("source_family") or "").strip() == family_id
+        family_crosswalks = [
+            crosswalk for crosswalk in crosswalk_artifacts
+            if str(crosswalk.get("source_family") or "").strip() == family_id
         ]
         family_banks = [
             bank for bank in banks
@@ -1459,12 +1459,12 @@ def _build_geometry_catalog_payload() -> dict:
             "feature_count": family.get("feature_count"),
             "bank_count": len(family_banks),
             "asset_count": len(family_assets),
-            "bridge_count": len(family_bridges),
+            "crosswalk_count": len(family_crosswalks),
             "has_shapes": bool(family.get("geometry_path") or family_assets or family_banks),
             "target_admin_levels": sorted({
-                str(bridge.get("target_admin_level") or "").strip()
-                for bridge in family_bridges
-                if str(bridge.get("target_admin_level") or "").strip()
+                str(crosswalk.get("target_admin_level") or "").strip()
+                for crosswalk in family_crosswalks
+                if str(crosswalk.get("target_admin_level") or "").strip()
             }),
         })
 
@@ -1564,7 +1564,7 @@ def _build_geometry_catalog_payload() -> dict:
         "collection_count": len(collections),
         "bank_count": len(banks),
         "family_count": len(families),
-        "bridge_artifact_count": len(bridges),
+        "crosswalk_artifact_count": len(crosswalks),
         "product_count": len(assets),
         "release_package_count": len(packages),
         "named_geometry_count": len(named),
@@ -1583,25 +1583,25 @@ def _build_geometry_catalog_payload() -> dict:
                 "feature_count": bank.get("feature_count"),
                 "license_review_status": bank.get("license_review_status"),
                 "usable_for_derivation": bool(bank.get("usable_for_derivation")),
-                "supports_admin_spine_bridge": bool(bank.get("supports_admin_spine_bridge")),
+                "supports_admin_crosswalk": bool(bank.get("supports_admin_crosswalk")),
                 "geometry_path": bank.get("geometry_path"),
             }
             for bank in banks
         ],
-        "bridges": [
+        "crosswalks": [
             {
-                "index_path": bridge.get("index_path"),
-                "artifact_path": bridge.get("artifact_path"),
-                "source_family": bridge.get("source_family"),
-                "target_family": bridge.get("target_family"),
-                "target_admin_level": bridge.get("target_admin_level"),
-                "status": bridge.get("status"),
-                "row_count": bridge.get("row_count"),
-                "source_count": bridge.get("source_count"),
-                "target_count": bridge.get("target_count"),
-                "bridge_vintage": bridge.get("bridge_vintage"),
+                "index_path": crosswalk.get("index_path"),
+                "artifact_path": crosswalk.get("artifact_path"),
+                "source_family": crosswalk.get("source_family"),
+                "target_family": crosswalk.get("target_family"),
+                "target_admin_level": crosswalk.get("target_admin_level"),
+                "status": crosswalk.get("status"),
+                "row_count": crosswalk.get("row_count"),
+                "source_count": crosswalk.get("source_count"),
+                "target_count": crosswalk.get("target_count"),
+                "relationship_vintage": crosswalk.get("relationship_vintage"),
             }
-            for bridge in bridges
+            for crosswalk in crosswalks
         ],
     }
 

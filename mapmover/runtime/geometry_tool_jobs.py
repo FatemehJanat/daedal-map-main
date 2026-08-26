@@ -40,12 +40,12 @@ _JOB_IDEMPOTENCY: dict[tuple[str, str], tuple[str, str]] = {}
 
 _CONVERSION_TOP_LEVEL_FIELDS = {
     "request_id", "quote_id", "from_system", "geography_binding", "to_system",
-    "items", "row_count", "target_admin_level", "iso3", "bridge_vintage",
+    "items", "row_count", "target_admin_level", "iso3", "relationship_vintage",
     "min_share", "limit", "output_format", "output_name",
 }
 _CONVERSION_ITEM_FIELDS = {
     "value", "row_index", "id", "from_system", "to_system", "iso3",
-    "target_admin_level", "bridge_vintage", "min_share", "limit", "data",
+    "target_admin_level", "relationship_vintage", "min_share", "limit", "data",
 }
 
 GEOMETRY_EXPORT_FORMATS = {"geojson", "geojson_gzip", "zip"}
@@ -638,7 +638,7 @@ def _conversion_row(payload: dict[str, Any], item: dict[str, Any]) -> dict[str, 
     if binding:
         row.setdefault("from_system", binding.get("system"))
         row.setdefault("target_admin_level", binding.get("geo_level"))
-        row.setdefault("bridge_vintage", binding.get("vintage"))
+        row.setdefault("relationship_vintage", binding.get("vintage"))
         row.setdefault("iso3", binding.get("country_scope"))
     return row
 
@@ -646,7 +646,7 @@ def _conversion_row(payload: dict[str, Any], item: dict[str, Any]) -> dict[str, 
 def _conversion_cache_key(row: dict[str, Any]) -> str:
     fields = (
         "from_system", "value", "to_system", "iso3", "target_admin_level",
-        "bridge_vintage", "min_share", "limit",
+        "relationship_vintage", "min_share", "limit",
     )
     return json.dumps({field: row.get(field) for field in fields}, sort_keys=True, default=str)
 
@@ -659,7 +659,7 @@ def _run_conversion_row(row: dict[str, Any], *, default_limit: int) -> dict[str,
             to_system=str(row.get("to_system") or ""),
             iso3=str(row.get("iso3") or "USA"),
             target_admin_level=row.get("target_admin_level") or "admin_2",
-            bridge_vintage=row.get("bridge_vintage"),
+            relationship_vintage=row.get("relationship_vintage"),
             min_share=row.get("min_share"),
             limit=int(row.get("limit") or default_limit),
         )
@@ -668,7 +668,7 @@ def _run_conversion_row(row: dict[str, Any], *, default_limit: int) -> dict[str,
         value=str(row.get("value") or ""),
         iso3=str(row.get("iso3") or "USA"),
         target_admin_level=row.get("target_admin_level") or "admin_2",
-        bridge_vintage=row.get("bridge_vintage"),
+        relationship_vintage=row.get("relationship_vintage"),
         min_share=row.get("min_share"),
         limit=int(row.get("limit") or default_limit),
     )
@@ -680,7 +680,7 @@ def _conversion_reference_request(row: dict[str, Any], *, default_limit: int) ->
         "value": str(row.get("value") or ""),
         "iso3": str(row.get("iso3") or "USA"),
         "target_admin_level": row.get("target_admin_level") or "admin_2",
-        "bridge_vintage": row.get("bridge_vintage"),
+        "relationship_vintage": row.get("relationship_vintage"),
         "min_share": row.get("min_share"),
         "limit": int(row.get("limit") or default_limit),
     }
@@ -723,10 +723,10 @@ def _conversion_output_row(item: dict[str, Any], result: dict[str, Any], *, fall
     row["daedalmap_conversion_ok"] = bool(result.get("ok"))
     row["daedalmap_loc_id"] = result.get("resolved_loc_id") or result.get("loc_id")
     row["daedalmap_family"] = result.get("resolved_family") or result.get("family")
-    row["daedalmap_admin_level"] = result.get("admin_level") or (result.get("bridge") or {}).get("target_admin_level")
+    row["daedalmap_admin_level"] = result.get("admin_level") or (result.get("crosswalk") or {}).get("target_admin_level")
     row["daedalmap_match_type"] = result.get("match_type")
     row["daedalmap_source_vintage"] = result.get("source_vintage")
-    row["daedalmap_bridge_vintage"] = (result.get("bridge") or {}).get("bridge_vintage")
+    row["daedalmap_relationship_vintage"] = (result.get("crosswalk") or {}).get("relationship_vintage")
     matches = result.get("matches")
     match_count = result.get("match_count")
     if match_count is None and isinstance(matches, list):
@@ -734,7 +734,7 @@ def _conversion_output_row(item: dict[str, Any], result: dict[str, Any], *, fall
     if match_count is None:
         match_count = 1 if row["daedalmap_conversion_ok"] and row["daedalmap_loc_id"] else 0
     row["daedalmap_match_count"] = int(match_count or 0)
-    if result.get("match_type") == "bridge_overlap" and row["daedalmap_match_count"] > 1:
+    if result.get("match_type") == "crosswalk_overlap" and row["daedalmap_match_count"] > 1:
         row["daedalmap_join_cardinality"] = "weighted_one_to_many"
     elif row["daedalmap_match_count"] > 1:
         row["daedalmap_join_cardinality"] = "one_to_many"

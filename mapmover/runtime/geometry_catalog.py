@@ -87,7 +87,7 @@ def load_geometry_catalog() -> dict[str, Any]:
         "geometry_banks": [],
         "geometry_products": [],
         "release_packages": [],
-        "bridge_artifacts": [],
+        "crosswalk_artifacts": [],
         "resolver_groups": [],
         "named_reference_objects": [],
     }

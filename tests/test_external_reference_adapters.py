@@ -194,7 +194,7 @@ class ExternalReferenceRuntimeTests(unittest.TestCase):
     def test_reverse_results_keep_stable_provenance_only(self) -> None:
         with mock.patch.object(reference_exchange, "admitted_external_adapters", return_value=[adapters.get_external_adapter("gers")]), mock.patch.object(
             reference_exchange, "lookup_loc_id_edges", return_value=[EQUIVALENCE, PART_OF]
-        ), mock.patch.object(reference_exchange, "_bridge_artifacts", return_value=[]):
+        ), mock.patch.object(reference_exchange, "_crosswalk_artifacts", return_value=[]):
             payload = reference_exchange.loc_id_references(EQUIVALENCE.loc_id, systems=["gers"])
         external = [row for row in payload["references"] if row["system"] == "overture_gers"]
         self.assertEqual([row["edge_content_hash"] for row in external], ["sha256:unchanged-edge", "sha256:changed-edge"])

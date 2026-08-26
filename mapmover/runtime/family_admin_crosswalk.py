@@ -1,7 +1,7 @@
-"""Internal side-chain geometry -> admin spine bridge lookups.
+"""Country family-to-admin crosswalk lookups.
 
-Bridge parquets are built by:
-  county-map-private/build/geometry/build_sidechain_admin_bridge.py
+Crosswalk Parquets are built by:
+  county-map-private/build/geometry/build_family_admin_crosswalk.py
 
 This module is intentionally internal. Public MCP/API tools should wrap this
 shared helper later instead of implementing ZIP/ZCTA-specific conversion logic.
@@ -45,7 +45,7 @@ def admin_level_name(admin_level: int | str) -> str:
         return text
 
 
-def default_bridge_path(
+def default_crosswalk_path(
     *,
     source_family: str,
     target_admin_level: int | str,
@@ -53,21 +53,24 @@ def default_bridge_path(
 ) -> Path:
     level = admin_level_name(target_admin_level)
     filename = f"{str(source_family).strip()}_to_{level}_{str(iso3).strip().upper()}.parquet"
-    return DATA_ROOT / "geometry" / "bridges" / filename
+    return (
+        DATA_ROOT / "geometry" / "countries" / str(iso3).strip().upper()
+        / "crosswalks" / "measured" / filename
+    )
 
 
-def _read_bridge_rows(
-    bridge_path: Path,
+def _read_crosswalk_rows(
+    crosswalk_path: Path,
     *,
     exact_filters: dict[str, Any] | None = None,
     in_filters: dict[str, list[Any]] | None = None,
 ) -> pd.DataFrame:
-    if bridge_path.exists():
+    if crosswalk_path.exists():
         filters = [(key, "==", value) for key, value in (exact_filters or {}).items()]
         filters.extend((key, "in", values) for key, values in (in_filters or {}).items() if values)
-        return pd.read_parquet(bridge_path, filters=filters)
+        return pd.read_parquet(crosswalk_path, filters=filters)
     if is_cloud_mode():
-        return select_rows(bridge_path, exact_filters=exact_filters, in_filters=in_filters)
+        return select_rows(crosswalk_path, exact_filters=exact_filters, in_filters=in_filters)
     return pd.DataFrame()
 
 
@@ -93,7 +96,7 @@ def _shape_overlap(row: pd.Series, *, direction: str) -> dict[str, Any]:
         "rank_by_target_area": row.get("rank_by_target_area"),
         "is_primary": bool(row.get("is_primary")),
         "primary_policy": row.get("primary_policy"),
-        "bridge_vintage": row.get("bridge_vintage"),
+        "relationship_vintage": row.get("relationship_vintage"),
     }
     if direction == "source_to_admin":
         payload["match_loc_id"] = target["loc_id"]
@@ -130,13 +133,13 @@ def _filter_and_sort(
     return out.reset_index(drop=True)
 
 
-def resolve_sidechain_to_admin(
+def resolve_family_to_admin(
     source_loc_id: str,
     *,
     source_family: str,
     target_admin_level: int | str,
     iso3: str = "USA",
-    bridge_path: Path | None = None,
+    crosswalk_path: Path | None = None,
     min_source_area_share: float | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
@@ -144,7 +147,7 @@ def resolve_sidechain_to_admin(
     source_loc_id = str(source_loc_id or "").strip()
     source_family = str(source_family or "").strip()
     target_level = admin_level_name(target_admin_level)
-    path = bridge_path or default_bridge_path(
+    path = crosswalk_path or default_crosswalk_path(
         source_family=source_family,
         target_admin_level=target_level,
         iso3=iso3,
@@ -152,7 +155,7 @@ def resolve_sidechain_to_admin(
     if not source_loc_id:
         return {"ok": False, "error": "source_loc_id is required"}
 
-    rows = _read_bridge_rows(path, exact_filters={"source_loc_id": source_loc_id})
+    rows = _read_crosswalk_rows(path, exact_filters={"source_loc_id": source_loc_id})
     rows = _filter_and_sort(
         rows,
         sort_col="source_area_share",
@@ -168,35 +171,35 @@ def resolve_sidechain_to_admin(
         "source_loc_id": source_loc_id,
         "target_family": "admin",
         "target_admin_level": target_level,
-        "bridge_path": str(path),
+        "crosswalk_path": str(path),
         "primary_match": primary,
         "overlaps": overlaps,
         "overlap_count": len(overlaps),
     }
 
 
-def resolve_sidechains_to_admin(
+def resolve_family_ids_to_admin(
     source_loc_ids: list[str],
     *,
     source_family: str,
     target_admin_level: int | str,
     iso3: str = "USA",
-    bridge_path: Path | None = None,
+    crosswalk_path: Path | None = None,
     min_source_area_share: float | None = None,
     limit: int | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Resolve many source identities with one predicate-pushed bridge scan."""
+    """Resolve many source identities with one predicate-pushed crosswalk scan."""
     ordered_ids = list(dict.fromkeys(str(value or "").strip() for value in source_loc_ids if str(value or "").strip()))
     if not ordered_ids:
         return {}
     source_family = str(source_family or "").strip()
     target_level = admin_level_name(target_admin_level)
-    path = bridge_path or default_bridge_path(
+    path = crosswalk_path or default_crosswalk_path(
         source_family=source_family,
         target_admin_level=target_level,
         iso3=iso3,
     )
-    rows = _read_bridge_rows(path, in_filters={"source_loc_id": ordered_ids})
+    rows = _read_crosswalk_rows(path, in_filters={"source_loc_id": ordered_ids})
     results: dict[str, dict[str, Any]] = {}
     for source_loc_id in ordered_ids:
         source_rows = rows[rows["source_loc_id"] == source_loc_id] if not rows.empty and "source_loc_id" in rows else pd.DataFrame()
@@ -214,7 +217,7 @@ def resolve_sidechains_to_admin(
             "source_loc_id": source_loc_id,
             "target_family": "admin",
             "target_admin_level": target_level,
-            "bridge_path": str(path),
+            "crosswalk_path": str(path),
             "primary_match": overlaps[0] if overlaps else None,
             "overlaps": overlaps,
             "overlap_count": len(overlaps),
@@ -222,13 +225,13 @@ def resolve_sidechains_to_admin(
     return results
 
 
-def resolve_admin_to_sidechains(
+def resolve_admin_to_family(
     target_loc_id: str,
     *,
     source_family: str,
     target_admin_level: int | str,
     iso3: str = "USA",
-    bridge_path: Path | None = None,
+    crosswalk_path: Path | None = None,
     min_target_area_share: float | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
@@ -236,7 +239,7 @@ def resolve_admin_to_sidechains(
     target_loc_id = str(target_loc_id or "").strip()
     source_family = str(source_family or "").strip()
     target_level = admin_level_name(target_admin_level)
-    path = bridge_path or default_bridge_path(
+    path = crosswalk_path or default_crosswalk_path(
         source_family=source_family,
         target_admin_level=target_level,
         iso3=iso3,
@@ -244,7 +247,7 @@ def resolve_admin_to_sidechains(
     if not target_loc_id:
         return {"ok": False, "error": "target_loc_id is required"}
 
-    rows = _read_bridge_rows(path, exact_filters={"target_loc_id": target_loc_id})
+    rows = _read_crosswalk_rows(path, exact_filters={"target_loc_id": target_loc_id})
     rows = _filter_and_sort(
         rows,
         sort_col="target_area_share",
@@ -260,7 +263,7 @@ def resolve_admin_to_sidechains(
         "target_family": "admin",
         "target_admin_level": target_level,
         "target_loc_id": target_loc_id,
-        "bridge_path": str(path),
+        "crosswalk_path": str(path),
         "primary_match": primary,
         "overlaps": overlaps,
         "overlap_count": len(overlaps),

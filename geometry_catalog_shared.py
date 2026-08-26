@@ -21,7 +21,7 @@ GEOMETRY_CATALOG_RECORD_KEYS = (
     "geometry_banks",
     "geometry_products",
     "release_packages",
-    "bridge_artifacts",
+    "crosswalk_artifacts",
     "reference_systems",
     "crosswalks",
     "external_reference_bridges",
