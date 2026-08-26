@@ -2501,8 +2501,9 @@ async def get_ai_plugin_json():
         "name_for_human": "DaedalMap Geographic Data",
         "name_for_model": "daedalmap",
         "description_for_human": (
-            "Geographic data packs for disasters, FX rates, demographics, and global indicators. "
-            "Free discovery. Free and paid execution lanes via HTTP API and MCP."
+            "Geographic interoperability tools for reference identification, crosswalks, "
+            "transformations, loc_id assignment, bring-your-own-data preparation, and "
+            "dynamic discovery of compatible geography and datasets."
         ),
         "description_for_model": agent_ai_plugin_description_for_model(
             app_origin=app_url,
