@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 from mapmover.runtime import admin_spine_query
 
 
@@ -61,3 +63,50 @@ def test_cloud_metadata_uses_object_store_uri() -> None:
     with patch.object(admin_spine_query, "path_to_uri", return_value="s3://bucket/published/layout.parquet"):
         admin_spine_query._metadata(connection, Path("layout.parquet"), 1.0, 2.0)
     assert connection.parameters[0] == "s3://bucket/published/layout.parquet"
+
+
+def test_exact_id_load_opens_only_shallow_and_requested_admin1_shards() -> None:
+    opened_paths = []
+
+    class Result:
+        def __init__(self, frame):
+            self.frame = frame
+
+        def fetchdf(self):
+            return self.frame
+
+    class Connection:
+        def execute(self, _sql, parameters=None):
+            if parameters is None:
+                return self
+            path = parameters[0]
+            opened_paths.append(path)
+            loc_ids = parameters[1:]
+            return Result(pd.DataFrame({"loc_id": loc_ids, "name": loc_ids}))
+
+        def close(self):
+            pass
+
+    with (
+        patch.object(admin_spine_query, "layout_available", return_value=True),
+        patch.object(admin_spine_query, "layout_root", return_value=Path("layout")),
+        patch.object(admin_spine_query, "is_cloud_mode", return_value=True),
+        patch.object(admin_spine_query, "path_to_uri", side_effect=lambda path: path.as_posix()),
+        patch.object(admin_spine_query, "_connection", return_value=Connection()),
+    ):
+        result = admin_spine_query.load_rows_by_loc_ids(
+            "USA",
+            ["USA-SD-019", "USA-SD-019-967600-1-023", "USA-CA-037-001-1-001"],
+            columns=["name"],
+        )
+
+    assert opened_paths == [
+        "layout/admin_0_3.parquet",
+        "layout/deep/USA-SD.parquet",
+        "layout/deep/USA-CA.parquet",
+    ]
+    assert result["loc_id"].tolist() == [
+        "USA-SD-019",
+        "USA-SD-019-967600-1-023",
+        "USA-CA-037-001-1-001",
+    ]

@@ -286,7 +286,9 @@ def gers_primary_loc_ids(values: Any) -> dict[str, list[str]]:
     return external_primary_loc_ids(GERS_SYSTEM, list(values or []))
 
 
-def _reference_family(loc_id: str) -> str | None:
+def _reference_family(loc_id: str, *, admin_level: Any = None) -> str | None:
+    if admin_level is not None:
+        return classify_loc_id_family(loc_id)
     try:
         from .reference_graph import identity as graph_identity
 
@@ -302,6 +304,12 @@ def _reference_family(loc_id: str) -> str | None:
 def _canonical_graph_loc_id(loc_id: str) -> str:
     """Resolve a retired loc_id alias without guessing between multiple versions."""
     canonical = canonicalize_loc_id(loc_id)
+    family = classify_loc_id_family(canonical)
+    if str(family or "").startswith("admin"):
+        # Current admin IDs are already canonical. Point resolution emits these
+        # exact values, so do not scan a country reference graph before the
+        # bounded admin-spine geometry lookup gets a chance to serve them.
+        return canonical
     try:
         from .reference_graph import identify_aliases, identity as graph_identity
 
@@ -1477,7 +1485,7 @@ def _shape_geometry_reference(
     if not feature:
         return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
     props = feature.get("properties") or {}
-    family = _reference_family(canonical)
+    family = _reference_family(canonical, admin_level=props.get("admin_level"))
     payload = {
         "ok": True,
         "has_shape": True,
@@ -1513,7 +1521,7 @@ def _metadata_geometry_reference(
     canonical = canonicalize_loc_id(loc_id)
     if not row:
         return {"ok": False, "loc_id": canonical, "has_shape": False, "error": "no geometry found"}
-    family = _reference_family(canonical)
+    family = _reference_family(canonical, admin_level=row.get("admin_level"))
     payload = {
         "ok": True,
         "has_shape": True,
@@ -1609,7 +1617,7 @@ def get_geometry_availability(loc_ids: list[str]) -> dict[str, Any]:
             "loc_id": loc_id,
             "has_shape": has_shape,
             "name": result.get("name") if result else None,
-            "family": _reference_family(loc_id) if has_shape else None,
+            "family": _reference_family(loc_id, admin_level=result.get("admin_level")) if has_shape else None,
             "admin_level": result.get("admin_level") if result else None,
             "centroid": {"lon": result.get("centroid_lon"), "lat": result.get("centroid_lat")} if has_shape else None,
             "bbox": [

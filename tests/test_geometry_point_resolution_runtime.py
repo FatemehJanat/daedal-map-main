@@ -1,4 +1,3 @@
-import pytest
 import unittest
 from unittest.mock import patch
 
@@ -167,6 +166,67 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
             self.assertTrue(info["has_polygon"])
             current = info.get("parent_id")
         self.assertEqual(strict_chain, list(reversed(loc_ids)))
+
+    def test_geometry_metadata_prefers_bounded_admin_query_layout(self):
+        import pandas as pd
+
+        query_row = pd.DataFrame([{
+            "loc_id": "USA-SD-019-967600-1-023",
+            "parent_id": "USA-SD-019-967600-1",
+            "admin_level": 5,
+            "name": "Butte precinct",
+            "bbox_min_lon": -104.0,
+            "bbox_min_lat": 44.0,
+            "bbox_max_lon": -102.0,
+            "bbox_max_lat": 46.0,
+        }])
+        with (
+            patch("mapmover.geometry_handlers.load_admin_spine_query_rows", return_value=query_row) as query_mock,
+            patch("mapmover.geometry_handlers.load_reference_graph_geometry") as graph_mock,
+        ):
+            metadata = get_selection_geometry_metadata(["USA-SD-019-967600-1-023"])
+
+        self.assertEqual(metadata[0]["loc_id"], "USA-SD-019-967600-1-023")
+        self.assertTrue(metadata[0]["has_polygon"])
+        query_mock.assert_called_once()
+        graph_mock.assert_called_once_with([], columns=unittest.mock.ANY)
+
+    def test_sidechain_metadata_skips_admin_query_layout(self):
+        import pandas as pd
+
+        reference_row = pd.DataFrame([{
+            "loc_id": "USA-Z-57718",
+            "name": "57718",
+            "has_polygon": True,
+        }])
+        with (
+            patch("mapmover.geometry_handlers.load_admin_spine_query_rows") as query_mock,
+            patch("mapmover.geometry_handlers.load_reference_graph_geometry", return_value=reference_row),
+        ):
+            metadata = get_selection_geometry_metadata(["USA-Z-57718"])
+
+        self.assertEqual(metadata[0]["loc_id"], "USA-Z-57718")
+        query_mock.assert_not_called()
+
+    def test_admin_loc_id_info_uses_query_layout_before_reference_graph(self):
+        metadata = {
+            "loc_id": "USA-SD-019-967600-1-023",
+            "parent_id": "",
+            "admin_level": 5,
+            "name": "Butte precinct",
+            "has_polygon": True,
+        }
+        with (
+            patch("mapmover.geometry_handlers._get_selection_metadata_for_loc_id", return_value=metadata),
+            patch("mapmover.geometry_handlers._reference_graph_location_info") as graph_mock,
+            patch("mapmover.geometry_handlers._geometry_family_for_loc_id") as family_mock,
+        ):
+            info = get_location_info("USA-SD-019-967600-1-023")
+
+        self.assertEqual(info["name"], "Butte precinct")
+        self.assertEqual(info["family"], "admin_local")
+        graph_mock.assert_not_called()
+        family_mock.assert_not_called()
 
     def test_brazil_bairro_point_resolves_to_declared_admin5_spine(self):
         result = resolve_point_to_loc_id_stack(-48.12994234942419, -22.793495497153657, include_geometry=False)

@@ -2316,17 +2316,20 @@ def get_location_info(loc_id: str):
     from .runtime.admin_hierarchy import infer_admin_level_from_loc_id
 
     iso3 = parts[0]
-    family = _geometry_family_for_loc_id(loc_id)
     inferred_admin_level = infer_admin_level_from_loc_id(loc_id)
+    if inferred_admin_level is not None:
+        metadata = _get_selection_metadata_for_loc_id(loc_id)
+        if metadata:
+            return _build_metadata_based_location_info(loc_id, metadata)
+
+    family = _geometry_family_for_loc_id(loc_id)
     graph_info = _reference_graph_location_info(loc_id)
     if graph_info and not str(family or "").startswith("admin"):
         # Reference-sidechain metadata already lives in the graph identity row.
         # Avoid opening a potentially huge geometry partition merely to answer
         # name/family/parent/source questions.
         return graph_info
-    if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"} or (
-        inferred_admin_level is not None and inferred_admin_level >= 3
-    ):
+    if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"}:
         metadata = _get_selection_metadata_for_loc_id(loc_id)
         if metadata:
             return _build_metadata_based_location_info(loc_id, metadata)
@@ -2561,7 +2564,11 @@ def _get_selection_metadata_for_loc_id(loc_id: str) -> dict | None:
 
 def _build_metadata_based_location_info(loc_id: str, props: dict) -> dict:
     """Build loc_id_info without reading or materializing polygon payloads."""
-    family = _geometry_family_for_loc_id(loc_id)
+    family = (
+        classify_loc_id_family(loc_id)
+        if props.get("admin_level") is not None
+        else _geometry_family_for_loc_id(loc_id)
+    )
     ancestor_ids = []
     current_id = str(props.get("parent_id") or "").strip()
     while current_id:
@@ -3474,6 +3481,8 @@ def get_selection_geometries(loc_ids: list):
     query_layout_ids: set[str] = set()
     by_iso3: dict[str, list[str]] = {}
     for loc_id in requested_ids:
+        if not str(classify_loc_id_family(loc_id) or "").startswith("admin"):
+            continue
         by_iso3.setdefault(loc_id.split("-", 1)[0].upper(), []).append(loc_id)
     for iso3, country_ids in by_iso3.items():
         query_rows = load_admin_spine_query_rows(iso3, country_ids)
@@ -3637,7 +3646,31 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
     requested_ids = [str(loc_id).strip() for loc_id in loc_ids if str(loc_id).strip()]
     requested_set = set(requested_ids)
 
-    reference_df = load_reference_graph_geometry(requested_ids, columns=GEOMETRY_METADATA_COLUMNS)
+    # Query-layout admin IDs should use the same bounded country/Admin1 shard
+    # path as polygon retrieval. This avoids a broad reference-graph or legacy
+    # bank search merely to answer has-shape and bbox questions.
+    query_layout_ids: set[str] = set()
+    query_metadata_columns = [
+        "loc_id", "parent_id", "admin_level", "name",
+        "bbox_min_lon", "bbox_min_lat", "bbox_max_lon", "bbox_max_lat",
+    ]
+    by_iso3: dict[str, list[str]] = {}
+    for loc_id in requested_ids:
+        if not str(classify_loc_id_family(loc_id) or "").startswith("admin"):
+            continue
+        by_iso3.setdefault(loc_id.split("-", 1)[0].upper(), []).append(loc_id)
+    for iso3, country_ids in by_iso3.items():
+        query_rows = load_admin_spine_query_rows(iso3, country_ids, columns=query_metadata_columns)
+        if query_rows is None or query_rows.empty:
+            continue
+        query_layout_ids.update(query_rows["loc_id"].astype(str))
+        for _, query_row in query_rows.iterrows():
+            item = _geometry_metadata_row(query_row)
+            if item.get("loc_id"):
+                rows.append(item)
+
+    graph_requests = [loc_id for loc_id in requested_ids if loc_id not in query_layout_ids]
+    reference_df = load_reference_graph_geometry(graph_requests, columns=GEOMETRY_METADATA_COLUMNS)
     reference_ids: set[str] = set()
     if reference_df is not None and not reference_df.empty:
         reference_ids = set(reference_df["loc_id"].astype(str))
@@ -3651,7 +3684,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
         if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
-    claimed_ids = reference_ids | set(marine_ids)
+    claimed_ids = query_layout_ids | reference_ids | set(marine_ids)
     remaining_ids = [loc_id for loc_id in requested_ids if loc_id not in claimed_ids]
 
     if marine_ids:

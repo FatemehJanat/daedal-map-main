@@ -20,6 +20,27 @@ from mapmover.runtime.reference_identification import identify_reference_system
 
 
 class ReferenceExchangeRuntimeTests(unittest.TestCase):
+    def test_current_admin_geometry_does_not_scan_graph_for_canonicalization_or_family(self) -> None:
+        metadata = [{
+            "loc_id": "USA-SD-019-967600-1-023",
+            "admin_level": 5,
+            "name": "Butte precinct",
+            "has_polygon": True,
+        }]
+        with (
+            mock.patch.object(reference_exchange, "get_selection_geometry_metadata", return_value=metadata),
+            mock.patch("mapmover.runtime.reference_graph.identity") as graph_identity,
+        ):
+            payload = get_geometry_references(
+                ["USA-SD-019-967600-1-023"],
+                include_polygon=False,
+                include_info=False,
+            )
+
+        self.assertEqual(payload["available"], 1)
+        self.assertEqual(payload["results"][0]["family"], "admin_local")
+        graph_identity.assert_not_called()
+
     def test_identify_census_tract_geoids_returns_verified_geometry_binding(self) -> None:
         payload = identify_reference_system(
             ["06073000100", "06073000201", "06073000100"],

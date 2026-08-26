@@ -200,21 +200,27 @@ def load_rows_by_loc_ids(iso3: str, loc_ids: list[str], columns: list[str] | Non
         if columns is None
         else ", ".join(f'"{name}"' for name in projection)
     )
-    placeholders = ",".join("?" for _ in requested)
     root = layout_root(iso3)
-    paths = [root / "admin_0_3.parquet"]
-    deep_root = root / "deep"
-    if deep_root.is_dir():
-        paths.extend(sorted(deep_root.glob("*.parquet")))
+    requests_by_path: dict[Path, list[str]] = {}
+    for loc_id in requested:
+        parts = loc_id.split("-")
+        admin_level = len(parts) - 1
+        if admin_level <= 3:
+            path = root / "admin_0_3.parquet"
+        else:
+            owner_loc_id = "-".join(parts[:2])
+            path = root / "deep" / f"{owner_loc_id}.parquet"
+        requests_by_path.setdefault(path, []).append(loc_id)
     connection = _connection()
     try:
         frames = []
-        for path in paths:
+        for path, path_loc_ids in requests_by_path.items():
             if not path.is_file() and not is_cloud_mode():
                 continue
+            placeholders = ",".join("?" for _ in path_loc_ids)
             frame = connection.execute(
                 f"SELECT {select_clause} FROM read_parquet(?) WHERE loc_id IN ({placeholders})",
-                [path_to_uri(path), *requested],
+                [path_to_uri(path), *path_loc_ids],
             ).fetchdf()
             if not frame.empty:
                 frames.append(frame)
