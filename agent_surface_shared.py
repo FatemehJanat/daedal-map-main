@@ -104,15 +104,15 @@ def geography_tools_section(app_origin: str) -> str:
 def geography_workflow_section() -> str:
     """Return question-first instructions for the current geography MCP roster."""
     return (
-        "1. New to the family: call `how_geometry_works`, then `get_tool_help` for the exact tool you choose.\n"
-        "2. What geography exists in a country: call `read_geometry_catalog` with `view=capabilities` and `country_scope=<ISO3>`.\n"
-        "3. What usable crosswalks exist: call `list_reference_systems`; a catalog family alone does not promise a conversion path.\n"
-        "4. Point to loc_id: call `resolve_point`. For a bounded batch use `points`, one `country_scope`, and one `target_admin_level`; split deep all-country work by country and Admin1 owner.\n"
-        "5. Outside code or name to loc_id: call `resolve_reference`. If the input system is unknown, call `identify_reference_system` first. Use `convert_reference` only when another reference system is the desired output.\n"
-        "6. What a loc_id is connected to: call `loc_id_info` with `include_references=true`; add `include_hierarchy=true` for its strict stored ancestry. The same tool accepts bounded `loc_ids`.\n"
-        "7. Shape lookup: call `check_geometry` for availability, then `get_geometry`. Metadata, bbox, and centroid are the default; set `include_polygon=true` only when shape coordinates are needed. Group large calls by country, level, and Admin1 owner.\n"
-        "8. Relationship between two loc_ids: call `compare_geographies`. For descendants under one parent and level, call `resolve_loc_id_scope`.\n"
-        "9. Bounded advanced operations: `estimate_geometry_package` -> `create_geometry_export`, or `estimate_conversion_job` -> `create_conversion_job`; read a completed bounded result with `get_job_status`. Durable queued artifacts remain a future builder capability."
+        "1. Point to loc_id: call `resolve_point`. For a bounded batch use `points`, one `country_scope`, and one `target_admin_level`.\n"
+        "2. What a loc_id is connected to: call `loc_id_info` with `include_references=true`; add `include_hierarchy=true` for its strict stored ancestry.\n"
+        "3. Outside code or name to loc_id: call `resolve_reference`. If the input system is unknown, call `identify_reference_system` first. Use `convert_reference` only when another reference system is the desired output.\n"
+        "4. Shape lookup: call `check_geometry` for availability, then `get_geometry`. Metadata, bbox, and centroid are the default; set `include_polygon=true` only when shape coordinates are needed.\n"
+        "5. Coverage discovery: call `read_geometry_catalog` with `view=capabilities` and `country_scope=<ISO3>`, or `list_reference_systems` for usable crosswalks. A catalog family alone does not promise a conversion path.\n"
+        "6. Relationship between two loc_ids: call `compare_geographies`. For descendants under one parent and level, call `resolve_loc_id_scope`.\n"
+        "7. Batch rule: use bounded arrays where supported; split deep work by country, level, and Admin1 owner.\n"
+        "8. If the right path is unclear: call `how_geometry_works`, then `get_tool_help` for one exact tool.\n"
+        "9. Advanced builder foundation, not the normal entry path: `estimate_geometry_package`, `create_geometry_export`, `estimate_conversion_job`, `create_conversion_job`, and `get_job_status` expose bounded contracts only. Durable uploads, saved projects, and custom downloadable artifacts remain future builder capabilities."
     )
 
 

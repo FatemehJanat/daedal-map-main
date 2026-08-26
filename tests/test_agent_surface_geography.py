@@ -33,4 +33,5 @@ def test_geography_workflow_is_question_first_and_bounded() -> None:
     assert "What a loc_id is connected to" in workflow
     assert "Shape lookup" in workflow
     assert "bounded batch" in workflow
-    assert "Durable queued artifacts remain a future builder capability" in workflow
+    assert "Advanced builder foundation, not the normal entry path" in workflow
+    assert "Durable uploads, saved projects, and custom downloadable artifacts" in workflow
