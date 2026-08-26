@@ -376,40 +376,49 @@ def where_is_geography_data(loc_id: str | None = None) -> dict[str, Any]:
 
 
 def reference_graph_families() -> list[dict[str, Any]]:
-    """List the canonical families every discovered graph admits.
+    """List catalog-admitted canonical families, enriched with graph counts.
 
-    The names come from the partition index, not the payload rows. A payload
-    carries its implementation family (``usa_census_zcta``) while the index
-    carries the canonical one (``postal_area``), and the canonical name is what
-    callers convert against. Reading the index is also far cheaper than
-    grouping across every partition.
+    ``geometry_catalog.json`` owns discovery. Partition indexes may enrich a
+    catalog family with an identity count, but they never independently expose
+    a family. This keeps MCP discovery current when one catalog activation adds
+    a country or family, including in cloud mode where graph paths are virtual.
     """
-    totals: dict[str, dict[str, int]] = {}
+    catalog_families = {
+        str(family_id).strip()
+        for country in load_geometry_catalog().get("country_family_coverage") or []
+        if isinstance(country, dict)
+        for family_id in country.get("available_family_ids") or []
+        if str(family_id).strip()
+    }
+    totals = {family: 0 for family in catalog_families}
     roots = list(reference_graph_roots().values())
     global_root = global_reference_graph_root()
     if global_root:
         roots.append(global_root)
     for root in roots:
         index_path = root / PARTITION_INDEXES["identities"]
-        if not index_path.is_file():
-            continue
         try:
-            rows = pq.read_table(index_path, columns=["family", "row_count"]).to_pydict()
+            if index_path.is_file():
+                rows = pq.read_table(index_path, columns=["family", "row_count"]).to_pydict()
+            elif is_cloud_mode():
+                frame = select_rows(index_path, columns=["family", "row_count"])
+                rows = frame.to_dict(orient="list")
+            else:
+                continue
         except Exception:
             continue
         for family, count in zip(rows.get("family", []), rows.get("row_count", [])):
             name = str(family or "")
-            if not name:
+            if not name or name not in catalog_families:
                 continue
             try:
                 rows_count = int(count)
             except (TypeError, ValueError):
                 rows_count = 0
-            entry = totals.setdefault(name, {"identity_count": 0})
-            entry["identity_count"] += rows_count
+            totals[name] += rows_count
     return [
-        {"family": name, "identity_count": values["identity_count"]}
-        for name, values in sorted(totals.items())
+        {"family": name, "identity_count": identity_count}
+        for name, identity_count in sorted(totals.items())
     ]
 
 

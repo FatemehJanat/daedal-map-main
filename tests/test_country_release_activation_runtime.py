@@ -62,6 +62,32 @@ def test_cloud_partition_index_is_read_through_shared_artifact_seam(tmp_path: Pa
     reader.assert_called_once_with(root / "identity_partitions.parquet", columns=["path"])
 
 
+def test_cloud_reference_family_discovery_is_catalog_owned(tmp_path: Path) -> None:
+    root = tmp_path / "geometry/countries/NZL/releases/geometry/r/runtime/reference_graph"
+    frame = pd.DataFrame({
+        "family": ["place_or_municipality", "unpublished_internal_family"],
+        "row_count": [123, 999],
+    })
+    catalog = {"country_family_coverage": [{
+        "country_code": "NZL",
+        "available_family_ids": ["administrative", "place_or_municipality"],
+    }]}
+    with (
+        patch.object(reference_graph, "load_geometry_catalog", return_value=catalog),
+        patch.object(reference_graph, "reference_graph_roots", return_value={"NZL": root}),
+        patch.object(reference_graph, "global_reference_graph_root", return_value=None),
+        patch.object(reference_graph, "is_cloud_mode", return_value=True),
+        patch.object(reference_graph, "select_rows", return_value=frame) as reader,
+    ):
+        families = reference_graph.reference_graph_families()
+
+    assert families == [
+        {"family": "administrative", "identity_count": 0},
+        {"family": "place_or_municipality", "identity_count": 123},
+    ]
+    reader.assert_called_once_with(root / "identity_partitions.parquet", columns=["family", "row_count"])
+
+
 def test_identities_fail_closed_before_duckdb_when_graph_has_no_partitions() -> None:
     with (
         patch.object(reference_graph, "reference_graph_available", return_value=True),
