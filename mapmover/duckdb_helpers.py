@@ -575,6 +575,7 @@ def select_event_ids_by_regions(parquet_path: Path, regions: Iterable[str]) -> l
 def select_filtered_event_rows(
     parquet_path: Path,
     *,
+    columns: Iterable[str] | None = None,
     year: int | None = None,
     start: str | None = None,
     end: str | None = None,
@@ -634,7 +635,29 @@ def select_filtered_event_rows(
             where.append(f"{quote_ident(col)} IN ({placeholders})")
             params.extend(values)
 
-    sql = "SELECT * FROM read_parquet(?)"
+    # Projection is optional for backwards compatibility, but callers reading
+    # large event artifacts should name the fields they actually need. Keep
+    # predicate/order fields in the projection so existing post-processing
+    # remains valid even when a caller only requests a narrow payload.
+    if columns is None:
+        select_expr = "*"
+    else:
+        required = [
+            *(str(col) for col in columns),
+            *(str(col) for col in (exact_filters or {})),
+            *(str(col) for col in (in_filters or {})),
+            *(str(col) for col in (like_filters or {})),
+            *(str(col) for col in (min_value_filters or {})),
+        ]
+        if year is not None:
+            required.append("year")
+        if start is not None or end is not None:
+            required.append("timestamp")
+        if order_by_desc:
+            required.append(order_by_desc)
+        selected = list(dict.fromkeys(col for col in required if col in available_cols))
+        select_expr = ", ".join(quote_ident(col) for col in selected) or "*"
+    sql = f"SELECT {select_expr} FROM read_parquet(?)"
     if where:
         sql += " WHERE " + " AND ".join(where)
     if order_by_desc and order_by_desc in available_cols:
@@ -651,6 +674,8 @@ def select_rows_by_exact_value(
     column: str,
     value,
     *,
+    columns: Iterable[str] | None = None,
+    limit: int | None = None,
     order_by: str | None = None,
 ) -> pd.DataFrame:
     if duckdb is None or not parquet_available(parquet_path):
@@ -661,10 +686,21 @@ def select_rows_by_exact_value(
     if column not in available_cols:
         return pd.DataFrame()
 
-    sql = f"SELECT * FROM read_parquet(?) WHERE {quote_ident(column)} = ?"
+    if columns is None:
+        select_expr = "*"
+    else:
+        selected = list(dict.fromkeys(
+            [str(value) for value in columns] + [column] + ([order_by] if order_by else [])
+        ))
+        selected = [name for name in selected if name in available_cols]
+        select_expr = ", ".join(quote_ident(name) for name in selected) or "*"
+    sql = f"SELECT {select_expr} FROM read_parquet(?) WHERE {quote_ident(column)} = ?"
     params: list = [uri, value]
     if order_by and order_by in available_cols:
         sql += f" ORDER BY {quote_ident(order_by)} ASC NULLS LAST"
+    if limit is not None and int(limit) > 0:
+        sql += " LIMIT ?"
+        params.append(int(limit))
     return run_df(sql, params)
 
 
@@ -859,6 +895,7 @@ def select_peak_positions_by_storm_ids(positions_path: Path, storm_ids: Iterable
 def select_filtered_partitioned_rows(
     parquet_paths: Iterable[Path],
     *,
+    columns: Iterable[str] | None = None,
     year: int | None = None,
     start: str | None = None,
     end: str | None = None,
@@ -869,6 +906,12 @@ def select_filtered_partitioned_rows(
 ) -> pd.DataFrame:
     if duckdb is None:
         return pd.DataFrame()
+
+    if columns is None:
+        select_expr = "*"
+    else:
+        selected = list(dict.fromkeys(str(col) for col in columns if str(col) in available_cols))
+        select_expr = ", ".join(quote_ident(col) for col in selected) or "*"
 
     if is_cloud_mode():
         # In S3 mode, convert paths to s3:// URIs - skip local exists check
@@ -935,7 +978,7 @@ def select_filtered_partitioned_rows(
         dfs = []
         for uri in uris:
             try:
-                df = run_df(f"SELECT * FROM read_parquet(?){where_clause}", [uri] + filter_params)
+                df = run_df(f"SELECT {select_expr} FROM read_parquet(?){where_clause}", [uri] + filter_params)
                 if not df.empty:
                     dfs.append(df)
             except Exception as e:
@@ -946,7 +989,7 @@ def select_filtered_partitioned_rows(
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     else:
         placeholders = ", ".join("?" for _ in uris)
-        sql = f"SELECT * FROM read_parquet([{placeholders}]){where_clause}"
+        sql = f"SELECT {select_expr} FROM read_parquet([{placeholders}]){where_clause}"
         return run_df(sql, list(uris) + filter_params)
 
 
