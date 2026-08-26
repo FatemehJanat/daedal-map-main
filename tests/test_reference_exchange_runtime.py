@@ -57,7 +57,25 @@ class ReferenceExchangeRuntimeTests(unittest.TestCase):
         candidate = payload["candidates"][0]
         self.assertEqual(candidate["match_rate"], 1.0)
         self.assertEqual(candidate["geometry_available_count"], 2)
+        self.assertEqual(
+            candidate["geometry_availability_basis"],
+            "catalog_bank_for_exact_system_level",
+        )
         self.assertIn("usa_admin3_census_2020", candidate["geometry_bank_ids"])
+
+    def test_identify_census_geoids_does_not_scan_geometry_rows(self) -> None:
+        with mock.patch(
+            "mapmover.runtime.reference_identification._geometry_rows"
+        ) as geometry_rows:
+            payload = identify_reference_system(
+                ["06073000100", "06073000201"],
+                expected={"system": "census_geoid", "geo_level": "tract", "vintage": "2020"},
+                country_scope="USA",
+            )
+
+        self.assertEqual(payload["status"], "matched")
+        self.assertEqual(payload["candidates"][0]["geometry_available_count"], 2)
+        geometry_rows.assert_not_called()
 
     def test_identify_five_digit_codes_reports_census_zcta_ambiguity(self) -> None:
         payload = identify_reference_system(["06037"], country_scope="USA")

@@ -194,14 +194,11 @@ def _candidate(
     method: str,
     expected_vintage: str | None = None,
     country_scope: str = "",
+    use_catalog_bank_coverage: bool = False,
 ) -> dict[str, Any]:
     matched_identifiers = [value for value in identifiers if matches.get(value)]
     loc_ids = list(dict.fromkeys(loc_id for value in matched_identifiers for loc_id in matches[value]))
-    geometry = _geometry_rows(loc_ids)
-    shape_ids = {loc_id for loc_id, row in geometry.items() if row.get("has_shape")}
     level_values = sorted({level for level in (levels or {}).values() if level})
-    bank_ids = sorted({str(geometry[loc_id].get("bank_id")) for loc_id in shape_ids if geometry[loc_id].get("bank_id")})
-    geometry_vintages = sorted({str(geometry[loc_id].get("geometry_vintage")) for loc_id in shape_ids if geometry[loc_id].get("geometry_vintage")})
     catalog_bank = None
     if len(level_values) == 1:
         catalog_bank = _catalog_bank(
@@ -209,8 +206,24 @@ def _candidate(
             admin_level=level_values[0],
             expected_vintage=expected_vintage,
         )
-        if catalog_bank and catalog_bank.get("bank_id") and str(catalog_bank["bank_id"]) not in bank_ids:
-            bank_ids.append(str(catalog_bank["bank_id"]))
+    # Exact Census GEOIDs already encode a maintained system and level. Once
+    # the public catalog admits the matching bank/vintage, do not scan the
+    # large hosted Admin 0-3 parquet merely to rank the identifier system. That
+    # cold R2 scan can monopolize the single hosted worker for over a minute.
+    # Exact row existence remains a conversion/get_geometry concern; this tool
+    # is identifying the system and whether its matching geometry bank exists.
+    if use_catalog_bank_coverage and catalog_bank:
+        geometry: dict[str, dict[str, Any]] = {}
+        shape_ids = set(loc_ids)
+        geometry_availability_basis = "catalog_bank_for_exact_system_level"
+    else:
+        geometry = _geometry_rows(loc_ids)
+        shape_ids = {loc_id for loc_id, row in geometry.items() if row.get("has_shape")}
+        geometry_availability_basis = "exact_geometry_row"
+    bank_ids = sorted({str(geometry[loc_id].get("bank_id")) for loc_id in shape_ids if geometry.get(loc_id, {}).get("bank_id")})
+    geometry_vintages = sorted({str(geometry[loc_id].get("geometry_vintage")) for loc_id in shape_ids if geometry.get(loc_id, {}).get("geometry_vintage")})
+    if catalog_bank and catalog_bank.get("bank_id") and str(catalog_bank["bank_id"]) not in bank_ids:
+        bank_ids.append(str(catalog_bank["bank_id"]))
     sample_matches = [
         {
             "identifier": value,
@@ -230,6 +243,7 @@ def _candidate(
         "geo_levels": level_values,
         "loc_id_resolvable": bool(loc_ids),
         "geometry_available": bool(shape_ids),
+        "geometry_availability_basis": geometry_availability_basis,
         "geometry_available_count": sum(
             1 for value in matched_identifiers if any(loc_id in shape_ids for loc_id in matches[value])
         ),
@@ -391,6 +405,7 @@ def identify_reference_system(
                 method="exact_identifier_crosswalk",
                 expected_vintage=expected_vintage or "2020",
                 country_scope=country or "USA",
+                use_catalog_bank_coverage=True,
             ))
 
     if not expected_system or expected_system == "daedalmap.loc_id":
