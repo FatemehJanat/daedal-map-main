@@ -156,6 +156,7 @@ class PublishedArtifactTests(unittest.TestCase):
             "PUBLISHED_ARTIFACT_CACHE_DIR": str(Path(temp_dir) / "cache"),
             "PUBLISHED_ARTIFACT_CACHE_ENABLED": "true",
             "PUBLISHED_ARTIFACT_CACHE_MAX_FILE_MB": "1",
+            "PUBLISHED_ARTIFACT_CACHE_QUERY_MAX_FILE_MB": "1",
         }, clear=True), mock.patch.object(
             published_artifacts, "get_runtime_config", return_value=self._config()
         ), mock.patch.object(published_artifacts, "_object_store_client", return_value=client), mock.patch.object(
@@ -166,6 +167,26 @@ class PublishedArtifactTests(unittest.TestCase):
             uri = duckdb_helpers.path_to_uri(Path(temp_dir) / "large.parquet")
 
         self.assertEqual(uri, "s3://bucket/published/large.parquet")
+        client.get_object.assert_not_called()
+
+    def test_query_path_keeps_large_parquet_remote_even_with_larger_hydration_limit(self) -> None:
+        client = mock.Mock()
+        client.head_object.return_value = {"ContentLength": 64 * 1024 * 1024, "ETag": '"large"'}
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "S3_BUCKET": "bucket", "S3_PREFIX": "published",
+            "PUBLISHED_ARTIFACT_CACHE_ENABLED": "true",
+            "PUBLISHED_ARTIFACT_CACHE_MAX_FILE_MB": "1024",
+            "PUBLISHED_ARTIFACT_CACHE_QUERY_MAX_FILE_MB": "32",
+        }, clear=True), mock.patch.object(
+            published_artifacts, "get_runtime_config", return_value=self._config()
+        ), mock.patch.object(published_artifacts, "_object_store_client", return_value=client), mock.patch.object(
+            duckdb_helpers, "is_cloud_mode", return_value=True
+        ), mock.patch.object(duckdb_helpers, "_allow_local_source_fallback", return_value=False), mock.patch.object(
+            duckdb_helpers, "_get_data_root", return_value=Path(temp_dir)
+        ):
+            uri = duckdb_helpers.path_to_uri(Path(temp_dir) / "geometry" / "countries" / "USA" / "admin_spine.parquet")
+
+        self.assertEqual(uri, "s3://bucket/published/geometry/countries/USA/admin_spine.parquet")
         client.get_object.assert_not_called()
 
     def test_recent_cache_path_is_not_unlinked_during_eviction(self) -> None:

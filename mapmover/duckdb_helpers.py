@@ -110,7 +110,22 @@ def path_to_uri(local_path: Path) -> str:
     data_root = _get_data_root()
 
     try:
-        return resolve_data_artifact_uri(local_path, data_root=data_root, lane="active")
+        # Do not hydrate large parquet inputs merely to execute a selective
+        # DuckDB query.  Hydrating a 100+ MB country spine turns an exact
+        # loc_id lookup into a full object download and can consume the entire
+        # hosted response budget.  DuckDB/httpfs is explicitly configured for
+        # remote range reads, so keep larger files authoritative in object
+        # storage and hydrate only small, repeatedly reused query artifacts.
+        max_query_cache_bytes = max(
+            0,
+            int(float(os.environ.get("PUBLISHED_ARTIFACT_CACHE_QUERY_MAX_FILE_MB", "32")) * 1024 * 1024),
+        )
+        return resolve_data_artifact_uri(
+            local_path,
+            data_root=data_root,
+            lane="active",
+            max_bytes=max_query_cache_bytes,
+        )
     except ValueError:
         pass
 
