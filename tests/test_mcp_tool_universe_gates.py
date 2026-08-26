@@ -208,6 +208,44 @@ class DataHelperTelemetryTests(unittest.TestCase):
         self.assertEqual(analytics["error_code"], "pack_not_found")
 
 
+class CatalogDrivenPackFacadeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        app = FastAPI()
+        app.include_router(mcp_router)
+        self.client = TestClient(app)
+
+    def test_new_catalog_pack_gets_generic_mcp_facade_without_registry_edit(self) -> None:
+        catalog = {"packs": [{
+            "pack_id": "future_pack",
+            "title": "Future Pack",
+            "short_description": "A newly catalog-admitted pack.",
+            "category": "environment",
+        }]}
+        with mock.patch("mapmover.routes.mcp.load_api_catalog", return_value=catalog):
+            response = self.client.get("/mcp/future_pack")
+            listed = self.client.post(
+                "/mcp/future_pack",
+                json={"jsonrpc": "2.0", "id": "new-pack", "method": "tools/list", "params": {}},
+            )
+            resources = self.client.post(
+                "/mcp/future_pack",
+                json={"jsonrpc": "2.0", "id": "new-pack-resources", "method": "resources/list", "params": {}},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["serverInfo"]["name"], "com.daedalmap/future_pack")
+        self.assertEqual(response.json()["serverInfo"]["title"], "Future Pack")
+        names = {item["name"] for item in listed.json()["result"]["tools"]}
+        self.assertEqual(names, {"get_tool_help", "get_catalog", "get_pack", "query_dataset"})
+        uris = {item["uri"] for item in resources.json()["result"]["resources"]}
+        self.assertIn("daedalmap://pack/future_pack", uris)
+
+    def test_pack_absent_from_catalog_has_no_generic_facade(self) -> None:
+        with mock.patch("mapmover.routes.mcp.load_api_catalog", return_value={"packs": []}):
+            response = self.client.get("/mcp/not_published")
+        self.assertEqual(response.status_code, 404)
+
+
 class BlindCallerHelpTests(unittest.TestCase):
     def setUp(self) -> None:
         app = FastAPI()

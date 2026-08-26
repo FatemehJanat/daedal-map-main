@@ -149,14 +149,49 @@ def _paid_pack_ids() -> frozenset[str]:
 
 def _normalize_pack_id(pack_id: str | None) -> str | None:
     normalized = str(pack_id or "").strip().lower()
-    return normalized if normalized in PACK_SERVER_PROFILES else None
+    if normalized in PACK_SERVER_PROFILES:
+        return normalized
+    return normalized if _api_catalog_pack(normalized) is not None else None
+
+
+def _api_catalog_pack(pack_id: str | None) -> dict[str, Any] | None:
+    normalized = str(pack_id or "").strip().lower()
+    if not normalized:
+        return None
+    for pack in (load_api_catalog() or {}).get("packs") or []:
+        if not isinstance(pack, dict):
+            continue
+        if str(pack.get("pack_id") or "").strip().lower() == normalized:
+            return dict(pack)
+    return None
+
+
+def _server_profile(pack_id: str) -> dict[str, Any]:
+    static = PACK_SERVER_PROFILES.get(pack_id)
+    if static:
+        return dict(static)
+    pack = _api_catalog_pack(pack_id) or {}
+    title = str(pack.get("title") or pack.get("pack_name") or pack_id.replace("_", " ").title())
+    description = str(pack.get("short_description") or pack.get("description") or f"DaedalMap {title} data pack.")
+    category = str(pack.get("category") or "data").strip()
+    return {
+        "name": f"com.daedalmap/{pack_id}",
+        "title": title,
+        "description": description,
+        "registry_meta": {
+            "categories": [value for value in (category, "data", "geospatial") if value],
+            "highlights": [description],
+        },
+    }
 
 
 def _facade_tool_names(pack_id: str | None) -> set[str] | None:
     normalized = _normalize_pack_id(pack_id)
     if not normalized:
         return None
-    return set(PACK_TOOL_ALLOWLIST.get(normalized) or {"get_catalog", "get_pack"})
+    return set(PACK_TOOL_ALLOWLIST.get(normalized) or {
+        "get_tool_help", "get_catalog", "get_pack", "query_dataset",
+    })
 
 
 def _tool_allowed_for_facade(tool_name: str, pack_id: str | None) -> bool:
@@ -174,8 +209,13 @@ def _facade_tools(pack_id: str | None) -> list[dict[str, Any]]:
 
 def _tool_facade_urls(tool_name: str) -> list[str]:
     urls = ["/mcp"]
-    for pack_id in sorted(PACK_TOOL_ALLOWLIST):
-        if tool_name in PACK_TOOL_ALLOWLIST[pack_id]:
+    catalog_pack_ids = {
+        str(pack.get("pack_id") or "").strip().lower()
+        for pack in (load_api_catalog() or {}).get("packs") or []
+        if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
+    }
+    for pack_id in sorted(set(PACK_TOOL_ALLOWLIST) | catalog_pack_ids):
+        if tool_name in _facade_tool_names(pack_id):
             urls.append(f"/mcp/{pack_id}")
     return urls
 
@@ -1019,7 +1059,7 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
     normalized = _normalize_pack_id(pack_id)
     if not normalized:
         return dict(SERVER_INFO)
-    profile = PACK_SERVER_PROFILES[normalized]
+    profile = _server_profile(normalized)
     return {
         "name": profile["name"],
         "title": profile["title"],
@@ -1046,7 +1086,7 @@ def get_server_description(pack_id: str | None = None) -> str:
             build_mcp_instructions(safety_notice=AGENT_SAFETY_NOTICE)
             + " Call prompts/list for ready-to-use example tool calls."
         )
-    return f"{PACK_SERVER_PROFILES[normalized]['description']} Safety: {AGENT_SAFETY_NOTICE}"
+    return f"{_server_profile(normalized)['description']} Safety: {AGENT_SAFETY_NOTICE}"
 
 
 def get_server_registry_meta(pack_id: str | None = None) -> dict[str, Any]:
@@ -1062,7 +1102,7 @@ def get_server_registry_meta(pack_id: str | None = None) -> dict[str, Any]:
                 "Free discovery plus mixed free and paid structured retrieval",
             ],
         }
-    profile = PACK_SERVER_PROFILES[normalized]
+    profile = _server_profile(normalized)
     return dict(profile.get("registry_meta") or {})
 
 
@@ -1507,16 +1547,22 @@ def _resource_definitions() -> list[dict[str, Any]]:
             "mimeType": "text/markdown",
         },
     ]
-    pack_resources = [
-        {
+    catalog_pack_ids = {
+        str(pack.get("pack_id") or "").strip().lower()
+        for pack in (load_api_catalog() or {}).get("packs") or []
+        if isinstance(pack, dict) and str(pack.get("pack_id") or "").strip()
+    }
+    pack_resources = []
+    for pid in sorted(set(PACK_SERVER_PROFILES) | catalog_pack_ids):
+        profile = _server_profile(pid)
+        title = str(profile.get("title") or pid.replace("_", " ").title())
+        pack_resources.append({
             "uri": f"daedalmap://pack/{pid}",
-            "name": f"{profile['title']} Pack",
-            "title": f"{profile['title']} Pack Detail",
+            "name": f"{title} Pack",
+            "title": f"{title} Pack Detail",
             "description": f"Pack detail and quick-start metadata for the {pid} lane.",
             "mimeType": "application/json",
-        }
-        for pid, profile in PACK_SERVER_PROFILES.items()
-    ]
+        })
     links = [
         {
             "uri": "daedalmap://links",

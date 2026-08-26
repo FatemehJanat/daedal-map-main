@@ -1,18 +1,9 @@
 from __future__ import annotations
 
-from pack_registry_shared import published_pack_ids
 from pack_pricing_shared import FREE_PACK_IDS, PAID_PACK_IDS
 
-
-CURRENT_HOSTED_PACK_IDS: tuple[str, ...] = published_pack_ids()
-
-
 def _pack_id_description() -> str:
-    return (
-        "Pack identifier such as 'currency', 'earthquakes', 'floods', "
-        "'hurricanes', 'tornadoes', 'tsunamis', 'un_sdg', 'volcanoes', "
-        "'world_factbook', or 'worldpop'."
-    )
+    return "Pack identifier from get_catalog. Newly catalog-admitted packs require no MCP schema change."
 
 
 def _query_props() -> dict:
