@@ -1,5 +1,6 @@
 """Geometry API router endpoints."""
 
+import asyncio
 import os
 import hashlib
 import time
@@ -352,7 +353,7 @@ async def get_selection_geometry_endpoint(req: Request):
                 413,
             )
 
-        result = get_selection_geometries_handler(loc_ids)
+        result = await asyncio.to_thread(get_selection_geometries_handler, loc_ids)
         return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/selection: {e}")
@@ -379,7 +380,8 @@ async def get_geometry_features_endpoint(req: Request):
                 f"loc_ids must be a list of at most {MAX_SELECTION_LOC_IDS} ids",
                 413,
             )
-        return msgpack_response(get_selection_geometries_handler(loc_ids))
+        result = await asyncio.to_thread(get_selection_geometries_handler, loc_ids)
+        return msgpack_response(result)
     except Exception as e:
         logger.error(f"Error in /geometry/features: {e}")
         return msgpack_error(str(e), 500)
