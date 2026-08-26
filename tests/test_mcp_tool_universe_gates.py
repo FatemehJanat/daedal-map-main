@@ -261,6 +261,18 @@ class BlindCallerHelpTests(unittest.TestCase):
         self.assertEqual(validate_tool_guidance(names), [])
         self.assertEqual(validate_guidance_examples(definitions), [])
 
+    def test_geometry_get_info_advertises_cold_start_sequence(self) -> None:
+        response = self.client.get("/mcp/geography")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("howToStart", payload)
+        self.assertGreaterEqual(len(payload["howToStart"]), 3)
+        self.assertIn("how_geometry_works", payload["tools"])
+        self.assertIn("get_tool_help", payload["tools"])
+        self.assertTrue(any("how_geometry_works" in step for step in payload["howToStart"]))
+        self.assertTrue(any("get_tool_help" in step for step in payload["howToStart"]))
+
     def test_every_narrow_facade_exposes_the_free_help_tool(self) -> None:
         from pack_registry_shared import pack_tool_allowlists
 

@@ -4339,12 +4339,27 @@ async def mcp_endpoint_info(pack_id: str | None = None):
     normalized_pack_id = _normalize_pack_id(pack_id)
     if pack_id and not normalized_pack_id:
         return JSONResponse({"error": "Pack MCP facade not found"}, status_code=404)
+    if normalized_pack_id in {"geography", "reverse-geocoding", "boundaries"}:
+        how_to_start = [
+            "Call how_geometry_works for the family workflow.",
+            "Call read_geometry_catalog with view='capabilities' and a country_scope when known.",
+            "Call get_tool_help with an exact name from tools/list before an unfamiliar tool.",
+            "Use resolve_point for coordinates or identify_reference_system and resolve_reference for outside identifiers.",
+            "Use check_geometry before get_geometry when you need a shape.",
+        ]
+    else:
+        how_to_start = [
+            "Read the server instructions and call tools/list.",
+            "Call get_tool_help with an exact tool name before an unfamiliar tool.",
+            "Use discovery tools before constructing an execution call.",
+        ]
     response = JSONResponse(
         {
             "serverInfo": get_server_info(normalized_pack_id),
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "transport": "streamable-http",
             "instructions": get_server_description(normalized_pack_id),
+            "howToStart": how_to_start,
             "tools": [tool["name"] for tool in _facade_tools(normalized_pack_id)],
         }
     )
