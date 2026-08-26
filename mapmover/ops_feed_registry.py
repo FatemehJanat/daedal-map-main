@@ -9,6 +9,9 @@ are explicit flags on each record.
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +55,15 @@ OPS_DISPLAY_CONTRACT_SCHEMA_VERSION = 3
 OPS_CHAT_DEFAULT_SCHEMA_VERSION = 5
 OPS_SITE_PROFILE_SCHEMA_VERSION = 4
 OPS_LICENSE_POLICY_SCHEMA_VERSION = 6
+try:
+    OPS_FEED_REGISTRY_CACHE_TTL_SECONDS = max(
+        30,
+        min(int(os.environ.get("OPS_FEED_REGISTRY_CACHE_TTL_SECONDS", "300")), 3600),
+    )
+except ValueError:
+    OPS_FEED_REGISTRY_CACHE_TTL_SECONDS = 300
+_OPS_FEED_REGISTRY_CACHE_LOCK = threading.Lock()
+_OPS_FEED_REGISTRY_CACHE: tuple[float, list[dict]] | None = None
 
 
 def _validate_display_contract(feed_id: str, record: dict[str, Any]) -> list[str]:
@@ -214,6 +226,14 @@ def validate_ops_feed_registry(payload: Any, *, strict: bool = True) -> list[str
 
 def load_ops_feed_records(path: Path | None = None) -> list[dict]:
     """Return valid logical feed records, failing closed for malformed rows."""
+    global _OPS_FEED_REGISTRY_CACHE
+    if path is None:
+        now = time.monotonic()
+        with _OPS_FEED_REGISTRY_CACHE_LOCK:
+            cached = _OPS_FEED_REGISTRY_CACHE
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
     try:
         payload = json.loads((path or REGISTRY_PATH).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -235,7 +255,7 @@ def load_ops_feed_records(path: Path | None = None) -> list[dict]:
     if basic_errors:
         return []
     chat_defaults = payload.get("chat_defaults") if isinstance(payload.get("chat_defaults"), dict) else {}
-    return [
+    result = [
         {
             **record,
             **({"chat_default": chat_defaults[str(record.get("feed_id") or "").strip()]}
@@ -246,6 +266,19 @@ def load_ops_feed_records(path: Path | None = None) -> list[dict]:
         for record in records
         if isinstance(record, dict) and str(record.get("feed_id") or "").strip()
     ]
+    if path is None:
+        with _OPS_FEED_REGISTRY_CACHE_LOCK:
+            _OPS_FEED_REGISTRY_CACHE = (
+                time.monotonic() + OPS_FEED_REGISTRY_CACHE_TTL_SECONDS,
+                result,
+            )
+    return result
+
+
+def clear_ops_feed_registry_cache() -> None:
+    global _OPS_FEED_REGISTRY_CACHE
+    with _OPS_FEED_REGISTRY_CACHE_LOCK:
+        _OPS_FEED_REGISTRY_CACHE = None
 
 
 def ops_feed_ids(*, flag: str = "runtime_enabled") -> tuple[str, ...]:

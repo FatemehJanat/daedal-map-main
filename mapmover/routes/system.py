@@ -1,5 +1,6 @@
 """System, settings, queue, and cache API router endpoints."""
 
+import asyncio
 import csv
 import hashlib
 import io
@@ -184,7 +185,7 @@ async def admin_access_policy_activate(req: Request):
 
 def _start_runtime_prewarm_threads() -> list[str]:
     started: list[str] = []
-    task_names = ["public_pack_catalog"]
+    task_names = ["control_catalogs", "public_pack_catalog"]
     try:
         from mapmover.duckdb_helpers import is_cloud_mode
         if is_cloud_mode():
@@ -192,6 +193,13 @@ def _start_runtime_prewarm_threads() -> list[str]:
     except Exception:
         pass
     begin_prewarm(task_names)
+    try:
+        from mapmover.control_catalog_prewarm import prewarm_control_catalogs
+
+        run_prewarm_task("control_catalogs", prewarm_control_catalogs)
+        started.append("control_catalogs")
+    except Exception as exc:
+        logger.warning("Runtime refresh: control catalog prewarm failed: %s", exc)
     try:
         run_prewarm_task("public_pack_catalog", prewarm_public_pack_catalog)
         started.append("public_pack_catalog")
@@ -2693,6 +2701,7 @@ async def set_local_data_plane(req: Request):
     from mapmover.foundation_helpers import clear_foundation_helper_cache
     from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
     from mapmover.paths import RUNTIME_MODE
+    from mapmover.ops_feed_registry import clear_ops_feed_registry_cache
     from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
     from mapmover.runtime_config import get_data_plane_mode, set_local_data_plane_mode
 
@@ -2721,6 +2730,7 @@ async def set_local_data_plane(req: Request):
 
     _dl.clear_catalog_cache()
     _dl.clear_api_discovery_cache()
+    clear_ops_feed_registry_cache()
     clear_geometry_catalog_cache()
     clear_foundation_helper_cache()
     clear_geometry_cache()
@@ -3191,6 +3201,7 @@ async def admin_catalog_refresh(req: Request):
     Restricted to master plan and is_admin users only.
     """
     import mapmover.data_loading as _dl
+    from mapmover.ops_feed_registry import clear_ops_feed_registry_cache
     from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
@@ -3207,15 +3218,17 @@ async def admin_catalog_refresh(req: Request):
     api_pack_count = None
 
     if surface in {"all", "runtime"}:
-        _dl._catalog_cache = None
-        _dl._catalog_cache_time = 0.0
-        _dl._catalog_missing_time = 0.0
+        from mapmover.control_catalog_prewarm import prewarm_control_catalogs
+
+        _dl.clear_catalog_cache()
+        clear_ops_feed_registry_cache()
         clear_metadata_cache()
         clear_public_pack_catalog_cache()
         clear_release_marker_cache()
         clear_geometry_catalog_cache()
         initialize_catalog()
-        source_count = len((_dl.load_catalog() or {}).get("sources", []))
+        control_counts = await asyncio.to_thread(prewarm_control_catalogs)
+        source_count = control_counts["published"]
         refreshed.append("runtime")
 
     if surface in {"all", "agent"}:
@@ -3243,6 +3256,7 @@ async def admin_runtime_refresh(req: Request):
     from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
     from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
     from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+    from mapmover.ops_feed_registry import clear_ops_feed_registry_cache
     from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
@@ -3256,6 +3270,7 @@ async def admin_runtime_refresh(req: Request):
     clear_public_pack_catalog_cache()
     clear_release_marker_cache()
     _dl.clear_api_discovery_cache()
+    clear_ops_feed_registry_cache()
     clear_geometry_catalog_cache()
     clear_geometry_cache()
     clear_data_cascade_cache()
@@ -3264,7 +3279,7 @@ async def admin_runtime_refresh(req: Request):
     cleared_sessions = session_manager.clear_all()
     cleared_corpora = corpus_registry.clear_all()
     initialize_catalog()
-    started_prewarmers = _start_runtime_prewarm_threads()
+    started_prewarmers = await asyncio.to_thread(_start_runtime_prewarm_threads)
 
     payload = {
         "ok": True,
@@ -3275,6 +3290,7 @@ async def admin_runtime_refresh(req: Request):
             "public_pack_catalog": True,
             "release_markers": True,
             "api_discovery": True,
+            "ops_feed_registry": True,
             "geometry": True,
             "data_cascade": True,
             "duckdb_dataframe_cache": True,
@@ -3296,6 +3312,7 @@ async def admin_runtime_soft_refresh(req: Request):
     from mapmover.data_cascade import clear_cache as clear_data_cascade_cache
     from mapmover.duckdb_helpers import cache_clear, reset_thread_connection_pool
     from mapmover.geometry_handlers import clear_cache as clear_geometry_cache
+    from mapmover.ops_feed_registry import clear_ops_feed_registry_cache
     from mapmover.runtime.geometry_catalog import clear_geometry_catalog_cache
 
     forbidden = _admin_catalog_refresh_forbidden_response(req)
@@ -3309,11 +3326,15 @@ async def admin_runtime_soft_refresh(req: Request):
     clear_public_pack_catalog_cache()
     clear_release_marker_cache()
     _dl.clear_api_discovery_cache()
+    clear_ops_feed_registry_cache()
     clear_geometry_catalog_cache()
     clear_geometry_cache()
     clear_data_cascade_cache()
     cache_clear()
     duckdb_generation = reset_thread_connection_pool()
+    from mapmover.control_catalog_prewarm import prewarm_control_catalogs
+
+    await asyncio.to_thread(prewarm_control_catalogs)
 
     payload = {
         "ok": True,
@@ -3324,6 +3345,7 @@ async def admin_runtime_soft_refresh(req: Request):
             "public_pack_catalog": True,
             "release_markers": True,
             "api_discovery": True,
+            "ops_feed_registry": True,
             "geometry": True,
             "data_cascade": True,
             "duckdb_dataframe_cache": True,
@@ -3331,7 +3353,7 @@ async def admin_runtime_soft_refresh(req: Request):
             "session_caches": False,
             "corpus_registry": False,
         },
-        "prewarmers_started": [],
+        "prewarmers_started": ["control_catalogs"],
         "notes": [
             "Active session and corpus memory were preserved.",
             "Warm DuckDB connections will rebuild lazily on the next query.",

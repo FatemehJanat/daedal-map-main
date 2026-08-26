@@ -285,22 +285,34 @@ async def lifespan(app: FastAPI):
     # DataFrame cache, and the geometry cache so cold object-storage fetches do not hit
     # the first user requests.
     try:
+        from mapmover.control_catalog_prewarm import prewarm_control_catalogs
         from mapmover.data_loading import prewarm_api_catalog
         from mapmover.default_load_prewarm import prewarm_catalog_default_loads
         from mapmover.duckdb_helpers import is_cloud_mode, prewarm_disaster_sources
         from mapmover.geometry_handlers import prewarm_geometry
         from mapmover.paths import GLOBAL_DIR
-        tasks = ["public_pack_catalog", "api_catalog"]
+        tasks = ["control_catalogs", "public_pack_catalog", "api_catalog"]
         if is_cloud_mode():
             tasks.extend(["disasters", "catalog_default_loads", "geometry"])
         begin_prewarm(tasks)
-        t_public_catalog = threading.Thread(
-            target=run_prewarm_task,
-            args=("public_pack_catalog", prewarm_public_pack_catalog),
+
+        def prewarm_control_then_public_catalog() -> None:
+            # Both warmers use the published catalog. Keep them ordered so two
+            # startup threads do not race on the same cold object-store read.
+            try:
+                run_prewarm_task("control_catalogs", prewarm_control_catalogs)
+            finally:
+                run_prewarm_task(
+                    "public_pack_catalog",
+                    prewarm_public_pack_catalog,
+                )
+
+        t_control_catalogs = threading.Thread(
+            target=prewarm_control_then_public_catalog,
             daemon=True,
-            name="prewarm-public-pack-catalog",
+            name="prewarm-control-catalogs",
         )
-        t_public_catalog.start()
+        t_control_catalogs.start()
         t_api_catalog = threading.Thread(
             target=run_prewarm_task,
             args=("api_catalog", prewarm_api_catalog),
@@ -333,9 +345,9 @@ async def lifespan(app: FastAPI):
             )
             t_geom.start()
 
-            logger.info("Pre-warmers started: public-pack-catalog + api-catalog + disasters + catalog-default-loads + geometry")
+            logger.info("Pre-warmers started: control-catalogs + public-pack-catalog + api-catalog + disasters + catalog-default-loads + geometry")
         else:
-            logger.info("Pre-warmers started: public-pack-catalog + api-catalog")
+            logger.info("Pre-warmers started: control-catalogs + public-pack-catalog + api-catalog")
     except Exception as exc:
         logger.warning("Pre-warmer failed to start: %s", exc)
 
