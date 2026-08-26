@@ -81,7 +81,15 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         self.assertNotIn("family_to_admin", tool_names)
         self.assertNotIn("admin_to_family", tool_names)
 
-    def test_geography_facade_has_pre_one_registry_identity(self) -> None:
+        catalog_tool = next(
+            tool for tool in envelope["result"]["tools"]
+            if tool["name"] == "read_geometry_catalog"
+        )
+        catalog_views = catalog_tool["inputSchema"]["properties"]["view"]["enum"]
+        self.assertIn("crosswalk_artifacts", catalog_views)
+        self.assertNotIn("bridges", catalog_views)
+
+    def test_geography_facade_has_coordinated_registry_identity(self) -> None:
         envelope = _mcp_call(
             self.client,
             "initialize",
@@ -89,7 +97,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         )
 
         self.assertEqual(envelope["result"]["serverInfo"]["name"], "com.daedalmap/geography")
-        self.assertEqual(envelope["result"]["serverInfo"]["version"], "0.4.0")
+        self.assertEqual(envelope["result"]["serverInfo"]["version"], "1.0.4")
 
     def test_large_structured_tool_result_summarizes_text_copy(self) -> None:
         payload = {

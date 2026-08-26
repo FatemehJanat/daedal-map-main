@@ -223,7 +223,7 @@ def build_tool_definitions() -> list[dict]:
                 "properties": {
                     "view": {
                         "type": "string",
-                        "enum": ["capabilities", "summary", "countries", "admin_coverage", "bridges", "crosswalks", "products", "named_reference_objects", "full"],
+                        "enum": ["capabilities", "summary", "countries", "admin_coverage", "crosswalk_artifacts", "crosswalks", "products", "named_reference_objects", "full"],
                         "description": "Catalog view to return. Use capabilities for the concise first-user coverage model. Default summary for compatibility.",
                     },
                     "limit": {
@@ -331,7 +331,7 @@ def build_tool_definitions() -> list[dict]:
                         },
                         "description": "Reference values to resolve in one call. Default public cap is deployment-configurable.",
                     },
-                    "iso3": {"type": "string", "description": "Country hint for system-specific bridges. Default USA."},
+                    "iso3": {"type": "string", "description": "Country hint for system-specific crosswalks. Default USA."},
                     "target_admin_level": {"anyOf": [{"type": "string"}, {"type": "integer"}], "description": "Admin target level for crosswalk-backed resolution. Default admin_2. Accepts admin_0..admin_5, 0..5, or names such as country, state, county, tract, block_group, or block."},
                     "relationship_vintage": {"type": "string", "description": "Optional relationship vintage to require, such as usa_geometry_current or census_2020_relationship_files."},
                     "min_share": {"type": "number", "minimum": 0, "maximum": 1, "description": "Optional minimum area-share threshold for overlap matches."},

@@ -57,6 +57,48 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(agent.json()["packs"][0]["pack_id"], "demo")
         self.assertEqual(legacy_agent.json(), agent.json())
 
+    def test_geometry_server_cards_match_each_facade_tool_menu(self) -> None:
+        expected_tools = {
+            "geography": {
+                "get_tool_help", "how_geometry_works", "get_catalog", "get_pack",
+                "resolve_point", "loc_id_info", "read_geometry_catalog",
+                "list_reference_systems", "identify_reference_system",
+                "resolve_reference", "convert_reference", "check_geometry",
+                "compare_geographies", "get_geometry", "resolve_loc_id_scope",
+                "estimate_geometry_package", "create_geometry_export",
+                "estimate_conversion_job", "create_conversion_job", "get_job_status",
+            },
+            "reverse-geocoding": {
+                "get_tool_help", "get_catalog", "get_pack", "resolve_point",
+            },
+            "boundaries": {
+                "get_tool_help", "get_catalog", "get_pack", "loc_id_info",
+                "check_geometry", "compare_geographies", "get_geometry",
+                "resolve_loc_id_scope", "estimate_geometry_package",
+                "create_geometry_export", "get_job_status",
+            },
+        }
+
+        for facade_id, expected in expected_tools.items():
+            with self.subTest(facade_id=facade_id):
+                response = self.client.get(f"/.well-known/mcp/{facade_id}/server-card.json")
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                actual = {tool["name"] for tool in payload["tools"]}
+                self.assertEqual(actual, expected)
+                self.assertEqual(payload["metadata"]["facade_id"], facade_id)
+                self.assertEqual(payload["metadata"]["tool_count"], len(expected))
+                self.assertNotIn("query_dataset", actual)
+                self.assertEqual(payload["resources"][0]["name"], "geometry_catalog")
+
+        geography = self.client.get(
+            "/.well-known/mcp/geography/server-card.json"
+        ).json()
+        paid_by_name = {tool["name"]: tool["paid"] for tool in geography["tools"]}
+        self.assertTrue(paid_by_name["resolve_point"])
+        self.assertTrue(paid_by_name["create_geometry_export"])
+        self.assertFalse(paid_by_name["read_geometry_catalog"])
+
     def test_catalog_routes_share_discovery_rate_limit_surface(self) -> None:
         for path in (
             "/api/v1/catalog",
@@ -400,8 +442,11 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
 
     def test_geometry_catalog_loads_from_object_store_in_cloud_mode(self) -> None:
         class FakeObjectStore:
+            def __init__(self):
+                self.calls = []
+
             def get_object(self, **kwargs):
-                self.kwargs = kwargs
+                self.calls.append(kwargs)
                 return {
                     "Body": io.BytesIO(json.dumps({
                         "schema_version": 1,
@@ -422,8 +467,11 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                 payload = geometry_catalog.load_geometry_catalog()
 
         self.assertEqual(payload["geometry_banks"][0]["bank_id"], "cloud_bank")
-        self.assertEqual(store.kwargs["Bucket"], "test-bucket")
-        self.assertEqual(store.kwargs["Key"], "published/geometry/geometry_catalog.json")
+        self.assertTrue(all(call["Bucket"] == "test-bucket" for call in store.calls))
+        self.assertIn(
+            "published/geometry/geometry_catalog.json",
+            {call["Key"] for call in store.calls},
+        )
         geometry_catalog.clear_geometry_catalog_cache()
 
     def test_geometry_catalog_exposes_country_admin_spine_depth(self) -> None:

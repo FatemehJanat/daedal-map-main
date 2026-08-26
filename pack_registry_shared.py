@@ -369,6 +369,7 @@ PACK_REGISTRY: dict[str, dict] = {
             "get_job_status",
         ),
         "mcp_name": "com.daedalmap/geography",
+        "mcp_version": "1.0.4",
         "mcp_title": "DaedalMap Geography Tools (loc_id)",
         "mcp_description": "Geography utilities built on the DaedalMap loc_id spine. Point lookup returns a compact latest-available chain; separate tools provide identity details, strict hierarchy, references, relationships, shapes, and exports. A utility family, not a queryable dataset pack. Interactive discovery and small lookups are free; large batches and exports may be quoted.",
         "registry_meta": {
@@ -410,6 +411,7 @@ PACK_REGISTRY: dict[str, dict] = {
         "pricing": "mixed",
         "mcp_tool_allowlist": ("get_catalog", "get_pack", "resolve_point"),
         "mcp_name": "com.daedalmap/reverse-geocoding",
+        "mcp_version": "1.0.4",
         "mcp_title": "DaedalMap Reverse Geocoding (coordinates to loc_id)",
         "mcp_description": "Compact reverse geocoding: convert one WGS84 point or a small point batch into the complete latest-available administrative loc_id chain. Use the main geography family's loc_id_info or get_geometry tools only when details or shapes are requested.",
         "registry_meta": {
@@ -443,6 +445,7 @@ PACK_REGISTRY: dict[str, dict] = {
             "get_job_status",
         ),
         "mcp_name": "com.daedalmap/boundaries",
+        "mcp_version": "1.0.4",
         "mcp_title": "DaedalMap Administrative Boundaries (loc_id to polygon)",
         "mcp_description": "Boundaries: a loc_id to its bounding box, centroid, and polygon, plus name and admin level.",
         "registry_meta": {
@@ -727,6 +730,7 @@ def pack_mcp_server_profile(pack_id: str | None) -> dict:
         "name": profile.get("mcp_name"),
         "title": profile.get("mcp_title"),
         "description": profile.get("mcp_description"),
+        "version": profile.get("mcp_version"),
         "pricing": profile.get("pricing"),
         "registry_meta": dict(profile.get("registry_meta") or {}),
     }

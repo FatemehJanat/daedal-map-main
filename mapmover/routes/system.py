@@ -1564,7 +1564,7 @@ def _build_geometry_catalog_payload() -> dict:
         "collection_count": len(collections),
         "bank_count": len(banks),
         "family_count": len(families),
-        "crosswalk_artifact_count": len(crosswalks),
+        "crosswalk_artifact_count": len(crosswalk_artifacts),
         "product_count": len(assets),
         "release_package_count": len(packages),
         "named_geometry_count": len(named),
@@ -1601,7 +1601,7 @@ def _build_geometry_catalog_payload() -> dict:
                 "target_count": crosswalk.get("target_count"),
                 "relationship_vintage": crosswalk.get("relationship_vintage"),
             }
-            for crosswalk in crosswalks
+            for crosswalk in crosswalk_artifacts
         ],
     }
 
@@ -1789,12 +1789,91 @@ def _mcp_auth_notes() -> str:
     )
 
 
+def _mcp_server_card_auth_notes(pack_id: str | None) -> str:
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    if normalized in {"geography", "reverse-geocoding", "boundaries"}:
+        return (
+            "No API key required. Discovery and included calls are free; "
+            "metered hosted throughput returns an x402 price challenge before payment."
+        )
+    if normalized:
+        if _pack_is_paid(normalized):
+            return (
+                "No API key required for discovery. Data execution uses x402 on "
+                "Base mainnet with USDC and returns the exact price before payment."
+            )
+        return "No API key or payment required for this MCP facade."
+    return _mcp_auth_notes()
+
+
+def _mcp_server_card_tools(pack_id: str | None) -> list[dict]:
+    from mapmover.routes.mcp import _facade_tools
+    from tool_access_shared import tool_is_paid_bulk
+
+    normalized = _normalize_mcp_facade_pack_id(pack_id)
+    paid_named_helpers = {"get_earthquake_events", "get_tsunami_events"}
+    tools = []
+    for definition in _facade_tools(normalized):
+        name = str(definition.get("name") or "").strip()
+        if not name:
+            continue
+        paid = tool_is_paid_bulk(name) or name in paid_named_helpers
+        if name == "query_dataset":
+            paid = bool(normalized and _pack_is_paid(normalized))
+        tools.append(
+            {
+                "name": name,
+                "description": str(definition.get("description") or "").strip(),
+                "paid": paid,
+            }
+        )
+    return tools
+
+
 def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
     from mapmover.routes.mcp import get_server_description, get_server_info
+    from pack_registry_shared import pack_kind
 
     app_url = _public_app_url()
     pack_ids = _current_agent_pack_ids()
     normalized = _normalize_mcp_facade_pack_id(pack_id)
+    tools = _mcp_server_card_tools(normalized)
+    is_geometry_family = normalized in {"geography", "reverse-geocoding", "boundaries"}
+    if is_geometry_family:
+        resources = [
+            {
+                "name": "geometry_catalog",
+                "description": "Current public geometry coverage and product catalog",
+                "uri": f"{app_url}/api/v1/geometry/catalog",
+            },
+            {
+                "name": "geography_pack",
+                "description": "Tool contracts, effective access, and first-call guidance",
+                "uri": f"{app_url}/api/v1/packs/{normalized}",
+            },
+        ]
+    else:
+        resources = [
+            {
+                "name": "agent_catalog",
+                "description": "Machine-readable catalog of all live agent-ready data packs",
+                "uri": f"{app_url}/api/v1/catalog",
+            },
+            {
+                "name": "pack_details",
+                "description": "Detailed pack metadata and quick-start guidance",
+                "uri": f"{app_url}/api/v1/packs/{{pack_id}}",
+            },
+        ]
+    metadata = {
+        "loc_id_guide_url": _docs_url("/docs/loc-id"),
+        "examples_url": _docs_url("/docs/agent-examples"),
+        "tool_count": len(tools),
+    }
+    if normalized:
+        metadata.update({"facade_id": normalized, "facade_kind": pack_kind(normalized)})
+    else:
+        metadata["live_pack_ids"] = pack_ids
 
     return {
         "serverInfo": {
@@ -1806,70 +1885,12 @@ def _build_mcp_server_card_payload(pack_id: str | None = None) -> dict:
         "transport": "streamable-http",
         "authentication": {
             "type": "none",
-            "notes": (
-                _mcp_auth_notes()
-            ),
+            "notes": _mcp_server_card_auth_notes(normalized),
         },
         "pricing": _mcp_pricing_payload(normalized),
-        "tools": [
-            {
-                "name": "get_catalog",
-                "description": "List the current agent-ready packs. Free discovery.",
-                "paid": False,
-            },
-            {
-                "name": "get_pack",
-                "description": "Get detailed metadata and first-query guidance for one pack. Free discovery.",
-                "paid": False,
-            },
-            {
-                "name": "get_earthquake_events",
-                "description": "Query structured earthquake event data.",
-                "paid": True,
-                "source_id": "earthquakes_events",
-            },
-            {
-                "name": "get_volcanic_activity",
-                "description": "Query structured volcanic eruption records.",
-                "paid": False,
-                "source_id": "volcanoes_events",
-            },
-            {
-                "name": "get_tsunami_events",
-                "description": "Query structured tsunami event records.",
-                "paid": True,
-                "source_id": "tsunamis_events",
-            },
-            {
-                "name": "get_fx_rates",
-                "description": "Query structured historical FX rate data.",
-                "paid": False,
-                "source_id": "fx_usd_historical",
-            },
-            {
-                "name": "query_dataset",
-                "description": _mcp_auth_notes(),
-                "paid": False,
-                "source_id": "any",
-            },
-        ],
-        "resources": [
-            {
-                "name": "agent_catalog",
-                "description": "Machine-readable catalog of all live agent-ready data packs",
-                "uri": f"{app_url}/api/v1/catalog",
-            },
-            {
-                "name": "pack_details",
-                "description": "Detailed pack metadata and quick-start guidance",
-                "uri": f"{app_url}/api/v1/packs/{{pack_id}}",
-            },
-        ],
-        "metadata": {
-            "live_pack_ids": pack_ids,
-            "loc_id_guide_url": _docs_url("/docs/loc-id"),
-            "examples_url": _docs_url("/docs/agent-examples"),
-        },
+        "tools": tools,
+        "resources": resources,
+        "metadata": metadata,
     }
 
 

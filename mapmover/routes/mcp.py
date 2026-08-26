@@ -1063,7 +1063,7 @@ def get_server_info(pack_id: str | None = None) -> dict[str, Any]:
     return {
         "name": profile["name"],
         "title": profile["title"],
-        "version": SERVER_INFO["version"],
+        "version": profile.get("version") or SERVER_INFO["version"],
     }
 
 
@@ -1079,7 +1079,7 @@ def get_server_description(pack_id: str | None = None) -> str:
             "For coordinates, call resolve_point with lat/lon or points; it returns only the compact complete latest-available chain and defaults to the deepest served tier. Do not request geometry or relationship detail in that call. "
             "When the caller asks for details about that chain, pass its stack loc_ids to loc_id_info; use get_geometry only for shapes and compare_geographies only for overlap, topology, validity, or successor questions. Mixed-vintage point context is not strict parentage. "
             "For a user dataset with unknown or informally declared geography keys, call identify_reference_system on representative or all distinct identifiers, then pass an unambiguous geography_binding to the conversion-job tools. For one known outside geography code or name, call resolve_reference. For bulk geometry, call resolve_loc_id_scope only for one strict hierarchy, then estimate_geometry_package before create_geometry_export. "
-            "Hosted v0 geometry export and conversion creates are synchronous operations with operational safety limits (currently 250 selected geometries and 7,500 conversion rows by default) sized around a 10-20 second response budget. A direct loopback caller in RUNTIME_MODE=local has no service rate or item caps and is bounded only by its machine. Call the estimate tool or get_tool_help for the effective access lane. This facade does not promise a durable queue that is not deployed."
+            "Hosted geometry export and conversion creates are synchronous operations with operational safety limits (currently 250 selected geometries and 7,500 conversion rows by default) sized around a 10-20 second response budget. A direct loopback caller in RUNTIME_MODE=local has no service rate or item caps and is bounded only by its machine. Call the estimate tool or get_tool_help for the effective access lane. This facade does not promise a durable queue that is not deployed."
         )
     if not normalized:
         return (
