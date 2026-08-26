@@ -278,7 +278,7 @@ class BlindCallerHelpTests(unittest.TestCase):
         payload = envelope["result"]["structuredContent"]
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["access"]["pricing"], "paid_bulk_x402_base_usdc")
-        self.assertEqual(payload["access"]["limits"]["free_item_limit"], 25)
+        self.assertEqual(payload["access"]["limits"]["free_item_limit"], 100)
         self.assertEqual(payload["access"]["limits"]["paid_item_limit"], 10000)
         self.assertTrue(payload["examples"])
         self.assertEqual(payload["interaction_contract"]["natural_language_owner"], "calling_client_llm")

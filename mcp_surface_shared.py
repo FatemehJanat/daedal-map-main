@@ -171,9 +171,9 @@ def build_tool_definitions() -> list[dict]:
                     },
                     "target_admin_level": {
                         "anyOf": [{"type": "string"}, {"type": "integer"}],
-                        "description": "Stopping level such as admin_0 through admin_5. Optional for up to 25 exploratory points and required for larger batches.",
+                        "description": "Stopping level such as admin_0 through admin_5. Optional for up to 100 exploratory points and required for larger batches.",
                     },
-                    "country_scope": {"type": "string", "description": "ISO3/admin_0 loc_id scope such as USA or CAN. Optional for up to 25 exploratory points and required for larger batches; every point must belong to this one country."},
+                    "country_scope": {"type": "string", "description": "ISO3/admin_0 loc_id scope such as USA or CAN. Optional for up to 100 exploratory points and required for larger batches; every point must belong to this one country."},
                     "country_hint": {"type": "string", "description": "Alias for country_scope for clients that already use hint terminology."},
                     "bulk_preset": {"type": "string", "enum": ["global_admin_0", "global_admin_1"], "description": "Cross-country fast path that fixes the result level to admin_0 or admin_1. Use instead of country_scope; target_admin_level may be omitted."},
                     "batch_id": {"type": "string", "description": "Optional caller-supplied batch id echoed in the result."},

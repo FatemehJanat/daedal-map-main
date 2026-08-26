@@ -57,11 +57,11 @@ class ToolAccessContractTests(unittest.TestCase):
 
     def test_shared_challenge_preserves_the_canonical_quote(self) -> None:
         payload = tool_payment_required_payload(
-            "resolve_point", 26, free_limit=25, paid_limit=10_000, request_id="req-1"
+            "resolve_point", 101, free_limit=100, paid_limit=10_000, request_id="req-1"
         )
         self.assertEqual(payload["quote"]["capability_id"], "point_lookup")
         self.assertEqual(payload["quote"]["amount_usdc_base_units"], 10_200)
-        self.assertEqual(payload["limits"], {"free_batch_limit": 25, "paid_batch_limit": 10_000})
+        self.assertEqual(payload["limits"], {"free_batch_limit": 100, "paid_batch_limit": 10_000})
 
 
 if __name__ == "__main__":

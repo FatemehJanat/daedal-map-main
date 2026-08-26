@@ -248,13 +248,13 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         with mock.patch("mapmover.routes.geometry.log_api_query_event") as analytics_mock:
             response = self.client.post(
                 "/api/v1/resolve/points",
-                json={"source": "try_dataset", "batch_id": "too-many", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+                json={"source": "try_dataset", "batch_id": "too-many", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0} for _ in range(101)]},
             )
 
         self.assertEqual(response.status_code, 402)
         body = response.json()
         self.assertTrue(body["payment_required"])
-        self.assertEqual(body["limits"]["free_batch_limit"], 25)
+        self.assertEqual(body["limits"]["free_batch_limit"], 100)
         self.assertEqual(body["quote"]["capability_id"], "point_lookup")
         self.assertEqual(body["quote"]["pricing_version"], "geography-tools-2026-08-16.1")
         self.assertIsInstance(body["quote"]["amount_usdc_base_units"], int)
@@ -264,7 +264,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
         self.assertEqual(analytics["source_id"], "resolve_points")
         self.assertEqual(analytics["capability_id"], "point_lookup_batch")
         self.assertEqual(analytics["error_code"], "payment_required")
-        self.assertEqual(analytics["row_count"], 26)
+        self.assertEqual(analytics["row_count"], 101)
         self.assertEqual(analytics["metadata"]["surface"], "test_data")
 
     def test_paid_rest_point_batch_executes_and_settles_distinct_successes(self) -> None:
@@ -276,7 +276,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                 "settlement": {"settlement_id": "settle-1"},
             },
         )
-        resolved = [{"deepest_resolved_loc_id": "USA-CA-037"} for _ in range(26)]
+        resolved = [{"deepest_resolved_loc_id": "USA-CA-037"} for _ in range(101)]
         with mock.patch.dict("os.environ", {"COMMERCIAL_ACCESS_ENABLED": "1"}, clear=False):
             with (
                 mock.patch(
@@ -297,16 +297,16 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                         "request_id": "req-1",
                         "country_scope": "USA",
                         "target_admin_level": "admin_2",
-                        "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)],
+                        "points": [{"lon": -118.2, "lat": 34.0} for _ in range(101)],
                     },
                 )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["resolved_count"], 26)
+        self.assertEqual(body["resolved_count"], 101)
         self.assertEqual(body["meter_receipt"]["distinct_items_resolved"], 1)
         self.assertEqual(settle_mock.call_args.kwargs["actual_pricing"]["amount_usdc_base_units"], 0)
-        self.assertEqual(settle_mock.call_args.kwargs["meter_receipt"]["successful_items"], 26)
+        self.assertEqual(settle_mock.call_args.kwargs["meter_receipt"]["successful_items"], 101)
 
     def test_point_lookup_verified_account_gets_included_bulk(self) -> None:
         def fake_resolve(points, include_geometry=False, **_kwargs):
@@ -320,7 +320,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/resolve/points",
                 headers={"Authorization": "Bearer account-session-test"},
-                json={"source": "try_dataset", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]},
+                json={"source": "try_dataset", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(101)]},
             )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(analytics_mock.call_args.kwargs["metadata"]["included_account_bulk"])
@@ -340,11 +340,11 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             response = self.client.post(
                 "/mcp/geography",
                 headers={"Authorization": "Bearer account-mcp-test"},
-                json={"jsonrpc": "2.0", "id": "account-bulk", "method": "tools/call", "params": {"name": "resolve_point", "arguments": {"country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]}}},
+                json={"jsonrpc": "2.0", "id": "account-bulk", "method": "tools/call", "params": {"name": "resolve_point", "arguments": {"country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(101)]}}},
             )
         self.assertEqual(response.status_code, 200)
         payload = response.json()["result"]["structuredContent"]
-        self.assertEqual(payload["resolved_count"], 26)
+        self.assertEqual(payload["resolved_count"], 101)
         verifier_mock.assert_not_called()
 
     def test_rest_global_admin_0_preset_sets_bounded_resolver_plan(self) -> None:
@@ -359,7 +359,7 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/resolve/points",
                 headers={"Authorization": "Bearer account-global-test"},
-                json={"source": "try_dataset", "bulk_preset": "global_admin_0", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)]},
+                json={"source": "try_dataset", "bulk_preset": "global_admin_0", "points": [{"lon": -118.2, "lat": 34.0} for _ in range(101)]},
             )
 
         self.assertEqual(response.status_code, 200)
@@ -385,13 +385,13 @@ class PublicDiscoveryCatalogTests(unittest.TestCase):
                     response = self.client.post(
                         "/api/v1/resolve/points",
                         headers={"Authorization": "Bearer tok_test_bypass"},
-                        json={"source": "try_dataset", "batch_id": "trusted-50", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)]},
+                        json={"source": "try_dataset", "batch_id": "trusted-101", "country_scope": "USA", "target_admin_level": "admin_2", "points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(101)]},
                     )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["point_count"], 50)
-        self.assertEqual(body["resolved_count"], 50)
+        self.assertEqual(body["point_count"], 101)
+        self.assertEqual(body["resolved_count"], 101)
         bulk_mock.assert_called_once()
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "allow")

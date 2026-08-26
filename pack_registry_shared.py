@@ -418,7 +418,7 @@ PACK_REGISTRY: dict[str, dict] = {
                 "Latitude/longitude to the complete latest-available administrative chain",
                 "Small point batches in one MCP call for table cleanup",
                 "Small chain rows with loc_id, name, level, and available vintage",
-                "The first 25 points per call are free; larger hosted batches use paid throughput",
+                "The first 100 points per call are free; larger hosted batches use paid throughput",
             ],
         },
         "routing": {"preferred_tool": "resolve_point"},
@@ -581,7 +581,7 @@ def tool_family_pack_detail(pack_id: str | None) -> dict:
             "Only when more detail is requested, pass all stack loc_ids to loc_id_info; call get_geometry separately for shapes.",
         ]
         important_rules = [
-            "These are direct utility tools, not a query_dataset pack; the first 25 resolve_point items per call are free and larger hosted batches use paid throughput.",
+            "These are direct utility tools, not a query_dataset pack; the first 100 resolve_point items per call are free and larger hosted batches use paid throughput.",
             "Coordinates must be WGS84 decimal degrees.",
             "resolve_point defaults to the complete latest-available chain through the country's deepest served tier; target_admin_level only stops earlier.",
             "A mixed-vintage point chain is context. loc_id_info hierarchy and resolve_loc_id_scope follow strict stored parentage within a coherent release.",

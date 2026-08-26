@@ -66,7 +66,7 @@ TOOL_ACCESS_REGISTRY: dict[str, dict] = {
         "capability_id": "point_lookup",
         "pricing": PRICING_PAID_BULK,
         "item_field": "points",
-        "free_item_limit": 25,
+        "free_item_limit": 100,
         "paid_item_limit": 10000,
         "legacy_limit_env": ("POINT_LOOKUP_BATCH_LIMIT",),
         "legacy_paid_limit_env": ("POINT_LOOKUP_PAID_BATCH_LIMIT",),

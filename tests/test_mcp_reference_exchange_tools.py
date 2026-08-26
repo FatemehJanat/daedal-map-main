@@ -277,11 +277,11 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"points": [{"lon": 0, "lat": 0} for _ in range(26)], "country_scope": "USA", "target_admin_level": "admin_2"},
+                {"points": [{"lon": 0, "lat": 0} for _ in range(101)], "country_scope": "USA", "target_admin_level": "admin_2"},
             )
 
         self.assertTrue(payload["payment_required"])
-        self.assertEqual(payload["limits"]["free_batch_limit"], 25)
+        self.assertEqual(payload["limits"]["free_batch_limit"], 100)
         self.assertEqual(payload["error"]["code"], "payment_required")
         # The caller must receive the verifier's real price, not a guess.
         self.assertEqual(payload["daedalmap_pricing"]["amount_usdc_base_units"], 11306)
@@ -294,7 +294,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         payload = _tool_call(
             self.client,
             "resolve_point",
-            {"points": [{"lon": 0, "lat": 0} for _ in range(26)]},
+            {"points": [{"lon": 0, "lat": 0} for _ in range(101)]},
         )
         self.assertEqual(payload["error"]["code"], "bulk_scope_required")
         self.assertEqual(payload["error"]["missing_fields"], ["country_scope", "target_admin_level"])
@@ -322,10 +322,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"points": [{"lon": -118.2, "lat": 34.0} for _ in range(26)], "country_scope": "USA", "target_admin_level": "admin_2"},
+                {"points": [{"lon": -118.2, "lat": 34.0} for _ in range(101)], "country_scope": "USA", "target_admin_level": "admin_2"},
             )
-        self.assertEqual(payload["point_count"], 26)
-        self.assertEqual(payload["resolved_count"], 26)
+        self.assertEqual(payload["point_count"], 101)
+        self.assertEqual(payload["resolved_count"], 101)
         verifier_mock.assert_not_called()
 
     def test_global_admin_1_preset_replaces_country_scope_and_level(self) -> None:
@@ -344,7 +344,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"points": [{"lon": -79.4, "lat": 43.7} for _ in range(26)], "bulk_preset": "global_admin_1"},
+                {"points": [{"lon": -79.4, "lat": 43.7} for _ in range(101)], "bulk_preset": "global_admin_1"},
             )
 
         self.assertEqual(payload["bulk_preset"], "global_admin_1")
@@ -355,7 +355,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
         payload = _tool_call(
             self.client,
             "resolve_point",
-            {"points": [{"lon": 0, "lat": 0} for _ in range(26)], "bulk_preset": "global_admin_0", "country_scope": "USA"},
+            {"points": [{"lon": 0, "lat": 0} for _ in range(101)], "bulk_preset": "global_admin_0", "country_scope": "USA"},
         )
         self.assertEqual(payload["error"]["code"], "bulk_preset_conflict")
         self.assertEqual(payload["error"]["conflicting_fields"], ["country_scope"])
@@ -376,7 +376,7 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"points": [{"lon": 0, "lat": 0} for _ in range(26)], "country_scope": "USA", "target_admin_level": "admin_2"},
+                {"points": [{"lon": 0, "lat": 0} for _ in range(101)], "country_scope": "USA", "target_admin_level": "admin_2"},
             )
 
         self.assertEqual(payload["error"]["code"], "commercial_access_unavailable")
@@ -415,10 +415,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
             payload = _tool_call(
                 self.client,
                 "resolve_point",
-                {"points": [{"lon": 0, "lat": 0} for _ in range(26)], "country_scope": "USA", "target_admin_level": "admin_2"},
+                {"points": [{"lon": 0, "lat": 0} for _ in range(101)], "country_scope": "USA", "target_admin_level": "admin_2"},
             )
 
-        self.assertEqual(payload["point_count"], 26)
+        self.assertEqual(payload["point_count"], 101)
         settle_kwargs = settle_mock.call_args.kwargs
         self.assertEqual(settle_kwargs["actual_pricing"]["amount_usdc_base_units"], 0)
         self.assertEqual(settle_kwargs["meter_receipt"]["successful_distinct_items"], 1)
@@ -449,12 +449,12 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 payload = _tool_call(
                     self.client,
                     "resolve_point",
-                    {"points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(50)], "country_scope": "USA", "target_admin_level": "admin_2"},
+                    {"points": [{"lon": 0, "lat": 0, "row_index": index} for index in range(101)], "country_scope": "USA", "target_admin_level": "admin_2"},
                     headers={"Authorization": "Bearer tok_test_bypass"},
                 )
 
-        self.assertEqual(payload["point_count"], 50)
-        self.assertEqual(payload["resolved_count"], 50)
+        self.assertEqual(payload["point_count"], 101)
+        self.assertEqual(payload["resolved_count"], 101)
         bulk_mock.assert_called_once()
         analytics = analytics_mock.call_args.kwargs
         self.assertEqual(analytics["decision"], "allow")
