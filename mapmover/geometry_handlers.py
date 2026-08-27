@@ -2298,7 +2298,7 @@ def _reference_graph_location_info(loc_id: str) -> dict | None:
         return None
 
 
-def get_location_info(loc_id: str):
+def get_location_info(loc_id: str, *, include_memberships: bool = True):
     """
     Get detailed information about a specific location for popup display.
 
@@ -2321,7 +2321,11 @@ def get_location_info(loc_id: str):
     if inferred_admin_level is not None:
         metadata = _get_selection_metadata_for_loc_id(loc_id)
         if metadata:
-            return _build_metadata_based_location_info(loc_id, metadata)
+            return _build_metadata_based_location_info(
+                loc_id,
+                metadata,
+                include_memberships=include_memberships,
+            )
 
     family = _geometry_family_for_loc_id(loc_id)
     graph_info = _reference_graph_location_info(loc_id)
@@ -2333,7 +2337,11 @@ def get_location_info(loc_id: str):
     if family in {"overlay_zcta", "overlay_tribal", "overlay_nws_public_zone", "overlay_nws_fire_weather_zone", "can_federal_electoral_district_2013", "can_designated_place", "marine_eez", "water_body", "regional_base"}:
         metadata = _get_selection_metadata_for_loc_id(loc_id)
         if metadata:
-            return _build_metadata_based_location_info(loc_id, metadata)
+            return _build_metadata_based_location_info(
+                loc_id,
+                metadata,
+                include_memberships=include_memberships,
+            )
 
     result = {
         "loc_id": loc_id,
@@ -2411,7 +2419,11 @@ def get_location_info(loc_id: str):
     if df is None:
         metadata = _get_selection_metadata_for_loc_id(loc_id)
         if metadata:
-            return _build_metadata_based_location_info(loc_id, metadata)
+            return _build_metadata_based_location_info(
+                loc_id,
+                metadata,
+                include_memberships=include_memberships,
+            )
         graph_info = _reference_graph_location_info(loc_id)
         if graph_info:
             return graph_info
@@ -2421,7 +2433,11 @@ def get_location_info(loc_id: str):
     if len(location) == 0:
         metadata = _get_selection_metadata_for_loc_id(loc_id)
         if metadata:
-            return _build_metadata_based_location_info(loc_id, metadata)
+            return _build_metadata_based_location_info(
+                loc_id,
+                metadata,
+                include_memberships=include_memberships,
+            )
         graph_info = _reference_graph_location_info(loc_id)
         if graph_info:
             return graph_info
@@ -2563,34 +2579,41 @@ def _get_selection_metadata_for_loc_id(loc_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
-def _build_metadata_based_location_info(loc_id: str, props: dict) -> dict:
+def _build_metadata_based_location_info(
+    loc_id: str,
+    props: dict,
+    *,
+    include_memberships: bool = True,
+) -> dict:
     """Build loc_id_info without reading or materializing polygon payloads."""
     family = (
         classify_loc_id_family(loc_id)
         if props.get("admin_level") is not None
         else _geometry_family_for_loc_id(loc_id)
     )
-    ancestor_ids = []
-    current_id = str(props.get("parent_id") or "").strip()
-    while current_id:
-        ancestor_ids.append(current_id)
-        if "-" not in current_id:
-            break
-        current_id = current_id.rsplit("-", 1)[0]
-    ancestor_rows = get_selection_geometry_metadata(ancestor_ids) if ancestor_ids else []
-    ancestor_names = {
-        str(item.get("loc_id") or ""): item.get("name")
-        for item in ancestor_rows
-    }
-    for parent_id in ancestor_ids:
-        if ancestor_names.get(parent_id):
-            continue
-        parent_info = get_location_info(parent_id)
-        if isinstance(parent_info, dict) and parent_info.get("name"):
-            ancestor_names[parent_id] = parent_info["name"]
-    memberships = [
-        f"Part of: {', '.join(str(ancestor_names.get(parent_id) or parent_id) for parent_id in ancestor_ids)}"
-    ] if ancestor_ids else []
+    memberships = []
+    if include_memberships:
+        ancestor_ids = []
+        current_id = str(props.get("parent_id") or "").strip()
+        while current_id:
+            ancestor_ids.append(current_id)
+            if "-" not in current_id:
+                break
+            current_id = current_id.rsplit("-", 1)[0]
+        ancestor_rows = get_selection_geometry_metadata(ancestor_ids) if ancestor_ids else []
+        ancestor_names = {
+            str(item.get("loc_id") or ""): item.get("name")
+            for item in ancestor_rows
+        }
+        for parent_id in ancestor_ids:
+            if ancestor_names.get(parent_id):
+                continue
+            parent_info = get_location_info(parent_id)
+            if isinstance(parent_info, dict) and parent_info.get("name"):
+                ancestor_names[parent_id] = parent_info["name"]
+        memberships = [
+            f"Part of: {', '.join(str(ancestor_names.get(parent_id) or parent_id) for parent_id in ancestor_ids)}"
+        ] if ancestor_ids else []
     result = {
         "loc_id": props.get("loc_id") or loc_id,
         "name": props.get("name"),

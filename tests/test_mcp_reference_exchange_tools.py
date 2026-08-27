@@ -842,7 +842,10 @@ class McpReferenceExchangeToolsTests(unittest.TestCase):
                 "iso3": "CAN",
             },
         }
-        with mock.patch("mapmover.geometry_handlers.get_location_info", side_effect=lambda loc_id: rows[loc_id]):
+        with mock.patch(
+            "mapmover.geometry_handlers.get_location_info",
+            side_effect=lambda loc_id, **_: rows[loc_id],
+        ):
             payload = _tool_call(
                 self.client,
                 "loc_id_info",

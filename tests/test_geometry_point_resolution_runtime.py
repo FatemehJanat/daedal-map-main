@@ -273,6 +273,24 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         graph_mock.assert_not_called()
         family_mock.assert_not_called()
 
+    def test_admin_loc_id_info_can_skip_discarded_popup_memberships(self):
+        metadata = {
+            "loc_id": "USA-CA",
+            "parent_id": "USA",
+            "admin_level": 1,
+            "name": "California",
+            "has_polygon": True,
+        }
+        with (
+            patch("mapmover.geometry_handlers._get_selection_metadata_for_loc_id", return_value=metadata),
+            patch("mapmover.geometry_handlers.get_selection_geometry_metadata") as ancestor_mock,
+        ):
+            info = get_location_info("USA-CA", include_memberships=False)
+
+        self.assertEqual(info["name"], "California")
+        self.assertEqual(info["memberships"], [])
+        ancestor_mock.assert_not_called()
+
     def test_brazil_bairro_point_resolves_to_declared_admin5_spine(self):
         result = resolve_point_to_loc_id_stack(-48.12994234942419, -22.793495497153657, include_geometry=False)
 

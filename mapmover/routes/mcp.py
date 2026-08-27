@@ -2659,7 +2659,10 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         from mapmover.geometry_handlers import get_location_info
 
-        info = get_location_info(loc_id)
+        # MCP returns hierarchy only when explicitly requested and never exposes
+        # popup memberships. Avoid a second ancestor-metadata read whose result
+        # would otherwise be discarded from the response.
+        info = get_location_info(loc_id, include_memberships=False)
     except Exception as exc:
         return {"loc_id": loc_id, "error": {"code": "info_failed", "message": str(exc)}}
     if not isinstance(info, dict) or info.get("error"):
@@ -2699,7 +2702,7 @@ def _loc_id_info_item(loc_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             while current_parent and current_parent not in seen and len(ancestors) < 32:
                 seen.add(current_parent)
                 ancestors.append(current_parent)
-                parent_info = get_location_info(current_parent)
+                parent_info = get_location_info(current_parent, include_memberships=False)
                 if not isinstance(parent_info, dict) or parent_info.get("error"):
                     ancestor_rows.append({"loc_id": current_parent})
                     break
