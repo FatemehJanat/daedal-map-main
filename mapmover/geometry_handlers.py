@@ -3496,7 +3496,7 @@ def get_selection_geometries(loc_ids: list):
     # Graph-owned semantic-family partitions are authoritative regardless of
     # loc_id prefix depth. Resolve them before legacy admin-depth routing.
     graph_requests = [loc_id for loc_id in requested_ids if loc_id not in query_layout_ids]
-    reference_df = load_reference_graph_geometry(graph_requests)
+    reference_df = load_reference_graph_geometry(graph_requests) if graph_requests else pd.DataFrame()
     reference_ids: set[str] = set()
     if reference_df is not None and not reference_df.empty:
         reference_ids = set(reference_df["loc_id"].astype(str))
@@ -3505,6 +3505,7 @@ def get_selection_geometries(loc_ids: list):
 
     marine_ids = [
         loc_id for loc_id in requested_ids
+        if loc_id not in query_layout_ids
         if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]
@@ -3677,7 +3678,11 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
                 rows.append(item)
 
     graph_requests = [loc_id for loc_id in requested_ids if loc_id not in query_layout_ids]
-    reference_df = load_reference_graph_geometry(graph_requests, columns=GEOMETRY_METADATA_COLUMNS)
+    reference_df = (
+        load_reference_graph_geometry(graph_requests, columns=GEOMETRY_METADATA_COLUMNS)
+        if graph_requests else
+        pd.DataFrame(columns=GEOMETRY_METADATA_COLUMNS)
+    )
     reference_ids: set[str] = set()
     if reference_df is not None and not reference_df.empty:
         reference_ids = set(reference_df["loc_id"].astype(str))
@@ -3688,6 +3693,7 @@ def get_selection_geometry_metadata(loc_ids: list) -> list[dict]:
 
     marine_ids = [
         loc_id for loc_id in requested_ids
+        if loc_id not in query_layout_ids
         if loc_id not in reference_ids
         if _geometry_family_for_loc_id(loc_id) in {"marine_eez", "water_body"}
     ]

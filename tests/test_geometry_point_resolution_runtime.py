@@ -183,13 +183,42 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
         with (
             patch("mapmover.geometry_handlers.load_admin_spine_query_rows", return_value=query_row) as query_mock,
             patch("mapmover.geometry_handlers.load_reference_graph_geometry") as graph_mock,
+            patch("mapmover.geometry_handlers._geometry_family_for_loc_id") as family_mock,
         ):
             metadata = get_selection_geometry_metadata(["USA-SD-019-967600-1-023"])
 
         self.assertEqual(metadata[0]["loc_id"], "USA-SD-019-967600-1-023")
         self.assertTrue(metadata[0]["has_polygon"])
         query_mock.assert_called_once()
-        graph_mock.assert_called_once_with([], columns=unittest.mock.ANY)
+        graph_mock.assert_not_called()
+        family_mock.assert_not_called()
+
+    def test_geometry_shape_prefers_bounded_admin_query_layout_without_graph_discovery(self):
+        import pandas as pd
+
+        query_row = pd.DataFrame([{
+            "loc_id": "CAN-BC",
+            "parent_id": "CAN",
+            "admin_level": 1,
+            "name": "British Columbia",
+            "geometry": "unused-by-mocked-converter",
+        }])
+        query_payload = {
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "properties": {"loc_id": "CAN-BC"}, "geometry": None}],
+        }
+        with (
+            patch("mapmover.geometry_handlers.load_admin_spine_query_rows", return_value=query_row) as query_mock,
+            patch("mapmover.geometry_handlers.df_to_geojson", return_value=query_payload),
+            patch("mapmover.geometry_handlers.load_reference_graph_geometry") as graph_mock,
+            patch("mapmover.geometry_handlers._geometry_family_for_loc_id") as family_mock,
+        ):
+            payload = get_selection_geometries(["CAN-BC"])
+
+        self.assertEqual(payload["features"][0]["properties"]["loc_id"], "CAN-BC")
+        query_mock.assert_called_once()
+        graph_mock.assert_not_called()
+        family_mock.assert_not_called()
 
     def test_missing_admin_id_does_not_fall_through_authoritative_layout(self):
         import pandas as pd
@@ -198,12 +227,14 @@ class GeometryPointResolutionRuntimeTests(unittest.TestCase):
             patch("mapmover.geometry_handlers.admin_spine_layout_available", return_value=True),
             patch("mapmover.geometry_handlers.load_admin_spine_query_rows", return_value=pd.DataFrame()) as query_mock,
             patch("mapmover.geometry_handlers.load_reference_graph_geometry", return_value=pd.DataFrame()) as graph_mock,
+            patch("mapmover.geometry_handlers._geometry_family_for_loc_id") as family_mock,
         ):
             metadata = get_selection_geometry_metadata(["CAN-NOPE"])
 
         self.assertEqual(metadata, [])
         query_mock.assert_called_once()
-        graph_mock.assert_called_once_with([], columns=unittest.mock.ANY)
+        graph_mock.assert_not_called()
+        family_mock.assert_not_called()
 
     def test_sidechain_metadata_skips_admin_query_layout(self):
         import pandas as pd
