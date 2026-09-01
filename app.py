@@ -480,8 +480,9 @@ async def security_txt():
     return FileResponse(SECURITY_TXT_PATH, media_type="text/plain; charset=utf-8")
 
 
+@app.get("/wep", include_in_schema=False)
 @app.get("/prototype/lake-county-nri", include_in_schema=False)
-async def lake_county_nri_prototype():
+async def wildfire_emergency_planning():
     return FileResponse(BASE_DIR / "templates" / "lake_county_nri.html", media_type="text/html; charset=utf-8")
 
 

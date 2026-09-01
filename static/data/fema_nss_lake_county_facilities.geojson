@@ -1,0 +1,1787 @@
+﻿{
+    "type":  "FeatureCollection",
+    "features":  [
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.705392717,
+                                                              38.805550244000074
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  335528,
+                                            "shelter_name":  "Middletown Fire Dept. 175",
+                                            "address_1":  "21095 Hwy 175",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  60,
+                                            "post_impact_capacity":  30,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  " ",
+                                            "wheelchair_accessible":  " ",
+                                            "pet_accommodations_desc":  " ",
+                                            "building_type":  "Civic or public safety facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62361149999998,
+                                                              38.74215410000005
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340963,
+                                            "shelter_name":  "Seventh-day Adventist Church",
+                                            "address_1":  "21640 HWY. 29S",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61520899999999,
+                                                              38.756023000000027
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340993,
+                                            "shelter_name":  "Middletown High School",
+                                            "address_1":  "20932 BIG CANYON RD.",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91462899999999,
+                                                              39.042665900000031
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340978,
+                                            "shelter_name":  "NCC Radio Group Station KXBX",
+                                            "address_1":  "140 N. MAIN ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Civic or public safety facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61368999999996,
+                                                              38.755562000000054
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341328,
+                                            "shelter_name":  "Minnie Cannon Elementary School",
+                                            "address_1":  "15846 WARDLAW ST.",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.56327699999997,
+                                                              38.806289000000049
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341331,
+                                            "shelter_name":  "Hidden Valley Country Club INACTIVE",
+                                            "address_1":  "18677 LAKERIDGE CIRCLE",
+                                            "city":  "HIDDEN VALLEY LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95467",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Recreation or lodging facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.83871729999998,
+                                                              38.979283400000043
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341355,
+                                            "shelter_name":  "Ed Donaldson Continuation High School",
+                                            "address_1":  "3989 GARD ST.",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61546999999996,
+                                                              38.933830000000057
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341349,
+                                            "shelter_name":  "Highlands Academy",
+                                            "address_1":  "15850 DAM RD. EXT.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  45,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60759899999999,
+                                                              38.916417000000024
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341350,
+                                            "shelter_name":  "Lower Lake Elementary School",
+                                            "address_1":  "9240 LAKE ST. BOX 719",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  50,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61602179999994,
+                                                              38.752606100000037
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341320,
+                                            "shelter_name":  "St. Joseph\u0027s Catholic Church",
+                                            "address_1":  "21396 HWY. 175",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61520899999999,
+                                                              38.756023000000027
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341327,
+                                            "shelter_name":  "Middletown Middle School",
+                                            "address_1":  "15801 DOUGLAS ST.",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  270,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62872999999996,
+                                                              38.939453000000071
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341354,
+                                            "shelter_name":  "Benevolent Order Of The Elks #2299",
+                                            "address_1":  "6039 CRAWFORD AVE",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  40,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60587999999996,
+                                                              38.910495000000026
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341377,
+                                            "shelter_name":  "Deeper Life Christian Fellowship",
+                                            "address_1":  "9980 MILL ST.",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.90191299999998,
+                                                              39.163419000000033
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341363,
+                                            "shelter_name":  "Upper Lake Middle School",
+                                            "address_1":  "725 OLD LUCERNE RD.",
+                                            "city":  "UPPER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95485",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60847399999994,
+                                                              38.911113000000057
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341317,
+                                            "shelter_name":  "Lower Lake Community United Methodist Church",
+                                            "address_1":  "16255 2ND ST.",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.79266499999994,
+                                                              39.091056000000037
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341319,
+                                            "shelter_name":  "Lucerne Alpine Senior Center",
+                                            "address_1":  "3985 COUNTRY CLUB DR.",
+                                            "city":  "LUCERNE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95458",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91673899999995,
+                                                              39.103003000000058
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341364,
+                                            "shelter_name":  "National Guard Armory",
+                                            "address_1":  "1431 HOYT AVE",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  800,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Civic or public safety facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.58382369999998,
+                                                              38.773815200000058
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341326,
+                                            "shelter_name":  "Middletown Bible Church",
+                                            "address_1":  "20800 HWY. 29",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  200,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.83427009999997,
+                                                              38.957765100000074
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341359,
+                                            "shelter_name":  "Grace Evangelical Free Church",
+                                            "address_1":  "6716 LIVE OAK DR.",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  150,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.63058199999995,
+                                                              38.965936900000031
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341386,
+                                            "shelter_name":  "Highlands Senior Center",
+                                            "address_1":  "3245 BOWERS RD.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  350,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.63723999999996,
+                                                              38.962505000000078
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341357,
+                                            "shelter_name":  "Neighborhood Christian Fellowship",
+                                            "address_1":  "14660 OLYMPIC DR.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91418349999998,
+                                                              39.059251300000028
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341370,
+                                            "shelter_name":  "Lakeport Elementary School",
+                                            "address_1":  "150 LANGE ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62053799999995,
+                                                              38.963746000000071
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341351,
+                                            "shelter_name":  "Clearlake Nazarene Church",
+                                            "address_1":  "15917 OLYMPIC DR.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60630899999995,
+                                                              38.910600000000045
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341330,
+                                            "shelter_name":  "Brick Hall",
+                                            "address_1":  "16374 MAIN ST.",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62227199999995,
+                                                              38.955575000000067
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341352,
+                                            "shelter_name":  "Kingdom Hall Of Jehovah\u0027s Witnesses",
+                                            "address_1":  "3931 PINE AVE",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.63136369999995,
+                                                              38.958305700000039
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341356,
+                                            "shelter_name":  "American Legion Post #437",
+                                            "address_1":  "14770 AUSTIN DR.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  125,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.88442599999996,
+                                                              39.006343000000072
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341324,
+                                            "shelter_name":  "Big Valley Grange 680",
+                                            "address_1":  "1510 BIG VALLEY RD.",
+                                            "city":  "FINLEY",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95435",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.72188799999998,
+                                                              38.830394000000069
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341337,
+                                            "shelter_name":  "Cobb Mountain Elementary School",
+                                            "address_1":  "15895 HWY. 175",
+                                            "city":  "COBB",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95426",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62402299999997,
+                                                              38.745372000000032
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341325,
+                                            "shelter_name":  "Lions Community Clubhouse",
+                                            "address_1":  "15399 CENTRAL PARK RD.",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  80,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.66668399999998,
+                                                              39.028863000000058
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341385,
+                                            "shelter_name":  "East Lake Elementary School",
+                                            "address_1":  "13050 HIGH VALLEY RD. BOX 577",
+                                            "city":  "CLEARLAKE OAKS",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95423",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  30,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.81854839999994,
+                                                              38.97463810000005
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341361,
+                                            "shelter_name":  "Kelseyville Elementary School",
+                                            "address_1":  "5065 KONOCTI RD.",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91577199999995,
+                                                              39.049709000000064
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341373,
+                                            "shelter_name":  "St. John\u0027s Episcopal Church",
+                                            "address_1":  "1190 N. FORBES ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.90510099999995,
+                                                              39.166080000000079
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341365,
+                                            "shelter_name":  "Upper Lake Elementary School",
+                                            "address_1":  "679 SECOND ST.",
+                                            "city":  "UPPER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95485",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  45,
+                                            "post_impact_capacity":  22,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91599709999997,
+                                                              39.059286000000043
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341369,
+                                            "shelter_name":  "Clear Lake High School",
+                                            "address_1":  "350 LANGE ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  698,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.81820499999998,
+                                                              38.974635700000078
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341388,
+                                            "shelter_name":  "Mountain Vista Middle School",
+                                            "address_1":  "5081 KONOCTI RD.",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  150,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.90267159999996,
+                                                              39.165371700000037
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341362,
+                                            "shelter_name":  "Upper Lake High School",
+                                            "address_1":  "675 CLOVER VALLEY RD.",
+                                            "city":  "UPPER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95485",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  770,
+                                            "post_impact_capacity":  385,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91959999999995,
+                                                              39.053254000000038
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341372,
+                                            "shelter_name":  "Church Of Jesus Christ Of Latter-Day Saints",
+                                            "address_1":  "600 16TH ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  500,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91871699999996,
+                                                              39.046940000000063
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341374,
+                                            "shelter_name":  "United Christian Parish",
+                                            "address_1":  "745 N. BRUSH ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  50,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.92079999999999,
+                                                              39.039356000000055
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341375,
+                                            "shelter_name":  "Lake County Fairgrounds",
+                                            "address_1":  "401 MARTIN ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Recreation or lodging facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62159859999997,
+                                                              38.959938300000033
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341381,
+                                            "shelter_name":  "Burns Valley Elementary School",
+                                            "address_1":  "3620 PINE ST.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  50,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.64910499999996,
+                                                              38.970723000000078
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341383,
+                                            "shelter_name":  "Pomo Elementary School",
+                                            "address_1":  "3350 ACACIA ST.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  50,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91820099999995,
+                                                              39.060379000000069
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341389,
+                                            "shelter_name":  "Terrace Middle School",
+                                            "address_1":  "250 LANGE ST.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  698,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60772399999996,
+                                                              38.914915000000065
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341384,
+                                            "shelter_name":  "Lower Lake High School",
+                                            "address_1":  "9430 LAKE ST. BOX 759",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  1534,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61668203099998,
+                                                              38.914459781000062
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340898,
+                                            "shelter_name":  "Unity Clear Lake Center",
+                                            "address_1":  "15898 KUGELMAN ST.",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.55921299999994,
+                                                              38.79533900000007
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  342773,
+                                            "shelter_name":  "Coyote Valley Elementary School",
+                                            "address_1":  "18950 Coyote Valley.Rd.",
+                                            "city":  "HIDDEN VALLEY LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95467",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  500,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.71240699999998,
+                                                              38.949349000000041
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  342775,
+                                            "shelter_name":  "Riviera Elementary School",
+                                            "address_1":  "10505 FAIRWAY DR.",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  100,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.64814315099994,
+                                                              38.957104915000059
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340860,
+                                            "shelter_name":  "Evangel Christian Center",
+                                            "address_1":  "14110 LAKESHORE DR.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.63057912199997,
+                                                              38.965467523000029
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340322,
+                                            "shelter_name":  "Clearlake Senior Center",
+                                            "address_1":  "3245 Bowers Ave",
+                                            "city":  "Clearlake",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  150,
+                                            "post_impact_capacity":  100,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61398199999996,
+                                                              39.032158000000038
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  345799,
+                                            "shelter_name":  "Moose Lodge 2284",
+                                            "address_1":  "15900 E. HWY 20",
+                                            "city":  "CLEARLAKE OAKS",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95423",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  40,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.62465581599997,
+                                                              38.746426649000057
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  342774,
+                                            "shelter_name":  "Middletown Senior Center",
+                                            "address_1":  "15299 CENTRAL PARK RD.",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.91663599999998,
+                                                              39.03528730000005
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  347604,
+                                            "shelter_name":  "Lakeport Senior Center",
+                                            "address_1":  "527 Konocti Ave.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  250,
+                                            "post_impact_capacity":  125,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.66165179999996,
+                                                              38.971383200000048
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356369,
+                                            "shelter_name":  "American Legion",
+                                            "address_1":  "14770 Austin Rd.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  300,
+                                            "post_impact_capacity":  150,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.92122649999999,
+                                                              39.215909500000066
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356368,
+                                            "shelter_name":  "Healthy Habits",
+                                            "address_1":  "9440 Main St.",
+                                            "city":  "UPPER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95485",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  300,
+                                            "post_impact_capacity":  150,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.94376669999997,
+                                                              39.07844840000007
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356371,
+                                            "shelter_name":  "New Hope Fellowship",
+                                            "address_1":  "305 Peckham Ct.",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  300,
+                                            "post_impact_capacity":  150,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.94376669999997,
+                                                              39.07844840000007
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356370,
+                                            "shelter_name":  "Lakeport Community 7th Day Adventist Church",
+                                            "address_1":  "1111 Park Way",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  300,
+                                            "post_impact_capacity":  150,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.78587909999999,
+                                                              38.923008200000027
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356358,
+                                            "shelter_name":  "Kelseyville Presbyterian Church",
+                                            "address_1":  "5340 3rd Street",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  0,
+                                            "post_impact_capacity":  150,
+                                            "facility_usage_code":  "POST",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.55314299999998,
+                                                              38.798201000000063
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356401,
+                                            "shelter_name":  "Hidden Valley Lake RV Park/Campground",
+                                            "address_1":  "19234 Hidden Valley Lake Road",
+                                            "city":  "HIDDEN VALLEY LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95467",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  200,
+                                            "post_impact_capacity":  100,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Recreation or lodging facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60513509999998,
+                                                              38.754874600000051
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356383,
+                                            "shelter_name":  "Twin Pine Casino",
+                                            "address_1":  "22223 CA-29 ",
+                                            "city":  "Middletown",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  0,
+                                            "post_impact_capacity":  1,
+                                            "facility_usage_code":  "POST",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Recreation or lodging facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.82925399999999,
+                                                              38.974701000000039
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  342772,
+                                            "shelter_name":  "Kelseyville High School",
+                                            "address_1":  "5480 Main Street",
+                                            "city":  "Kelseyville",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  200,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.64501909999996,
+                                                              38.962491100000079
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  341305,
+                                            "shelter_name":  "Calvary Chapel",
+                                            "address_1":  "14330 MEMORY LN.",
+                                            "city":  "CLEARLAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95422",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Faith-based facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.78981399999998,
+                                                              39.083758000000046
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  340947,
+                                            "shelter_name":  "Lucerne Elementary School",
+                                            "address_1":  "3351 COUNTRY CLUB DR.",
+                                            "city":  "LUCERNE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95458",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  99999,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "YES",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.94376669999997,
+                                                              39.07844840000007
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  356363,
+                                            "shelter_name":  "Big Valley Rancheria Gym",
+                                            "address_1":  "1002 Osprey Court",
+                                            "city":  "LAKEPORT",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95453",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  200,
+                                            "post_impact_capacity":  100,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Recreation or lodging facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.88415999999995,
+                                                              39.140460000000076
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  363389,
+                                            "shelter_name":  "Robinson  Rancheria Community Education Center",
+                                            "address_1":  "1545 East highway 20",
+                                            "city":  "NICE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95464",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  270,
+                                            "post_impact_capacity":  135,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "Community facility"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.61590169999999,
+                                                              38.755273400000078
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  362445,
+                                            "shelter_name":  "Middletown Middle School",
+                                            "address_1":  "20962 Big Canyon Road",
+                                            "city":  "MIDDLETOWN",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95461",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  140,
+                                            "post_impact_capacity":  70,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.60542499999997,
+                                                              38.909840000000031
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  364397,
+                                            "shelter_name":  "Schoolhouse Museum",
+                                            "address_1":  "16435 Main Street",
+                                            "city":  "LOWER LAKE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95457",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  101,
+                                            "post_impact_capacity":  0,
+                                            "facility_usage_code":  "EVAC",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  "NO",
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     },
+                     {
+                         "type":  "Feature",
+                         "geometry":  {
+                                          "type":  "Point",
+                                          "coordinates":  [
+                                                              -122.82995739999996,
+                                                              38.974817300000041
+                                                          ]
+                                      },
+                         "properties":  {
+                                            "shelter_id":  364789,
+                                            "shelter_name":  "TEP-Kelseyville High School",
+                                            "address_1":  "5480 Main Street",
+                                            "city":  "KELSEYVILLE",
+                                            "county_parish":  "LAKE",
+                                            "state":  "CA",
+                                            "zip":  "95451",
+                                            "shelter_status_code":  "CLOSED",
+                                            "evacuation_capacity":  50,
+                                            "post_impact_capacity":  25,
+                                            "facility_usage_code":  "BOTH",
+                                            "ada_compliant":  null,
+                                            "wheelchair_accessible":  null,
+                                            "pet_accommodations_desc":  null,
+                                            "building_type":  "School"
+                                        }
+                     }
+                 ]
+}
