@@ -16,6 +16,7 @@
     .layer-panel p { color: #cbd5e1; font-size: 12px; line-height: 1.4; margin: 0 0 12px; }
     .layer-control { align-items: center; border-top: 1px solid #374151; display: flex; gap: 10px; padding: 10px 0; }
     .layer-control input { accent-color: #f97316; height: 17px; width: 17px; }
+    .layer-control select { background: #1f2937; border: 1px solid #475569; color: #f8fafc; display: block; font: inherit; margin-top: 5px; padding: 3px 5px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
     @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; } .legend { bottom: 12px; left: 12px; } }
@@ -51,6 +52,13 @@
       <span><strong>FEMA NSS facilities</strong><span>66 Lake County facilities; building type shown by color</span></span>
     </label>
     <label class="layer-control">
+      <input type="checkbox" data-layer="lake-tracts-access-fill" />
+      <span><strong>Car access to FEMA NSS facilities</strong><span>Cumulative facility count from tract centroids using OSM car routing</span></span>
+    </label>
+    <label class="layer-control">
+      <span><strong>Car travel-time threshold</strong><select id="access-threshold" aria-label="Car travel-time threshold"><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="90">90 minutes</option></select></span>
+    </label>
+    <label class="layer-control">
       <input type="checkbox" data-layer="lake-roads-primary" checked />
       <span><strong>Primary roads</strong><span>US Census TIGERweb transportation layer</span></span>
     </label>
@@ -78,6 +86,8 @@
     <div class="row"><span class="swatch" style="background:#f59e0b"></span> Community facility</div>
     <div class="row"><span class="swatch" style="background:#dc2626"></span> Civic or public safety facility</div>
     <div class="row"><span class="swatch" style="background:#16a34a"></span> Recreation or lodging facility</div>
+    <div class="row"><span class="swatch" style="background:#d73027"></span> Fewer reachable FEMA NSS facilities</div>
+    <div class="row"><span class="swatch" style="background:#1a9850"></span> More reachable FEMA NSS facilities</div>
     <div class="row"><span class="swatch" style="background:#f8fafc"></span> Primary road</div>
     <div class="row"><span class="swatch" style="background:#94a3b8"></span> Secondary road</div>
     <div class="row"><span class="swatch" style="background:#d1d5db"></span> Census tract boundaries</div>
@@ -103,12 +113,13 @@
           return emptyFeatureCollection;
         }
       };
-      const [usStatesData, californiaCountiesData, tractsData, resilienceData, socialVulnerabilityData, countyData, waterData, roadsData, sheltersData] = await Promise.all([
+      const [usStatesData, californiaCountiesData, tractsData, accessData, resilienceData, socialVulnerabilityData, countyData, waterData, roadsData, sheltersData] = await Promise.all([
         fetchGeoJson('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json'),
         fetchGeoJson('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_tracts.geojson').then(async (data) =>
           data.features.length ? data : fetchGeoJson('/static/data/tiger2020_lake_county_tracts_nri_access.geojson')).then(async (data) =>
           data.features.length ? data : fetchGeoJson('/static/data/tiger2020_lake_county_tracts_nri.geojson')),
+        fetchGeoJson('/static/data/wep_lake_county_nss_car_access.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_resilience.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_social_vulnerability.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_boundary.geojson'),
@@ -120,6 +131,7 @@
       map.addSource('us-states', { type: 'geojson', data: usStatesData });
       map.addSource('california-counties', { type: 'geojson', data: californiaCountiesData });
       map.addSource('lake-tracts', { type: 'geojson', data: tractsData });
+      map.addSource('lake-tracts-access', { type: 'geojson', data: accessData });
       map.addSource('lake-tracts-resilience', { type: 'geojson', data: resilienceData });
       map.addSource('lake-tracts-social-vulnerability', { type: 'geojson', data: socialVulnerabilityData });
       map.addSource('lake-county-boundary', { type: 'geojson', data: countyData });
@@ -183,21 +195,19 @@
         }
       });
 
+      const accessField = (minutes) => `nss_facilities_within_${minutes}min_car`;
+      const accessColor = (minutes) => [
+        'interpolate', ['linear'], ['coalesce', ['to-number', ['get', accessField(minutes)]], 0],
+        0, '#d73027',
+        33, '#fee08b',
+        66, '#1a9850'
+      ];
       map.addLayer({
         id: 'lake-tracts-access-fill',
         type: 'fill',
-        source: 'lake-tracts',
-        paint: {
-          'fill-color': [
-            'interpolate',
-            ['linear'],
-            ['coalesce', ['to-number', ['get', 'shelters_within_30min_car']], 0],
-            0, '#d73027',
-            33, '#fee08b',
-            66, '#1a9850'
-          ],
-          'fill-opacity': 0.3
-        }
+        source: 'lake-tracts-access',
+        layout: { visibility: 'none' },
+        paint: { 'fill-color': accessColor(30), 'fill-opacity': 0.72 }
       });
 
       map.addLayer({
@@ -333,6 +343,22 @@
         map.getCanvas().style.cursor = '';
       });
 
+      map.on('click', 'lake-tracts-access-fill', (e) => {
+        const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const threshold = document.getElementById('access-threshold').value;
+        const selected = props[accessField(threshold)] ?? 'n/a';
+        const html = `<div style="color:#000000"><strong>Tract ${props.GEOID || 'Unknown'}</strong><br/>FEMA NSS facilities reachable by car in ${threshold} min: ${selected}<br/>Within 30 min: ${props.nss_facilities_within_30min_car ?? 'n/a'}<br/>Within 60 min: ${props.nss_facilities_within_60min_car ?? 'n/a'}<br/>Within 90 min: ${props.nss_facilities_within_90min_car ?? 'n/a'}<br/>Nearest FEMA NSS facility: ${props.nearest_nss_facility_minutes_car ?? 'n/a'} min<br/><br/>OSM/OSRM car routing uses mapped speed limits and road-class defaults. Normal routing only; no traffic, closures, or evacuation controls. FEMA NSS registry status does not indicate an open shelter.</div>`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+
+      map.on('mouseenter', 'lake-tracts-access-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+
+      map.on('mouseleave', 'lake-tracts-access-fill', () => {
+        map.getCanvas().style.cursor = '';
+      });
+
       map.on('click', 'lake-shelters-circle', (e) => {
         const props = (e.features && e.features[0] && e.features[0].properties) || {};
         const name = props.shelter_name || 'Shelter facility';
@@ -367,6 +393,9 @@
           }
         });
       }
+      document.getElementById('access-threshold').addEventListener('change', (event) => {
+        map.setPaintProperty('lake-tracts-access-fill', 'fill-color', accessColor(event.target.value));
+      });
 
       // Zoom to official Lake County boundary extent on load.
       const bounds = new maplibregl.LngLatBounds();
