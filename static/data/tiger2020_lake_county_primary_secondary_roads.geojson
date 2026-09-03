@@ -1,4 +1,4 @@
-﻿{
+{
     "type":  "FeatureCollection",
     "features":  [
                      {
@@ -104,7 +104,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -218,7 +220,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -7592,7 +7596,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -12274,7 +12280,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -13056,7 +13064,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -13858,7 +13868,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -15280,7 +15292,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -16222,7 +16236,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -20904,7 +20920,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -28278,7 +28296,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "primary"
+                                            "road_class":  "primary",
+                                            "speed_mph":  55,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -29796,7 +29816,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -29882,7 +29904,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -45380,7 +45404,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -46198,7 +46224,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -46476,7 +46504,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -46550,7 +46580,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -46636,7 +46668,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -46858,7 +46892,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -47228,7 +47264,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -47958,7 +47996,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -48652,7 +48692,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -49758,7 +49800,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -53856,7 +53900,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -54586,7 +54632,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -54868,7 +54916,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -54966,7 +55016,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -59064,7 +59116,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -62022,7 +62076,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -63360,7 +63416,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -63654,7 +63712,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -63708,7 +63768,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -63778,7 +63840,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -64344,7 +64408,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -64754,7 +64820,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -65176,7 +65244,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -65766,7 +65836,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -65900,7 +65972,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  595,
                                             "SUFTYPEABRV":  "St",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -66490,7 +66564,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  531,
                                             "SUFTYPEABRV":  "Rd",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -66692,7 +66768,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  595,
                                             "SUFTYPEABRV":  "St",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -66830,7 +66908,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  247,
                                             "SUFTYPEABRV":  "Dr",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -66964,7 +67044,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -67206,7 +67288,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  125,
                                             "SUFTYPEABRV":  "Ave",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -67372,7 +67456,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -68922,7 +69008,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  531,
                                             "SUFTYPEABRV":  "Rd",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -68992,7 +69080,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  531,
                                             "SUFTYPEABRV":  "Rd",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -71614,7 +71704,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -71700,7 +71792,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -73658,7 +73752,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -73696,7 +73792,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -73746,7 +73844,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -73924,7 +74024,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -75898,7 +76000,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -77352,7 +77456,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  307,
                                             "SUFTYPEABRV":  "Grade",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -77418,7 +77524,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  595,
                                             "SUFTYPEABRV":  "St",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -77956,7 +78064,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  531,
                                             "SUFTYPEABRV":  "Rd",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -78006,7 +78116,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -86676,7 +86788,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -90694,7 +90808,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -90744,7 +90860,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -90806,7 +90924,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -90896,7 +91016,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -90966,7 +91088,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -95632,7 +95756,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -97314,7 +97440,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -98420,7 +98548,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  322,
                                             "SUFTYPEABRV":  "Hwy",
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      },
                      {
@@ -103818,7 +103948,9 @@
                                             "SUFQUALABRV":  null,
                                             "SUFTYP":  null,
                                             "SUFTYPEABRV":  null,
-                                            "road_class":  "secondary"
+                                            "road_class":  "secondary",
+                                            "speed_mph":  35,
+                                            "blocked":  false
                                         }
                      }
                  ]

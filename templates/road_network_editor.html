@@ -184,7 +184,7 @@
           <label><input id="blockedInput" type="checkbox" disabled /> Block this road</label>
         </div>
         <button id="applyScenarioBtn" class="warn" type="button" disabled>Apply scenario values</button>
-        <div class="meta">Select one road feature, set its speed, or block it. Recalculate WEP access after saving.</div>
+        <div class="meta">Every segment has an explicit speed. Select one road feature to change its speed or block it, then save and recalculate WEP access.</div>
       </div>
 
       <div class="group">
@@ -215,6 +215,18 @@
 
     function setStatus(message) {
       statusEl.textContent = String(message || '');
+    }
+
+    function defaultSpeed(properties) {
+      return properties.road_class === 'primary' ? 55 : 35;
+    }
+
+    function normalizeRoadProperties(feature) {
+      feature.properties = feature.properties || {};
+      const speed = Number(feature.properties.speed_mph);
+      feature.properties.speed_mph = Number.isFinite(speed) && speed > 0 ? speed : defaultSpeed(feature.properties);
+      feature.properties.blocked = Boolean(feature.properties.blocked);
+      return feature;
     }
 
     async function fetchMsgpack(url) {
@@ -306,6 +318,7 @@
       setStatus('Loading roads...');
       const payload = await fetchMsgpack('/api/road-network');
       const geojson = payload.geojson;
+      (geojson.features || []).forEach(normalizeRoadProperties);
       draw.deleteAll();
       draw.add(geojson);
       const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
@@ -334,6 +347,7 @@
 
     async function saveRoads() {
       const geojson = draw.getAll();
+      (geojson.features || []).forEach(normalizeRoadProperties);
       setStatus('Saving roads...');
       const result = await postMsgpack('/api/road-network', { geojson });
       setStatus(`Saved ${result.saved_features} features to ${result.target}. Backup: ${result.backup}.`);
@@ -389,6 +403,15 @@
       selectedRoadId = null;
       updateScenarioForm();
       setStatus('Deleted selected features.');
+    });
+
+    map.on('draw.create', (event) => {
+      for (const feature of event.features || []) {
+        normalizeRoadProperties(feature);
+        draw.setFeatureProperty(feature.id, 'speed_mph', feature.properties.speed_mph);
+        draw.setFeatureProperty(feature.id, 'blocked', false);
+      }
+      updateScenarioForm();
     });
 
     map.on('draw.selectionchange', (event) => {

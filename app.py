@@ -564,6 +564,15 @@ async def save_road_network_geojson(req: Request):
         geom_type = geometry.get("type")
         if geom_type not in allowed_geom_types:
             return msgpack_error("Road features must be LineString or MultiLineString", 400)
+        properties = feature.setdefault("properties", {})
+        if not isinstance(properties, dict):
+            return msgpack_error("Road feature properties must be an object", 400)
+        try:
+            speed_mph = float(properties.get("speed_mph"))
+        except (TypeError, ValueError):
+            speed_mph = 55.0 if properties.get("road_class") == "primary" else 35.0
+        properties["speed_mph"] = speed_mph if speed_mph > 0 else (55.0 if properties.get("road_class") == "primary" else 35.0)
+        properties["blocked"] = bool(properties.get("blocked", False))
 
     try:
         ROAD_NETWORK_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
