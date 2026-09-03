@@ -7,11 +7,15 @@
   <style>
     body { margin: 0; font-family: Arial, sans-serif; background: #111; color: #f5f5f5; }
     #map { width: 100vw; height: 100vh; }
-    .legend { position: absolute; bottom: 20px; left: 20px; background: rgba(17,17,17,0.9); padding: 10px 12px; border-radius: 8px; border: 1px solid #444; }
-    .legend .title { font-weight: bold; margin-bottom: 8px; }
-    .legend .swatch { display: inline-block; width: 14px; height: 14px; margin-right: 6px; border: 1px solid #fff; vertical-align: middle; }
-    .legend .row { margin: 4px 0; font-size: 13px; }
-    .layer-panel { position: absolute; top: 20px; right: 20px; width: min(290px, calc(100vw - 40px)); background: rgba(17,17,17,0.93); padding: 14px; border-radius: 8px; border: 1px solid #444; }
+    .legend { position: absolute; top: 20px; bottom: 20px; left: 20px; width: min(285px, calc(100vw - 40px)); overflow-y: auto; background: rgba(17,17,17,0.94); padding: 16px; border-radius: 10px; border: 1px solid #4b5563; box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+    .legend .title { font-size: 16px; font-weight: bold; line-height: 1.25; margin-bottom: 5px; }
+    .legend .subtitle { color: #cbd5e1; font-size: 11px; line-height: 1.35; margin-bottom: 14px; }
+    .legend-section { border-top: 1px solid #374151; padding: 11px 0 2px; }
+    .legend-section:first-of-type { border-top: 0; padding-top: 0; }
+    .legend-section-title { color: #f97316; font-size: 10px; font-weight: bold; letter-spacing: 0.08em; margin-bottom: 7px; text-transform: uppercase; }
+    .legend .swatch { flex: 0 0 13px; width: 13px; height: 13px; border: 1px solid rgba(255,255,255,0.75); border-radius: 2px; }
+    .legend .row { align-items: center; display: flex; gap: 7px; margin: 6px 0; color: #e5e7eb; font-size: 11px; line-height: 1.2; }
+    .layer-panel { position: absolute; top: 20px; right: 20px; width: min(290px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow-y: auto; background: rgba(17,17,17,0.94); padding: 14px; border-radius: 10px; border: 1px solid #4b5563; box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
     .layer-panel h1 { font-size: 15px; margin: 0 0 4px; }
     .layer-panel p { color: #cbd5e1; font-size: 12px; line-height: 1.4; margin: 0 0 12px; }
     .layer-control { align-items: center; border-top: 1px solid #374151; display: flex; gap: 10px; padding: 10px 0; }
@@ -19,7 +23,7 @@
     .layer-control select { background: #1f2937; border: 1px solid #475569; color: #f8fafc; display: block; font: inherit; margin-top: 5px; padding: 3px 5px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
-    @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; } .legend { bottom: 12px; left: 12px; } }
+    @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; max-height: 52vh; } .legend { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 37vh; } }
     .maplibregl-popup-content { background: #ffffff !important; color: #000000 !important; border: 1px solid #d1d5db; border-radius: 8px; }
     .maplibregl-popup-content, .maplibregl-popup-content *, .maplibregl-popup-content strong { color: #000000 !important; }
     .maplibregl-popup-tip { border-top-color: #ffffff !important; }
@@ -67,31 +71,43 @@
       <span><strong>Secondary roads</strong><span>US Census TIGERweb transportation layer</span></span>
     </label>
   </aside>
-  <div class="legend">
+  <aside class="legend" aria-label="Map legend">
     <div class="title">Wildfire Emergency Planning (WEP)</div>
-    <div class="row">FEMA National Risk Index v1.20 (December 2025)</div>
-    <div class="row"><span class="swatch" style="background:#8ecae6"></span> US state boundaries</div>
-    <div class="row"><span class="swatch" style="background:#fb8500"></span> California county boundaries</div>
-    <div class="row"><span class="swatch" style="background:#c7445d"></span> Very High</div>
-    <div class="row"><span class="swatch" style="background:#e07069"></span> Relatively High</div>
-    <div class="row"><span class="swatch" style="background:#f0d55d"></span> Relatively Moderate</div>
-    <div class="row"><span class="swatch" style="background:#509bc7"></span> Relatively Low</div>
-    <div class="row"><span class="swatch" style="background:#4d6dbd"></span> Very Low</div>
-    <div class="row"><span class="swatch" style="background:#9e9e0f"></span> Insufficient Data / No Rating</div>
-    <div class="row"><span class="swatch" style="background:#c7445d"></span> Higher wildfire expected annual loss rating</div>
-    <div class="row"><span class="swatch" style="background:#d73027"></span> Lower community resilience rating</div>
-    <div class="row"><span class="swatch" style="background:#762a83"></span> Higher social vulnerability rating</div>
-    <div class="row"><span class="swatch" style="background:#2563eb"></span> School</div>
-    <div class="row"><span class="swatch" style="background:#7c3aed"></span> Faith-based facility</div>
-    <div class="row"><span class="swatch" style="background:#f59e0b"></span> Community facility</div>
-    <div class="row"><span class="swatch" style="background:#dc2626"></span> Civic or public safety facility</div>
-    <div class="row"><span class="swatch" style="background:#16a34a"></span> Recreation or lodging facility</div>
-    <div class="row"><span class="swatch" style="background:#d73027"></span> Fewer reachable FEMA NSS facilities</div>
-    <div class="row"><span class="swatch" style="background:#1a9850"></span> More reachable FEMA NSS facilities</div>
-    <div class="row"><span class="swatch" style="background:#f8fafc"></span> Primary road</div>
-    <div class="row"><span class="swatch" style="background:#94a3b8"></span> Secondary road</div>
-    <div class="row"><span class="swatch" style="background:#d1d5db"></span> Census tract boundaries</div>
-  </div>
+    <div class="subtitle">Map key for FEMA risk, community context, shelter access, and transportation layers.</div>
+    <section class="legend-section">
+      <div class="legend-section-title">Reference boundaries</div>
+      <div class="row"><span class="swatch" style="background:#8ecae6"></span> US state boundaries</div>
+      <div class="row"><span class="swatch" style="background:#fb8500"></span> California county boundaries</div>
+      <div class="row"><span class="swatch" style="background:#d1d5db"></span> Census tract boundaries</div>
+    </section>
+    <section class="legend-section">
+      <div class="legend-section-title">FEMA National Risk Index</div>
+      <div class="row"><span class="swatch" style="background:#c7445d"></span> Very high</div>
+      <div class="row"><span class="swatch" style="background:#e07069"></span> Relatively high</div>
+      <div class="row"><span class="swatch" style="background:#f0d55d"></span> Relatively moderate</div>
+      <div class="row"><span class="swatch" style="background:#509bc7"></span> Relatively low</div>
+      <div class="row"><span class="swatch" style="background:#4d6dbd"></span> Very low</div>
+      <div class="row"><span class="swatch" style="background:#9e9e0f"></span> Insufficient data / no rating</div>
+      <div class="row"><span class="swatch" style="background:#c7445d"></span> Higher wildfire expected annual loss</div>
+      <div class="row"><span class="swatch" style="background:#d73027"></span> Lower community resilience</div>
+      <div class="row"><span class="swatch" style="background:#762a83"></span> Higher social vulnerability</div>
+    </section>
+    <section class="legend-section">
+      <div class="legend-section-title">Facilities and access</div>
+      <div class="row"><span class="swatch" style="background:#2563eb"></span> School</div>
+      <div class="row"><span class="swatch" style="background:#7c3aed"></span> Faith-based facility</div>
+      <div class="row"><span class="swatch" style="background:#f59e0b"></span> Community facility</div>
+      <div class="row"><span class="swatch" style="background:#dc2626"></span> Civic or public safety facility</div>
+      <div class="row"><span class="swatch" style="background:#16a34a"></span> Recreation or lodging facility</div>
+      <div class="row"><span class="swatch" style="background:#d73027"></span> Fewer reachable FEMA NSS facilities</div>
+      <div class="row"><span class="swatch" style="background:#1a9850"></span> More reachable FEMA NSS facilities</div>
+    </section>
+    <section class="legend-section">
+      <div class="legend-section-title">Transportation</div>
+      <div class="row"><span class="swatch" style="background:#f8fafc"></span> Primary road</div>
+      <div class="row"><span class="swatch" style="background:#94a3b8"></span> Secondary road</div>
+    </section>
+  </aside>
   <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
   <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
   <script>
