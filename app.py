@@ -501,11 +501,33 @@ async def get_road_network_geojson():
     try:
         if not ROAD_NETWORK_PATH.exists():
             return msgpack_error("Road network file not found", 404)
-        data = json.loads(ROAD_NETWORK_PATH.read_text(encoding="utf-8"))
+        data = json.loads(ROAD_NETWORK_PATH.read_text(encoding="utf-8-sig"))
         return msgpack_response({"geojson": data, "source": str(ROAD_NETWORK_PATH.name)})
     except Exception as exc:
         logger.error("Failed to load road network geojson: %s", exc)
         return msgpack_error("Failed to load road network geojson", 500)
+
+
+@app.post("/api/wep/accessibility", include_in_schema=False)
+async def compute_wep_accessibility(req: Request):
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    try:
+        payload = msgpack.unpackb(await req.body(), raw=False)
+        geojson = payload.get("geojson") if isinstance(payload, dict) else None
+        if not isinstance(geojson, dict) or geojson.get("type") != "FeatureCollection":
+            return msgpack_error("Missing FeatureCollection geojson", 400)
+        import importlib.util
+        access_module_path = BASE_DIR / "scripts" / "compute_lake_shelter_car_access.py"
+        module_spec = importlib.util.spec_from_file_location("wep_car_access", access_module_path)
+        access_module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(access_module)
+        result = access_module.compute_accessibility_from_road_geojson(geojson)
+        return msgpack_response({"geojson": result})
+    except Exception as exc:
+        logger.error("Failed to compute WEP accessibility scenario: %s", exc)
+        return msgpack_error("Failed to compute WEP accessibility scenario", 500)
 
 
 @app.post("/api/road-network", include_in_schema=False)

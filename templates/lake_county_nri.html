@@ -21,6 +21,8 @@
     .layer-control { align-items: center; border-top: 1px solid #374151; display: flex; gap: 10px; padding: 10px 0; }
     .layer-control input { accent-color: #f97316; height: 17px; width: 17px; }
     .layer-control select { background: #1f2937; border: 1px solid #475569; color: #f8fafc; display: block; font: inherit; margin-top: 5px; padding: 3px 5px; }
+    .scenario-button { background: #b45309; border: 1px solid #f59e0b; border-radius: 6px; color: #fff; cursor: pointer; font-size: 11px; margin-top: 5px; padding: 7px 9px; }
+    .scenario-status { color: #fbbf24; display: block; font-size: 10px; line-height: 1.3; margin-top: 5px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
     @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; max-height: 52vh; } .legend { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 37vh; } }
@@ -62,6 +64,9 @@
     <label class="layer-control">
       <span><strong>Car travel-time threshold</strong><select id="access-threshold" aria-label="Car travel-time threshold"><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="90">90 minutes</option></select></span>
     </label>
+    <div class="layer-control">
+      <span><strong>Road scenario</strong><button id="recalculate-access" class="scenario-button" type="button">Recalculate from saved roads</button><span id="scenario-status" class="scenario-status">Uses speed and blocked-road edits from the Road Network Editor.</span></span>
+    </div>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-roads-primary" checked />
       <span><strong>Primary roads</strong><span>US Census TIGERweb transportation layer</span></span>
@@ -110,6 +115,7 @@
   </aside>
   <script src="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.js"></script>
   <link href="https://unpkg.com/maplibre-gl@3.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="/static/vendor/msgpack/msgpack.min.js"></script>
   <script>
     const map = new maplibregl.Map({
       container: 'map',
@@ -118,6 +124,20 @@
       zoom: 10.2,
       attributionControl: false
     });
+
+    async function fetchMsgpack(url) {
+      const response = await fetch(url, { headers: { 'Accept': 'application/msgpack' } });
+      const body = window.MessagePack.decode(new Uint8Array(await response.arrayBuffer()));
+      if (!response.ok) throw new Error(body.error || 'Request failed');
+      return body;
+    }
+
+    async function postMsgpack(url, payload) {
+      const response = await fetch(url, { method: 'POST', headers: { 'Accept': 'application/msgpack', 'Content-Type': 'application/msgpack' }, body: window.MessagePack.encode(payload) });
+      const body = window.MessagePack.decode(new Uint8Array(await response.arrayBuffer()));
+      if (!response.ok) throw new Error(body.error || 'Request failed');
+      return body;
+    }
 
     map.on('load', async () => {
       const emptyFeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -411,6 +431,22 @@
       }
       document.getElementById('access-threshold').addEventListener('change', (event) => {
         map.setPaintProperty('lake-tracts-access-fill', 'fill-color', accessColor(event.target.value));
+      });
+      document.getElementById('recalculate-access').addEventListener('click', async () => {
+        const status = document.getElementById('scenario-status');
+        const button = document.getElementById('recalculate-access');
+        button.disabled = true;
+        status.textContent = 'Recalculating edited-road scenario...';
+        try {
+          const roadPayload = await fetchMsgpack('/api/road-network');
+          const result = await postMsgpack('/api/wep/accessibility', { geojson: roadPayload.geojson });
+          map.getSource('lake-tracts-access').setData(result.geojson);
+          status.textContent = 'Scenario recalculated from the saved road network.';
+        } catch (error) {
+          status.textContent = `Recalculation failed: ${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
       });
 
       // Zoom to official Lake County boundary extent on load.

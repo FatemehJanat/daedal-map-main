@@ -27,6 +27,97 @@ THRESHOLDS_MINUTES = (30, 60, 90)
 DESTINATION_BATCH_SIZE = 60
 
 
+def compute_accessibility_from_road_geojson(road_geojson: dict) -> dict:
+    """Return a scenario result using edited roads and their speed/block fields.
+
+    This local graph is intended for WEP what-if scenarios. Each road segment
+    uses its speed_mph value, or a conservative class default, and blocked
+    segments are omitted from the graph.
+    """
+    import heapq
+    from math import hypot
+
+    tracts = load_feature_collection(TRACTS_PATH)
+    facilities = load_feature_collection(FACILITIES_PATH)
+    nodes: dict[tuple[float, float], int] = {}
+    graph: dict[int, list[tuple[int, float]]] = {}
+    coordinates: list[tuple[float, float]] = []
+
+    def node_id(coordinate: tuple[float, float]) -> int:
+        if coordinate not in nodes:
+            nodes[coordinate] = len(coordinates)
+            coordinates.append(coordinate)
+            graph[nodes[coordinate]] = []
+        return nodes[coordinate]
+
+    def distance_m(first: tuple[float, float], second: tuple[float, float]) -> float:
+        latitude_scale = 111320.0
+        longitude_scale = latitude_scale * 0.78
+        return hypot((first[0] - second[0]) * longitude_scale, (first[1] - second[1]) * latitude_scale)
+
+    for feature in road_geojson.get("features", []):
+        properties = feature.get("properties") or {}
+        if properties.get("blocked"):
+            continue
+        speed_mph = float(properties.get("speed_mph") or (55 if properties.get("road_class") == "primary" else 35))
+        speed_mps = max(speed_mph, 1.0) * 0.44704
+        geometry = feature.get("geometry") or {}
+        lines = [geometry.get("coordinates", [])] if geometry.get("type") == "LineString" else geometry.get("coordinates", [])
+        for line in lines:
+            for first, second in zip(line, line[1:]):
+                first_point = (float(first[0]), float(first[1]))
+                second_point = (float(second[0]), float(second[1]))
+                first_id = node_id(first_point)
+                second_id = node_id(second_point)
+                weight = distance_m(first_point, second_point) / speed_mps
+                graph[first_id].append((second_id, weight))
+                graph[second_id].append((first_id, weight))
+
+    def nearest_node(point: tuple[float, float]) -> int | None:
+        if not coordinates:
+            return None
+        return min(range(len(coordinates)), key=lambda index: distance_m(point, coordinates[index]))
+
+    def shortest_minutes(origin: int | None, destination: int | None) -> float | None:
+        if origin is None or destination is None:
+            return None
+        distances = {origin: 0.0}
+        queue = [(0.0, origin)]
+        while queue:
+            current, node = heapq.heappop(queue)
+            if node == destination:
+                return current / 60.0
+            if current != distances.get(node):
+                continue
+            for neighbor, weight in graph[node]:
+                candidate = current + weight
+                if candidate < distances.get(neighbor, float("inf")):
+                    distances[neighbor] = candidate
+                    heapq.heappush(queue, (candidate, neighbor))
+        return None
+
+    origin_points = [tract_centroid(feature) for feature in tracts.get("features", [])]
+    destination_points = [point_coordinates(feature) for feature in facilities.get("features", [])]
+    destination_nodes = [nearest_node(point) for point in destination_points]
+    result = json.loads(json.dumps(tracts))
+    for feature, point in zip(result.get("features", []), origin_points):
+        properties = feature.setdefault("properties", {})
+        durations = [shortest_minutes(nearest_node(point), destination) for destination in destination_nodes]
+        valid = [duration for duration in durations if duration is not None]
+        properties.update({
+            "GEOID": str(properties.get("TRACTFIPS") or properties.get("NRI_ID") or ""),
+            "nss_facilities_within_30min_car": sum(duration <= 30 for duration in valid),
+            "nss_facilities_within_60min_car": sum(duration <= 60 for duration in valid),
+            "nss_facilities_within_90min_car": sum(duration <= 90 for duration in valid),
+            "nearest_nss_facility_minutes_car": round(min(valid), 1) if valid else None,
+            "access_method": "local_edited_road_graph",
+            "access_network_source": "DaedalMap WEP road editor",
+            "access_speed_model": "speed_mph per road feature; class defaults when blank",
+            "access_conditions": "scenario routing; blocked roads omitted",
+        })
+    return result
+
+
 def load_feature_collection(path: Path) -> dict:
     with path.open(encoding="utf-8-sig") as source_file:
         return json.load(source_file)

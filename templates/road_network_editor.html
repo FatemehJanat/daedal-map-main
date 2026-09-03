@@ -125,6 +125,10 @@
       line-height: 1.4;
     }
 
+    .field { display: grid; gap: 5px; margin-bottom: 10px; }
+    .field label { color: var(--muted); font-size: 12px; }
+    .field input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: #08111d; color: var(--text); }
+
     #map {
       width: 100%;
       height: 100%;
@@ -171,6 +175,19 @@
       </div>
 
       <div class="group">
+        <h2>Selected Road Scenario</h2>
+        <div class="field">
+          <label for="speedInput">Allowable speed (mph)</label>
+          <input id="speedInput" type="number" min="1" max="100" step="1" placeholder="Class default" disabled />
+        </div>
+        <div class="field">
+          <label><input id="blockedInput" type="checkbox" disabled /> Block this road</label>
+        </div>
+        <button id="applyScenarioBtn" class="warn" type="button" disabled>Apply scenario values</button>
+        <div class="meta">Select one road feature, set its speed, or block it. Recalculate WEP access after saving.</div>
+      </div>
+
+      <div class="group">
         <h2>Notes</h2>
         <div class="meta">
           - Edits are saved to static/data/tiger2020_lake_county_primary_secondary_roads.geojson.
@@ -191,6 +208,10 @@
   <script>
     const statusEl = document.getElementById('status');
     const msgpack = window.MessagePack || null;
+    const speedInput = document.getElementById('speedInput');
+    const blockedInput = document.getElementById('blockedInput');
+    const applyScenarioBtn = document.getElementById('applyScenarioBtn');
+    let selectedRoadId = null;
 
     function setStatus(message) {
       statusEl.textContent = String(message || '');
@@ -318,6 +339,25 @@
       setStatus(`Saved ${result.saved_features} features to ${result.target}. Backup: ${result.backup}.`);
     }
 
+    function updateScenarioForm() {
+      const selected = selectedRoadId ? draw.get(selectedRoadId) : null;
+      const properties = (selected && selected.properties) || {};
+      const hasSelection = Boolean(selected);
+      speedInput.disabled = !hasSelection;
+      blockedInput.disabled = !hasSelection;
+      applyScenarioBtn.disabled = !hasSelection;
+      speedInput.value = properties.speed_mph || '';
+      blockedInput.checked = Boolean(properties.blocked);
+    }
+
+    applyScenarioBtn.addEventListener('click', () => {
+      if (!selectedRoadId) return;
+      draw.setFeatureProperty(selectedRoadId, 'speed_mph', speedInput.value ? Number(speedInput.value) : null);
+      draw.setFeatureProperty(selectedRoadId, 'blocked', blockedInput.checked);
+      setStatus('Scenario values applied to the selected road. Save roads, then recalculate WEP access.');
+      updateScenarioForm();
+    });
+
     document.getElementById('loadBtn').addEventListener('click', async () => {
       try {
         await loadRoads();
@@ -346,7 +386,14 @@
 
     document.getElementById('deleteBtn').addEventListener('click', () => {
       draw.trash();
+      selectedRoadId = null;
+      updateScenarioForm();
       setStatus('Deleted selected features.');
+    });
+
+    map.on('draw.selectionchange', (event) => {
+      selectedRoadId = event.features && event.features.length === 1 ? event.features[0].id : null;
+      updateScenarioForm();
     });
 
     map.on('load', async () => {
