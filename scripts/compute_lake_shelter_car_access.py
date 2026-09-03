@@ -27,7 +27,7 @@ THRESHOLDS_MINUTES = (30, 60, 90)
 DESTINATION_BATCH_SIZE = 60
 
 
-def compute_accessibility_from_road_geojson(road_geojson: dict) -> dict:
+def compute_accessibility_from_road_geojson(road_geojson: dict, open_shelter_ids: set[str] | None = None) -> dict:
     """Return a scenario result using edited roads and their speed/block fields.
 
     This local graph is intended for WEP what-if scenarios. Each road segment
@@ -39,6 +39,12 @@ def compute_accessibility_from_road_geojson(road_geojson: dict) -> dict:
 
     tracts = load_feature_collection(TRACTS_PATH)
     facilities = load_feature_collection(FACILITIES_PATH)
+    facility_features = facilities.get("features") or []
+    if open_shelter_ids is not None:
+        facility_features = [
+            feature for feature in facility_features
+            if str((feature.get("properties") or {}).get("shelter_id")) in open_shelter_ids
+        ]
     nodes: dict[tuple[float, float], int] = {}
     graph: dict[int, list[tuple[int, float]]] = {}
     coordinates: list[tuple[float, float]] = []
@@ -97,7 +103,7 @@ def compute_accessibility_from_road_geojson(road_geojson: dict) -> dict:
         return None
 
     origin_points = [tract_centroid(feature) for feature in tracts.get("features", [])]
-    destination_points = [point_coordinates(feature) for feature in facilities.get("features", [])]
+    destination_points = [point_coordinates(feature) for feature in facility_features]
     destination_nodes = [nearest_node(point) for point in destination_points]
     result = json.loads(json.dumps(tracts))
     for feature, point in zip(result.get("features", []), origin_points):

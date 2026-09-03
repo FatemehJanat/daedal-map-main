@@ -24,6 +24,12 @@
     .scenario-button { background: #b45309; border: 1px solid #f59e0b; border-radius: 6px; color: #fff; cursor: pointer; display: inline-block; font-size: 11px; margin-top: 5px; padding: 7px 9px; text-decoration: none; }
     .scenario-button.secondary { background: transparent; border-color: #64748b; color: #e2e8f0; margin-left: 4px; }
     .scenario-status { color: #fbbf24; display: block; font-size: 10px; line-height: 1.3; margin-top: 5px; }
+    .shelter-scenario { border-top: 1px solid #374151; margin-top: 7px; padding-top: 8px; }
+    .shelter-scenario summary { color: #e5e7eb; cursor: pointer; font-size: 11px; }
+    .shelter-actions { display: flex; gap: 5px; margin: 7px 0; }
+    .shelter-action { background: #1f2937; border: 1px solid #475569; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 4px 6px; }
+    .shelter-list { max-height: 190px; overflow-y: auto; }
+    .shelter-option { align-items: flex-start; color: #cbd5e1; display: flex; font-size: 10px; gap: 5px; line-height: 1.25; padding: 3px 0; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
     @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; max-height: 52vh; } .legend { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 37vh; } }
@@ -58,6 +64,13 @@
       <input type="checkbox" data-layer="lake-shelters-circle" checked />
       <span><strong>FEMA NSS facilities</strong><span>66 Lake County facilities; building type shown by color</span></span>
     </label>
+    <div class="shelter-scenario">
+      <details id="shelter-scenario-details">
+        <summary id="shelter-summary">Open shelters: loading...</summary>
+        <div class="shelter-actions"><button id="open-all-shelters" class="shelter-action" type="button">Open all</button><button id="close-all-shelters" class="shelter-action" type="button">Close all</button></div>
+        <div id="shelter-list" class="shelter-list"></div>
+      </details>
+    </div>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-tracts-access-fill" />
       <span><strong>Car access to FEMA NSS facilities</strong><span>Cumulative facility count from tract centroids using OSM car routing</span></span>
@@ -175,6 +188,34 @@
       map.addSource('lake-water', { type: 'geojson', data: waterData });
       map.addSource('lake-roads', { type: 'geojson', data: roadsData });
       map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
+
+      const allShelterFeatures = sheltersData.features || [];
+      const shelterList = document.getElementById('shelter-list');
+      const shelterSummary = document.getElementById('shelter-summary');
+      const selectedShelterIds = () => new Set(Array.from(shelterList.querySelectorAll('input:checked')).map((input) => input.value));
+      const updateShelterScenario = () => {
+        const openIds = selectedShelterIds();
+        const openFeatures = allShelterFeatures.filter((feature) => openIds.has(String(feature.properties && feature.properties.shelter_id)));
+        map.getSource('lake-shelters').setData({ type: 'FeatureCollection', features: openFeatures });
+        shelterSummary.textContent = `Open shelters: ${openFeatures.length} of ${allShelterFeatures.length}`;
+      };
+      for (const feature of allShelterFeatures) {
+        const properties = feature.properties || {};
+        const label = document.createElement('label');
+        label.className = 'shelter-option';
+        label.innerHTML = `<input type="checkbox" value="${properties.shelter_id}" checked /><span>${properties.shelter_name || 'Unnamed facility'} (${properties.city || 'No city'})</span>`;
+        shelterList.appendChild(label);
+      }
+      shelterList.addEventListener('change', updateShelterScenario);
+      document.getElementById('open-all-shelters').addEventListener('click', () => {
+        shelterList.querySelectorAll('input').forEach((input) => { input.checked = true; });
+        updateShelterScenario();
+      });
+      document.getElementById('close-all-shelters').addEventListener('click', () => {
+        shelterList.querySelectorAll('input').forEach((input) => { input.checked = false; });
+        updateShelterScenario();
+      });
+      updateShelterScenario();
 
       map.addLayer({ id: 'us-states-fill', type: 'fill', source: 'us-states', paint: { 'fill-color': '#0b1f33', 'fill-opacity': 0.16 } });
       map.addLayer({ id: 'us-states-line', type: 'line', source: 'us-states', paint: { 'line-color': '#8ecae6', 'line-width': 1.2, 'line-opacity': 0.8 } });
@@ -440,7 +481,7 @@
         status.textContent = 'Recalculating edited-road scenario...';
         try {
           const roadPayload = await fetchMsgpack('/api/road-network');
-          const result = await postMsgpack('/api/wep/accessibility', { geojson: roadPayload.geojson });
+          const result = await postMsgpack('/api/wep/accessibility', { geojson: roadPayload.geojson, open_shelter_ids: Array.from(selectedShelterIds()) });
           map.getSource('lake-tracts-access').setData(result.geojson);
           status.textContent = 'Scenario recalculated from the saved road network.';
         } catch (error) {

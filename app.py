@@ -516,14 +516,17 @@ async def compute_wep_accessibility(req: Request):
     try:
         payload = msgpack.unpackb(await req.body(), raw=False)
         geojson = payload.get("geojson") if isinstance(payload, dict) else None
+        open_shelter_ids = payload.get("open_shelter_ids") if isinstance(payload, dict) else None
         if not isinstance(geojson, dict) or geojson.get("type") != "FeatureCollection":
             return msgpack_error("Missing FeatureCollection geojson", 400)
+        if open_shelter_ids is not None and not isinstance(open_shelter_ids, list):
+            return msgpack_error("open_shelter_ids must be an array", 400)
         import importlib.util
         access_module_path = BASE_DIR / "scripts" / "compute_lake_shelter_car_access.py"
         module_spec = importlib.util.spec_from_file_location("wep_car_access", access_module_path)
         access_module = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(access_module)
-        result = access_module.compute_accessibility_from_road_geojson(geojson)
+        result = access_module.compute_accessibility_from_road_geojson(geojson, {str(value) for value in open_shelter_ids} if open_shelter_ids is not None else None)
         return msgpack_response({"geojson": result})
     except Exception as exc:
         logger.error("Failed to compute WEP accessibility scenario: %s", exc)
