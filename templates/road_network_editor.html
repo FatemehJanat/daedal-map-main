@@ -160,7 +160,8 @@
         <h2>Load and Save</h2>
         <div class="btn-row">
           <button id="loadBtn" class="secondary" type="button">Load roads from project file</button>
-          <button id="saveBtn" class="ok" type="button">Save edits to project file</button>
+          <button id="saveBtn" class="ok" type="button">Save scenario locally</button>
+          <button id="resetScenarioBtn" class="secondary" type="button">Reset scenario</button>
         </div>
         <div id="status" class="status">Ready.</div>
       </div>
@@ -190,8 +191,8 @@
       <div class="group">
         <h2>Notes</h2>
         <div class="meta">
-          - Edits are saved to static/data/tiger2020_lake_county_primary_secondary_roads.geojson.
-          - A timestamped backup is created each time you save.
+          - Road edits are temporary scenario changes stored in this browser only.
+          - The baseline road file is never changed by scenario testing.
           - This editor supports LineString and MultiLineString road features.
         </div>
       </div>
@@ -211,6 +212,7 @@
     const speedInput = document.getElementById('speedInput');
     const blockedInput = document.getElementById('blockedInput');
     const applyScenarioBtn = document.getElementById('applyScenarioBtn');
+    const scenarioStorageKey = 'wep-road-scenario-v1';
     let selectedRoadId = null;
 
     function setStatus(message) {
@@ -317,12 +319,13 @@
     async function loadRoads() {
       setStatus('Loading roads...');
       const payload = await fetchMsgpack('/api/road-network');
-      const geojson = payload.geojson;
+      const savedScenario = localStorage.getItem(scenarioStorageKey);
+      const geojson = savedScenario ? JSON.parse(savedScenario) : payload.geojson;
       (geojson.features || []).forEach(normalizeRoadProperties);
       draw.deleteAll();
       draw.add(geojson);
       const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
-      setStatus(`Loaded ${count} road features from ${payload.source}.`);
+      setStatus(savedScenario ? `Loaded ${count} road features from the local scenario.` : `Loaded ${count} road features from ${payload.source}.`);
 
       const bounds = new maplibregl.LngLatBounds();
       for (const feature of geojson.features || []) {
@@ -348,9 +351,8 @@
     async function saveRoads() {
       const geojson = draw.getAll();
       (geojson.features || []).forEach(normalizeRoadProperties);
-      setStatus('Saving roads...');
-      const result = await postMsgpack('/api/road-network', { geojson });
-      setStatus(`Saved ${result.saved_features} features to ${result.target}. Backup: ${result.backup}.`);
+      localStorage.setItem(scenarioStorageKey, JSON.stringify(geojson));
+      setStatus(`Saved ${geojson.features.length} road features to this browser scenario. The baseline road file was not changed.`);
     }
 
     function updateScenarioForm() {
@@ -368,7 +370,7 @@
       if (!selectedRoadId) return;
       draw.setFeatureProperty(selectedRoadId, 'speed_mph', speedInput.value ? Number(speedInput.value) : null);
       draw.setFeatureProperty(selectedRoadId, 'blocked', blockedInput.checked);
-      setStatus('Scenario values applied to the selected road. Save roads, then recalculate WEP access.');
+      setStatus('Scenario values applied to the selected road. Save the scenario locally, then recalculate WEP access.');
       updateScenarioForm();
     });
 
@@ -385,6 +387,16 @@
         await saveRoads();
       } catch (error) {
         setStatus(`Save failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('resetScenarioBtn').addEventListener('click', async () => {
+      localStorage.removeItem(scenarioStorageKey);
+      try {
+        await loadRoads();
+        setStatus('Scenario reset. The baseline road network is loaded and remains unchanged.');
+      } catch (error) {
+        setStatus(`Reset failed: ${error.message}`);
       }
     });
 

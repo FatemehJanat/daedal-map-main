@@ -538,6 +538,7 @@ async def save_road_network_geojson(req: Request):
     _context, error = _require_local_or_admin(req)
     if error:
         return error
+    return msgpack_error("Permanent road edits are disabled; use the WEP scenario editor", 409)
 
     try:
         payload = msgpack.unpackb(await req.body(), raw=False)

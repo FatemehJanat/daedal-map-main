@@ -24,6 +24,7 @@
     .scenario-button { background: #b45309; border: 1px solid #f59e0b; border-radius: 6px; color: #fff; cursor: pointer; display: inline-block; font-size: 11px; margin-top: 5px; padding: 7px 9px; text-decoration: none; }
     .scenario-button.secondary { background: transparent; border-color: #64748b; color: #e2e8f0; margin-left: 4px; }
     .scenario-status { color: #fbbf24; display: block; font-size: 10px; line-height: 1.3; margin-top: 5px; }
+    .scenario-reset { background: transparent; border: 1px solid #64748b; border-radius: 5px; color: #cbd5e1; cursor: pointer; font-size: 10px; margin-top: 5px; padding: 4px 6px; }
     .shelter-scenario { border-top: 1px solid #374151; margin-top: 7px; padding-top: 8px; }
     .shelter-scenario summary { color: #e5e7eb; cursor: pointer; font-size: 11px; }
     .shelter-actions { display: flex; gap: 5px; margin: 7px 0; }
@@ -79,7 +80,7 @@
       <span><strong>Car travel-time threshold</strong><select id="access-threshold" aria-label="Car travel-time threshold"><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="90">90 minutes</option></select></span>
     </label>
     <div class="layer-control">
-      <span><strong>Road scenario</strong><a class="scenario-button secondary" href="/road-network-editor">Open road editor</a><button id="recalculate-access" class="scenario-button" type="button">Recalculate from saved roads</button><span id="scenario-status" class="scenario-status">Uses speed and blocked-road edits from the Road Network Editor.</span></span>
+      <span><strong>Scenario testing</strong><a class="scenario-button secondary" href="/road-network-editor">Open road editor</a><button id="recalculate-access" class="scenario-button" type="button">Recalculate access</button><button id="reset-scenario" class="scenario-reset" type="button">Reset temporary scenario</button><span id="scenario-status" class="scenario-status">Road and shelter changes are temporary browser-only scenario values.</span></span>
     </div>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-roads-primary" checked />
@@ -153,6 +154,9 @@
       return body;
     }
 
+    const roadScenarioStorageKey = 'wep-road-scenario-v1';
+    const shelterScenarioStorageKey = 'wep-shelter-scenario-v1';
+
     map.on('load', async () => {
       const emptyFeatureCollection = { type: 'FeatureCollection', features: [] };
       const fetchGeoJson = async (url) => {
@@ -192,18 +196,23 @@
       const allShelterFeatures = sheltersData.features || [];
       const shelterList = document.getElementById('shelter-list');
       const shelterSummary = document.getElementById('shelter-summary');
+      let storedShelterIds = null;
+      try { storedShelterIds = JSON.parse(localStorage.getItem(shelterScenarioStorageKey)); } catch (_error) { storedShelterIds = null; }
+      const initialShelterIds = new Set(Array.isArray(storedShelterIds) ? storedShelterIds.map(String) : allShelterFeatures.map((feature) => String(feature.properties && feature.properties.shelter_id)));
       const selectedShelterIds = () => new Set(Array.from(shelterList.querySelectorAll('input:checked')).map((input) => input.value));
       const updateShelterScenario = () => {
         const openIds = selectedShelterIds();
         const openFeatures = allShelterFeatures.filter((feature) => openIds.has(String(feature.properties && feature.properties.shelter_id)));
         map.getSource('lake-shelters').setData({ type: 'FeatureCollection', features: openFeatures });
         shelterSummary.textContent = `Open shelters: ${openFeatures.length} of ${allShelterFeatures.length}`;
+        localStorage.setItem(shelterScenarioStorageKey, JSON.stringify(Array.from(openIds)));
       };
       for (const feature of allShelterFeatures) {
         const properties = feature.properties || {};
         const label = document.createElement('label');
         label.className = 'shelter-option';
-        label.innerHTML = `<input type="checkbox" value="${properties.shelter_id}" checked /><span>${properties.shelter_name || 'Unnamed facility'} (${properties.city || 'No city'})</span>`;
+        const checked = initialShelterIds.has(String(properties.shelter_id)) ? ' checked' : '';
+        label.innerHTML = `<input type="checkbox" value="${properties.shelter_id}"${checked} /><span>${properties.shelter_name || 'Unnamed facility'} (${properties.city || 'No city'})</span>`;
         shelterList.appendChild(label);
       }
       shelterList.addEventListener('change', updateShelterScenario);
@@ -481,14 +490,21 @@
         status.textContent = 'Recalculating edited-road scenario...';
         try {
           const roadPayload = await fetchMsgpack('/api/road-network');
-          const result = await postMsgpack('/api/wep/accessibility', { geojson: roadPayload.geojson, open_shelter_ids: Array.from(selectedShelterIds()) });
+          let scenarioRoads = roadPayload.geojson;
+          try { scenarioRoads = JSON.parse(localStorage.getItem(roadScenarioStorageKey)) || scenarioRoads; } catch (_error) { scenarioRoads = roadPayload.geojson; }
+          const result = await postMsgpack('/api/wep/accessibility', { geojson: scenarioRoads, open_shelter_ids: Array.from(selectedShelterIds()) });
           map.getSource('lake-tracts-access').setData(result.geojson);
-          status.textContent = 'Scenario recalculated from the saved road network.';
+          status.textContent = 'Temporary road and shelter scenario recalculated. Baseline data was not changed.';
         } catch (error) {
           status.textContent = `Recalculation failed: ${error.message}`;
         } finally {
           button.disabled = false;
         }
+      });
+      document.getElementById('reset-scenario').addEventListener('click', () => {
+        localStorage.removeItem(roadScenarioStorageKey);
+        localStorage.removeItem(shelterScenarioStorageKey);
+        window.location.reload();
       });
 
       // Zoom to official Lake County boundary extent on load.
