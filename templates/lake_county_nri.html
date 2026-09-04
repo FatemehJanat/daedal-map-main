@@ -40,6 +40,8 @@
     .road-scenario-row input[type="number"] { background: #111827; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; min-width: 0; padding: 3px; width: 100%; }
     .candidate-list { color: #cbd5e1; font-size: 10px; max-height: 70px; overflow-y: auto; }
     .candidate-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .building-list { color: #cbd5e1; max-height: 150px; overflow-y: auto; }
+    .building-option { align-items: flex-start; display: flex; font-size: 10px; gap: 5px; line-height: 1.25; padding: 3px 0; }
     .candidate-add { background: #1f2937; border: 1px solid #64748b; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 5px 7px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
@@ -61,6 +63,10 @@
       <div class="scenario-subhead">Road disruptions and speeds</div>
       <div id="road-scenario-list" class="road-scenario-list"></div>
       <div class="scenario-subhead">Candidate shelters</div>
+      <details>
+        <summary>Eligible public buildings</summary>
+        <div id="building-list" class="building-list"></div>
+      </details>
       <button id="add-candidate-shelter" class="candidate-add" type="button">Add candidate on map</button>
       <div id="candidate-list" class="candidate-list"></div>
       <span id="candidate-status" class="scenario-status">Click the map to place a candidate shelter.</span>
@@ -190,7 +196,7 @@
           return emptyFeatureCollection;
         }
       };
-      const [usStatesData, californiaCountiesData, tractsData, accessData, resilienceData, socialVulnerabilityData, countyData, waterData, roadsData, sheltersData] = await Promise.all([
+      const [usStatesData, californiaCountiesData, tractsData, accessData, resilienceData, socialVulnerabilityData, countyData, waterData, roadsData, sheltersData, candidateBuildingsData] = await Promise.all([
         fetchGeoJson('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json'),
         fetchGeoJson('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_tracts.geojson').then(async (data) =>
@@ -202,7 +208,8 @@
         fetchGeoJson('/static/data/tiger2020_lake_county_boundary.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_water.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_primary_secondary_roads.geojson'),
-        fetchGeoJson('/static/data/fema_nss_lake_county_facilities.geojson')
+        fetchGeoJson('/static/data/fema_nss_lake_county_facilities.geojson'),
+        fetchGeoJson('/static/data/wep_lake_county_candidate_buildings.geojson')
       ]);
 
       let scenarioRoads = roadsData;
@@ -221,10 +228,12 @@
       map.addSource('lake-roads', { type: 'geojson', data: scenarioRoads });
       map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
       map.addSource('lake-candidate-shelters', { type: 'geojson', data: { type: 'FeatureCollection', features: candidateShelters } });
+      map.addSource('lake-candidate-buildings', { type: 'geojson', data: candidateBuildingsData });
 
       const scenarioCounts = document.getElementById('scenario-counts');
       const roadScenarioList = document.getElementById('road-scenario-list');
       const candidateList = document.getElementById('candidate-list');
+      const buildingList = document.getElementById('building-list');
       let addingCandidate = false;
       const openRoads = () => (scenarioRoads.features || []).filter((feature) => !(feature.properties || {}).blocked);
       const blockedRoads = () => (scenarioRoads.features || []).filter((feature) => (feature.properties || {}).blocked);
@@ -253,6 +262,34 @@
           updateScenarioCounts();
         }));
       };
+      const candidateBuildingFeatures = candidateBuildingsData.features || [];
+      const activatedBuildingIds = new Set(candidateShelters.map((feature) => feature.properties && feature.properties.source_building_id));
+      for (const building of candidateBuildingFeatures) {
+        const properties = building.properties || {};
+        const label = document.createElement('label');
+        label.className = 'building-option';
+        const checked = activatedBuildingIds.has(properties.building_id) ? ' checked' : '';
+        label.innerHTML = `<input type="checkbox" value="${properties.building_id}"${checked} data-building-id="${properties.building_id}" /><span>${properties.building_name || 'Unnamed public building'}<br/>${properties.amenity || 'public use'}</span>`;
+        buildingList.appendChild(label);
+      }
+      buildingList.addEventListener('change', (event) => {
+        const building = candidateBuildingFeatures.find((feature) => feature.properties && feature.properties.building_id === event.target.value);
+        if (!building) return;
+        if (event.target.checked) {
+          const properties = building.properties || {};
+          candidateShelters.push({
+            type: 'Feature',
+            geometry: building.geometry,
+            properties: { shelter_id: `candidate-${properties.building_id}`, shelter_name: properties.building_name, building_type: 'Candidate facility', source_building_id: properties.building_id }
+          });
+        } else {
+          candidateShelters = candidateShelters.filter((feature) => feature.properties && feature.properties.source_building_id !== event.target.value);
+        }
+        localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
+        map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
+        renderCandidateList();
+        updateScenarioCounts();
+      });
       renderRoadScenarioList();
       renderCandidateList();
 
@@ -496,6 +533,12 @@
         type: 'circle',
         source: 'lake-candidate-shelters',
         paint: { 'circle-color': '#fbbf24', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 }
+      });
+      map.addLayer({
+        id: 'lake-candidate-buildings-circle',
+        type: 'circle',
+        source: 'lake-candidate-buildings',
+        paint: { 'circle-color': '#facc15', 'circle-radius': 3, 'circle-stroke-color': '#111827', 'circle-stroke-width': 1, 'circle-opacity': 0.75 }
       });
 
       map.on('click', (event) => {
