@@ -31,6 +31,16 @@
     .shelter-action { background: #1f2937; border: 1px solid #475569; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 4px 6px; }
     .shelter-list { max-height: 190px; overflow-y: auto; }
     .shelter-option { align-items: flex-start; color: #cbd5e1; display: flex; font-size: 10px; gap: 5px; line-height: 1.25; padding: 3px 0; }
+    .scenario-builder { border: 1px solid #92400e; border-radius: 8px; margin: 8px 0 10px; padding: 10px; background: rgba(120,53,15,0.16); }
+    .scenario-builder summary { color: #fbbf24; cursor: pointer; font-size: 12px; font-weight: bold; }
+    .scenario-counts { color: #cbd5e1; font-size: 10px; line-height: 1.4; margin: 6px 0; }
+    .scenario-subhead { color: #e5e7eb; font-size: 11px; font-weight: bold; margin: 9px 0 4px; }
+    .road-scenario-list { max-height: 130px; overflow-y: auto; }
+    .road-scenario-row { align-items: center; color: #cbd5e1; display: grid; font-size: 10px; gap: 4px; grid-template-columns: 1fr 58px 18px; padding: 3px 0; }
+    .road-scenario-row input[type="number"] { background: #111827; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; min-width: 0; padding: 3px; width: 100%; }
+    .candidate-list { color: #cbd5e1; font-size: 10px; max-height: 70px; overflow-y: auto; }
+    .candidate-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .candidate-add { background: #1f2937; border: 1px solid #64748b; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 5px 7px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
     @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; max-height: 52vh; } .legend { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 37vh; } }
@@ -45,6 +55,16 @@
   <aside class="layer-panel" aria-label="Map layers">
     <h1>WEP map layers</h1>
     <p>Choose the FEMA National Risk Index measure shown for Lake County census tracts.</p>
+    <details class="scenario-builder" open>
+      <summary>Scenario builder</summary>
+      <div class="scenario-counts" id="scenario-counts">Baseline active. Changes stay in this browser and are never written to source data.</div>
+      <div class="scenario-subhead">Road disruptions and speeds</div>
+      <div id="road-scenario-list" class="road-scenario-list"></div>
+      <div class="scenario-subhead">Candidate shelters</div>
+      <button id="add-candidate-shelter" class="candidate-add" type="button">Add candidate on map</button>
+      <div id="candidate-list" class="candidate-list"></div>
+      <span id="candidate-status" class="scenario-status">Click the map to place a candidate shelter.</span>
+    </details>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-tracts-risk-fill" checked />
       <span><strong>Wildfire risk</strong><span>Hazard Type Risk Index rating</span></span>
@@ -156,6 +176,7 @@
 
     const roadScenarioStorageKey = 'wep-road-scenario-v1';
     const shelterScenarioStorageKey = 'wep-shelter-scenario-v1';
+    const candidateShelterStorageKey = 'wep-candidate-shelters-v1';
 
     map.on('load', async () => {
       const emptyFeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -182,6 +203,11 @@
         fetchGeoJson('/static/data/fema_nss_lake_county_facilities.geojson')
       ]);
 
+      let scenarioRoads = roadsData;
+      let candidateShelters = [];
+      try { scenarioRoads = JSON.parse(localStorage.getItem(roadScenarioStorageKey)) || roadsData; } catch (_error) { scenarioRoads = roadsData; }
+      try { candidateShelters = JSON.parse(localStorage.getItem(candidateShelterStorageKey)) || []; } catch (_error) { candidateShelters = []; }
+
       map.addSource('us-states', { type: 'geojson', data: usStatesData });
       map.addSource('california-counties', { type: 'geojson', data: californiaCountiesData });
       map.addSource('lake-tracts', { type: 'geojson', data: tractsData });
@@ -190,8 +216,43 @@
       map.addSource('lake-tracts-social-vulnerability', { type: 'geojson', data: socialVulnerabilityData });
       map.addSource('lake-county-boundary', { type: 'geojson', data: countyData });
       map.addSource('lake-water', { type: 'geojson', data: waterData });
-      map.addSource('lake-roads', { type: 'geojson', data: roadsData });
+      map.addSource('lake-roads', { type: 'geojson', data: scenarioRoads });
       map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
+      map.addSource('lake-candidate-shelters', { type: 'geojson', data: { type: 'FeatureCollection', features: candidateShelters } });
+
+      const scenarioCounts = document.getElementById('scenario-counts');
+      const roadScenarioList = document.getElementById('road-scenario-list');
+      const candidateList = document.getElementById('candidate-list');
+      let addingCandidate = false;
+      const openRoads = () => (scenarioRoads.features || []).filter((feature) => !(feature.properties || {}).blocked);
+      const blockedRoads = () => (scenarioRoads.features || []).filter((feature) => (feature.properties || {}).blocked);
+      const updateScenarioCounts = () => {
+        const shelterInputs = document.querySelectorAll('#shelter-list input');
+        const closedShelters = Array.from(shelterInputs).filter((input) => !input.checked).length;
+        scenarioCounts.textContent = `${closedShelters} FEMA shelters closed · ${blockedRoads().length} roads blocked · ${(scenarioRoads.features || []).filter((feature) => Number(feature.properties && feature.properties.speed_mph) !== (feature.properties && feature.properties.road_class === 'primary' ? 55 : 35)).length} speed changes · ${candidateShelters.length} candidate shelters`;
+      };
+      const renderRoadScenarioList = () => {
+        roadScenarioList.innerHTML = '';
+        (scenarioRoads.features || []).forEach((feature, index) => {
+          const properties = feature.properties || {};
+          const row = document.createElement('label');
+          row.className = 'road-scenario-row';
+          row.innerHTML = `<span>${properties.NAME || properties.BASENAME || `${properties.road_class || 'road'} segment ${index + 1}`}</span><input type="number" min="1" max="100" step="1" value="${properties.speed_mph || 35}" data-road-speed="${index}" aria-label="Road speed" /><input type="checkbox"${properties.blocked ? ' checked' : ''} data-road-blocked="${index}" aria-label="Block road" />`;
+          roadScenarioList.appendChild(row);
+        });
+      };
+      const renderCandidateList = () => {
+        candidateList.innerHTML = candidateShelters.length ? candidateShelters.map((feature, index) => `<div class="candidate-row"><span>${feature.properties.shelter_name}</span><button type="button" data-remove-candidate="${index}">Remove</button></div>`).join('') : '<span>No candidate shelters added.</span>';
+        candidateList.querySelectorAll('[data-remove-candidate]').forEach((button) => button.addEventListener('click', () => {
+          candidateShelters.splice(Number(button.dataset.removeCandidate), 1);
+          localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
+          map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
+          renderCandidateList();
+          updateScenarioCounts();
+        }));
+      };
+      renderRoadScenarioList();
+      renderCandidateList();
 
       const allShelterFeatures = sheltersData.features || [];
       const shelterList = document.getElementById('shelter-list');
@@ -206,6 +267,7 @@
         map.getSource('lake-shelters').setData({ type: 'FeatureCollection', features: openFeatures });
         shelterSummary.textContent = `Open shelters: ${openFeatures.length} of ${allShelterFeatures.length}`;
         localStorage.setItem(shelterScenarioStorageKey, JSON.stringify(Array.from(openIds)));
+        updateScenarioCounts();
       };
       for (const feature of allShelterFeatures) {
         const properties = feature.properties || {};
@@ -225,6 +287,24 @@
         updateShelterScenario();
       });
       updateShelterScenario();
+      roadScenarioList.addEventListener('change', (event) => {
+        const speedIndex = event.target.dataset.roadSpeed;
+        const blockedIndex = event.target.dataset.roadBlocked;
+        const index = speedIndex !== undefined ? Number(speedIndex) : Number(blockedIndex);
+        if (!scenarioRoads.features[index]) return;
+        const properties = scenarioRoads.features[index].properties || (scenarioRoads.features[index].properties = {});
+        if (speedIndex !== undefined) properties.speed_mph = Math.max(1, Number(event.target.value) || 1);
+        if (blockedIndex !== undefined) properties.blocked = event.target.checked;
+        localStorage.setItem(roadScenarioStorageKey, JSON.stringify(scenarioRoads));
+        map.getSource('lake-roads').setData(scenarioRoads);
+        updateScenarioCounts();
+      });
+      document.getElementById('add-candidate-shelter').addEventListener('click', () => {
+        addingCandidate = true;
+        document.getElementById('candidate-status').textContent = 'Click a location on the map to place the candidate shelter.';
+        map.getCanvas().style.cursor = 'crosshair';
+      });
+      updateScenarioCounts();
 
       map.addLayer({ id: 'us-states-fill', type: 'fill', source: 'us-states', paint: { 'fill-color': '#0b1f33', 'fill-opacity': 0.16 } });
       map.addLayer({ id: 'us-states-line', type: 'line', source: 'us-states', paint: { 'line-color': '#8ecae6', 'line-width': 1.2, 'line-opacity': 0.8 } });
@@ -409,6 +489,29 @@
           'text-halo-width': 1
         }
       });
+      map.addLayer({
+        id: 'lake-candidate-shelters-circle',
+        type: 'circle',
+        source: 'lake-candidate-shelters',
+        paint: { 'circle-color': '#fbbf24', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 }
+      });
+
+      map.on('click', (event) => {
+        if (!addingCandidate) return;
+        const id = `candidate-${Date.now()}`;
+        candidateShelters.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [event.lngLat.lng, event.lngLat.lat] },
+          properties: { shelter_id: id, shelter_name: `Candidate shelter ${candidateShelters.length + 1}`, building_type: 'Candidate facility' }
+        });
+        localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
+        map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
+        renderCandidateList();
+        updateScenarioCounts();
+        addingCandidate = false;
+        map.getCanvas().style.cursor = '';
+        document.getElementById('candidate-status').textContent = 'Candidate added to the temporary scenario.';
+      });
 
       map.on('click', 'lake-tracts-risk-fill', (e) => {
         const props = (e.features && e.features[0] && e.features[0].properties) || {};
@@ -490,9 +593,11 @@
         status.textContent = 'Recalculating edited-road scenario...';
         try {
           const roadPayload = await fetchMsgpack('/api/road-network');
-          let scenarioRoads = roadPayload.geojson;
-          try { scenarioRoads = JSON.parse(localStorage.getItem(roadScenarioStorageKey)) || scenarioRoads; } catch (_error) { scenarioRoads = roadPayload.geojson; }
-          const result = await postMsgpack('/api/wep/accessibility', { geojson: scenarioRoads, open_shelter_ids: Array.from(selectedShelterIds()) });
+          let currentScenarioRoads = roadPayload.geojson;
+          try { currentScenarioRoads = JSON.parse(localStorage.getItem(roadScenarioStorageKey)) || currentScenarioRoads; } catch (_error) { currentScenarioRoads = roadPayload.geojson; }
+          let currentCandidates = [];
+          try { currentCandidates = JSON.parse(localStorage.getItem(candidateShelterStorageKey)) || []; } catch (_error) { currentCandidates = []; }
+          const result = await postMsgpack('/api/wep/accessibility', { geojson: currentScenarioRoads, open_shelter_ids: Array.from(selectedShelterIds()).concat(currentCandidates.map((feature) => feature.properties.shelter_id)), candidate_shelters: currentCandidates });
           map.getSource('lake-tracts-access').setData(result.geojson);
           status.textContent = 'Temporary road and shelter scenario recalculated. Baseline data was not changed.';
         } catch (error) {
@@ -504,6 +609,7 @@
       document.getElementById('reset-scenario').addEventListener('click', () => {
         localStorage.removeItem(roadScenarioStorageKey);
         localStorage.removeItem(shelterScenarioStorageKey);
+        localStorage.removeItem(candidateShelterStorageKey);
         window.location.reload();
       });
 

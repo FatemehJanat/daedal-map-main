@@ -27,7 +27,11 @@ THRESHOLDS_MINUTES = (30, 60, 90)
 DESTINATION_BATCH_SIZE = 60
 
 
-def compute_accessibility_from_road_geojson(road_geojson: dict, open_shelter_ids: set[str] | None = None) -> dict:
+def compute_accessibility_from_road_geojson(
+    road_geojson: dict,
+    open_shelter_ids: set[str] | None = None,
+    candidate_shelters: list[dict] | None = None,
+) -> dict:
     """Return a scenario result using edited roads and their speed/block fields.
 
     This local graph is intended for WEP what-if scenarios. Each road segment
@@ -45,6 +49,9 @@ def compute_accessibility_from_road_geojson(road_geojson: dict, open_shelter_ids
             feature for feature in facility_features
             if str((feature.get("properties") or {}).get("shelter_id")) in open_shelter_ids
         ]
+    for candidate in candidate_shelters or []:
+        if str((candidate.get("properties") or {}).get("shelter_id")) in (open_shelter_ids or set()):
+            facility_features.append(candidate)
     nodes: dict[tuple[float, float], int] = {}
     graph: dict[int, list[tuple[int, float]]] = {}
     coordinates: list[tuple[float, float]] = []
