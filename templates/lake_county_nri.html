@@ -64,6 +64,11 @@
       <button id="add-candidate-shelter" class="candidate-add" type="button">Add candidate on map</button>
       <div id="candidate-list" class="candidate-list"></div>
       <span id="candidate-status" class="scenario-status">Click the map to place a candidate shelter.</span>
+      <div class="scenario-subhead">Scenario actions</div>
+      <a class="scenario-button secondary" href="/road-network-editor">Open road editor</a>
+      <button id="recalculate-access" class="scenario-button" type="button">Recalculate access</button>
+      <button id="reset-scenario" class="scenario-reset" type="button">Reset temporary scenario</button>
+      <span id="scenario-status" class="scenario-status">Road and shelter changes are temporary browser-only scenario values.</span>
     </details>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-tracts-risk-fill" checked />
@@ -99,9 +104,6 @@
     <label class="layer-control">
       <span><strong>Car travel-time threshold</strong><select id="access-threshold" aria-label="Car travel-time threshold"><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="90">90 minutes</option></select></span>
     </label>
-    <div class="layer-control">
-      <span><strong>Scenario testing</strong><a class="scenario-button secondary" href="/road-network-editor">Open road editor</a><button id="recalculate-access" class="scenario-button" type="button">Recalculate access</button><button id="reset-scenario" class="scenario-reset" type="button">Reset temporary scenario</button><span id="scenario-status" class="scenario-status">Road and shelter changes are temporary browser-only scenario values.</span></span>
-    </div>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-roads-primary" checked />
       <span><strong>Primary roads</strong><span>US Census TIGERweb transportation layer</span></span>
