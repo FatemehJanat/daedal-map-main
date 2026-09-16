@@ -24,6 +24,14 @@
     .scenario-button { background: #b45309; border: 1px solid #f59e0b; border-radius: 6px; color: #fff; cursor: pointer; display: inline-block; font-size: 11px; margin-top: 5px; padding: 7px 9px; text-decoration: none; }
     .scenario-button.secondary { background: transparent; border-color: #64748b; color: #e2e8f0; margin-left: 4px; }
     .scenario-status { color: #fbbf24; display: block; font-size: 10px; line-height: 1.3; margin-top: 5px; }
+    .scenario-map-actions { display: grid; gap: 5px; grid-template-columns: repeat(3, 1fr); margin: 7px 0; }
+    .scenario-map-action { background: #1f2937; border: 1px solid #64748b; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 6px 4px; }
+    .scenario-map-action.active { background: #b45309; border-color: #f59e0b; color: #fff; }
+    .scenario-pending { background: rgba(15,23,42,0.58); border: 1px solid #475569; border-radius: 5px; color: #e2e8f0; font-size: 10px; line-height: 1.4; margin: 7px 0; padding: 7px; }
+    .optimizer-controls { display: grid; gap: 5px; grid-template-columns: 1fr 72px; margin: 7px 0; }
+    .optimizer-controls select, .optimizer-controls input { background: #111827; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; font-size: 10px; min-width: 0; padding: 5px; }
+    .optimizer-results { color: #cbd5e1; font-size: 10px; line-height: 1.35; margin-top: 6px; }
+    .optimizer-result { align-items: center; display: flex; gap: 5px; justify-content: space-between; padding: 3px 0; }
     .scenario-reset { background: transparent; border: 1px solid #64748b; border-radius: 5px; color: #cbd5e1; cursor: pointer; font-size: 10px; margin-top: 5px; padding: 4px 6px; }
     .shelter-scenario { border-top: 1px solid #374151; margin-top: 7px; padding-top: 8px; }
     .shelter-scenario summary { color: #e5e7eb; cursor: pointer; font-size: 11px; }
@@ -43,6 +51,10 @@
     .building-list { color: #cbd5e1; max-height: 150px; overflow-y: auto; }
     .building-option { align-items: flex-start; display: flex; font-size: 10px; gap: 5px; line-height: 1.25; padding: 3px 0; }
     .candidate-add { background: #1f2937; border: 1px solid #64748b; border-radius: 5px; color: #e5e7eb; cursor: pointer; font-size: 10px; padding: 5px 7px; }
+    .access-legend { background: rgba(15,23,42,0.75); border: 1px solid #475569; border-radius: 6px; margin-top: 8px; padding: 8px 9px; }
+    .access-legend-header { color: #e2e8f0; font-size: 10px; font-weight: bold; letter-spacing: 0.06em; margin-bottom: 6px; text-transform: uppercase; }
+    .access-legend-row { align-items: center; display: flex; gap: 7px; margin: 4px 0; color: #cbd5e1; font-size: 10px; }
+    .access-legend-swatch { border: 1px solid rgba(255,255,255,0.65); border-radius: 3px; display: inline-block; height: 12px; width: 26px; }
     .layer-control strong { display: block; font-size: 13px; }
     .layer-control span { color: #cbd5e1; display: block; font-size: 11px; margin-top: 2px; }
     @media (max-width: 640px) { .layer-panel { top: 12px; right: 12px; max-height: 52vh; } .legend { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; max-height: 37vh; } }
@@ -50,10 +62,90 @@
     .maplibregl-popup-content, .maplibregl-popup-content *, .maplibregl-popup-content strong { color: #000000 !important; }
     .maplibregl-popup-tip { border-top-color: #ffffff !important; }
     .maplibregl-popup-content a { color: #1d4ed8 !important; }
+    .overview-dashboard { position: absolute; inset: 0; z-index: 30; overflow-y: auto; background: radial-gradient(circle at 12% 8%, rgba(249,115,22,0.2), transparent 32%), linear-gradient(135deg, #111827 0%, #172033 52%, #0f172a 100%); padding: clamp(28px, 7vw, 86px); }
+    .overview-inner { max-width: 1050px; margin: 0 auto; }
+    .overview-kicker { color: #fb923c; font-size: 12px; font-weight: bold; letter-spacing: 0.14em; text-transform: uppercase; }
+    .overview-dashboard h1 { color: #f8fafc; font-size: clamp(30px, 5vw, 58px); line-height: 1.02; margin: 10px 0 12px; max-width: 700px; }
+    .overview-lede { color: #cbd5e1; font-size: 16px; line-height: 1.55; margin: 0 0 28px; max-width: 650px; }
+    .overview-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 24px 0 30px; }
+    .overview-metric { background: rgba(15,23,42,0.76); border: 1px solid rgba(148,163,184,0.3); border-radius: 8px; padding: 17px; min-height: 118px; }
+    .overview-metric-label { color: #94a3b8; font-size: 11px; line-height: 1.3; }
+    .overview-metric-value { color: #f8fafc; font-size: 28px; font-weight: bold; margin: 14px 0 5px; }
+    .overview-metric-note { color: #cbd5e1; font-size: 11px; }
+    .overview-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .overview-action { background: #ea580c; border: 1px solid #fb923c; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; font-weight: bold; padding: 11px 16px; }
+    .overview-action.secondary { background: rgba(15,23,42,0.65); border-color: #64748b; }
+    .overview-source { color: #94a3b8; font-size: 11px; line-height: 1.4; margin-top: 25px; }
+    .overview-dashboard.is-hidden { display: none; }
+    body:not(.overview-active) .overview-dashboard { display: none; }
+    .overview-open { background: rgba(15,23,42,0.88); border: 1px solid #475569; border-radius: 6px; color: #f8fafc; cursor: pointer; font-size: 11px; padding: 8px 11px; position: absolute; right: 20px; top: 20px; z-index: 10; }
+    body.overview-active .layer-panel, body.overview-active .legend, body.overview-active .overview-open { display: none; }
+    .shelter-view { position: absolute; inset: 0; z-index: 25; overflow-y: auto; background: #f8fafc; color: #172033; padding: clamp(24px, 5vw, 64px); }
+    body:not(.shelter-active) .shelter-view { display: none; }
+    body.shelter-active .layer-panel, body.shelter-active .legend, body.shelter-active .overview-open { display: none; }
+    .shelter-inner { max-width: 1180px; margin: 0 auto; }
+    .shelter-header { align-items: flex-start; display: flex; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
+    .shelter-kicker { color: #c2410c; font-size: 11px; font-weight: bold; letter-spacing: 0.14em; text-transform: uppercase; }
+    .shelter-view h2 { color: #172033; font-size: clamp(28px, 4vw, 46px); line-height: 1.05; margin: 8px 0; }
+    .shelter-description { color: #526174; font-size: 14px; line-height: 1.45; margin: 0; }
+    .shelter-close { background: #172033; border: 1px solid #172033; border-radius: 6px; color: #fff; cursor: pointer; font-size: 12px; padding: 9px 12px; white-space: nowrap; }
+    .shelter-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .shelter-summary-card { background: #fff; border: 1px solid #d7dee8; border-radius: 8px; padding: 16px; }
+    .shelter-summary-label { color: #64748b; font-size: 11px; }
+    .shelter-summary-value { color: #172033; font-size: 26px; font-weight: bold; margin-top: 10px; }
+    .shelter-tools { align-items: center; background: #fff; border: 1px solid #d7dee8; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; padding: 12px; }
+    .shelter-tools input, .shelter-tools select { background: #fff; border: 1px solid #b8c4d3; border-radius: 5px; color: #172033; font: inherit; font-size: 12px; padding: 8px 9px; }
+    .shelter-tools input { flex: 1 1 240px; }
+    .shelter-table-wrap { background: #fff; border: 1px solid #d7dee8; border-radius: 8px; overflow-x: auto; }
+    .shelter-table { border-collapse: collapse; min-width: 700px; width: 100%; }
+    .shelter-table th { background: #eef2f7; color: #526174; font-size: 10px; letter-spacing: 0.06em; padding: 10px 12px; text-align: left; text-transform: uppercase; }
+    .shelter-table td { border-top: 1px solid #e5eaf0; color: #26354b; font-size: 12px; padding: 11px 12px; }
+    .shelter-table td.capacity { font-variant-numeric: tabular-nums; text-align: right; }
+    .shelter-status { border-radius: 999px; display: inline-block; font-size: 10px; padding: 4px 7px; }
+    .shelter-status.active { background: #dcfce7; color: #166534; }
+    .shelter-status.closed { background: #fee2e2; color: #991b1b; }
+    .shelter-status.unknown { background: #e2e8f0; color: #475569; }
+    .shelter-empty { color: #64748b; padding: 22px; text-align: center; }
+    .shelter-source { color: #64748b; font-size: 11px; margin-top: 14px; }
+    @media (max-width: 720px) { .overview-dashboard { padding: 28px 18px; } .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .overview-metric-value { font-size: 23px; } .shelter-view { padding: 24px 14px; } .shelter-header { flex-direction: column; } .shelter-summary { grid-template-columns: 1fr; } }
+    @media (max-width: 420px) { .overview-metrics { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <section id="overview-dashboard" class="overview-dashboard" aria-label="Lake County overview">
+    <div class="overview-inner">
+      <div class="overview-kicker">Wildfire Emergency Planning</div>
+      <h1>Lake County at a glance</h1>
+      <p class="overview-lede">A quick read of population, wildfire exposure, access, and shelter capacity before you begin planning.</p>
+      <div class="overview-metrics">
+        <div class="overview-metric"><div class="overview-metric-label">Population covered</div><div id="overview-population" class="overview-metric-value">Loading</div><div id="overview-population-note" class="overview-metric-note">ACS 5-year estimates</div></div>
+        <div class="overview-metric"><div class="overview-metric-label">High risk and low access</div><div id="overview-risk-population" class="overview-metric-value">Loading</div><div id="overview-risk-note" class="overview-metric-note">Tracts needing attention</div></div>
+        <div class="overview-metric"><div class="overview-metric-label">Shelter capacity</div><div id="overview-capacity" class="overview-metric-value">Loading</div><div id="overview-capacity-note" class="overview-metric-note">Mapped FEMA facilities</div></div>
+        <div class="overview-metric"><div class="overview-metric-label">Planning geography</div><div id="overview-tracts" class="overview-metric-value">Loading</div><div class="overview-metric-note">Current census tracts</div></div>
+      </div>
+      <div class="overview-actions"><button id="overview-open-map" class="overview-action" type="button">Open planning map</button><button id="overview-open-scenario" class="overview-action secondary" type="button">Open scenario builder</button><button id="overview-open-shelters" class="overview-action secondary" type="button">Shelter inventory</button></div>
+      <div class="overview-source">Population: 2023 ACS 5-year estimates joined to the map's 2020 tract boundaries. Risk and access metrics use the current FEMA NRI and WEP routing layers.</div>
+    </div>
+  </section>
+  <section id="shelter-view" class="shelter-view" aria-label="Shelter inventory">
+    <div class="shelter-inner">
+      <div class="shelter-header">
+        <div><div class="shelter-kicker">Wildfire Emergency Planning</div><h2>Shelter network</h2><p class="shelter-description">Review mapped FEMA facilities, capacity, usage, and current registry status for Lake County.</p></div>
+        <button id="shelter-close" class="shelter-close" type="button">Return to map</button>
+      </div>
+      <div class="shelter-summary">
+        <div class="shelter-summary-card"><div class="shelter-summary-label">Mapped facilities</div><div id="shelter-count" class="shelter-summary-value">Loading</div></div>
+        <div class="shelter-summary-card"><div class="shelter-summary-label">Evacuation capacity</div><div id="shelter-evac-capacity" class="shelter-summary-value">Loading</div></div>
+        <div class="shelter-summary-card"><div class="shelter-summary-label">Post-impact capacity</div><div id="shelter-post-capacity" class="shelter-summary-value">Loading</div></div>
+      </div>
+      <div class="shelter-tools"><input id="shelter-search" type="search" placeholder="Search shelter name, city, or address" aria-label="Search shelters" /><select id="shelter-type-filter" aria-label="Filter shelter type"><option value="">All types</option></select><select id="shelter-status-filter" aria-label="Filter shelter status"><option value="">All statuses</option></select></div>
+      <div class="shelter-table-wrap"><table class="shelter-table"><thead><tr><th>Name</th><th>Type</th><th>City</th><th>Status</th><th>Use</th><th>Evacuation capacity</th><th>Post-impact capacity</th></tr></thead><tbody id="shelter-table-body"></tbody></table><div id="shelter-empty" class="shelter-empty" hidden>No shelters match the current filters.</div></div>
+      <div class="shelter-source">Source: FEMA National Shelter System facility layer currently loaded by WEP. Scenario open/close selections remain temporary and browser-local.</div>
+    </div>
+  </section>
+  <button id="overview-show" class="overview-open" type="button">Overview</button>
+  <button id="shelter-show" class="overview-open" type="button" style="right: 105px">Shelters</button>
   <aside class="layer-panel" aria-label="Map layers">
     <h1>WEP map layers</h1>
     <p>Choose the FEMA National Risk Index measure shown for Lake County census tracts.</p>
@@ -70,6 +162,17 @@
       <button id="add-candidate-shelter" class="candidate-add" type="button">Add candidate on map</button>
       <div id="candidate-list" class="candidate-list"></div>
       <span id="candidate-status" class="scenario-status">Click the map to place a candidate shelter.</span>
+      <div class="scenario-subhead">Fire incidents</div>
+      <div class="optimizer-controls"><input id="fire-acres" type="number" min="0.1" step="0.1" value="10" aria-label="Estimated fire acres" /><button id="add-fire" class="candidate-add" type="button">Add fire on map</button></div>
+      <div id="fire-list" class="candidate-list"><span>No temporary fires added.</span></div>
+      <span id="fire-status" class="scenario-status">Enter estimated acres, then click a location on the map.</span>
+      <div class="scenario-subhead">Shelter optimization</div>
+      <div class="optimizer-controls"><select id="optimizer-strategy" aria-label="Optimization strategy"><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="equity">Equity</option></select><input id="optimizer-count" type="number" min="1" max="10" value="3" aria-label="Number of recommendations" /></div>
+      <button id="run-optimizer" class="candidate-add" type="button">Find best candidate sites</button>
+      <div id="optimizer-results" class="optimizer-results">Recommendations weigh tract reach, population, and vulnerability.</div>
+      <div class="scenario-subhead">Map actions</div>
+      <div class="scenario-map-actions"><button id="map-block-road" class="scenario-map-action" type="button">Block road</button><button id="map-close-shelter" class="scenario-map-action" type="button">Close shelter</button></div>
+      <div id="scenario-pending" class="scenario-pending">No pending changes. Choose a map action to edit the temporary scenario.</div>
       <div class="scenario-subhead">Scenario actions</div>
       <a class="scenario-button secondary" href="/road-network-editor">Open road editor</a>
       <button id="recalculate-access" class="scenario-button" type="button">Recalculate access</button>
@@ -93,6 +196,10 @@
       <span><strong>Social vulnerability</strong><span>FEMA social vulnerability rating</span></span>
     </label>
     <label class="layer-control">
+      <input type="checkbox" data-layer="lake-tracts-demographics-fill" />
+      <span><strong>Population and demographics</strong><span>2023 ACS 5-year estimates joined to 2020 tract boundaries</span></span>
+    </label>
+    <label class="layer-control">
       <input type="checkbox" data-layer="lake-shelters-circle" checked />
       <span><strong>FEMA NSS facilities</strong><span>66 Lake County facilities; building type shown by color</span></span>
     </label>
@@ -110,6 +217,10 @@
     <label class="layer-control">
       <span><strong>Car travel-time threshold</strong><select id="access-threshold" aria-label="Car travel-time threshold"><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="90">90 minutes</option></select></span>
     </label>
+    <div class="access-legend" aria-label="Accessibility legend">
+      <div class="access-legend-header">Access legend</div>
+      <div id="access-legend-rows"></div>
+    </div>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-roads-primary" checked />
       <span><strong>Primary roads</strong><span>US Census TIGERweb transportation layer</span></span>
@@ -182,21 +293,24 @@
       return body;
     }
 
+    document.body.classList.add('overview-active');
+
     const roadScenarioStorageKey = 'wep-road-scenario-v1';
     const shelterScenarioStorageKey = 'wep-shelter-scenario-v1';
     const candidateShelterStorageKey = 'wep-candidate-shelters-v1';
+    const fireScenarioStorageKey = 'wep-fire-scenario-v1';
 
     map.on('load', async () => {
       const emptyFeatureCollection = { type: 'FeatureCollection', features: [] };
       const fetchGeoJson = async (url) => {
         try {
-          const response = await fetch(url);
+          const response = await fetch(url, { cache: 'no-store' });
           return response.ok ? await response.json() : emptyFeatureCollection;
         } catch (_error) {
           return emptyFeatureCollection;
         }
       };
-      const [usStatesData, californiaCountiesData, tractsData, accessData, resilienceData, socialVulnerabilityData, countyData, waterData, roadsData, sheltersData, candidateBuildingsData] = await Promise.all([
+      const [usStatesData, californiaCountiesData, tractsData, accessData, resilienceData, socialVulnerabilityData, demographicsData, countyData, waterData, roadsData, sheltersData, candidateBuildingsData] = await Promise.all([
         fetchGeoJson('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json'),
         fetchGeoJson('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/california-counties.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_tracts.geojson').then(async (data) =>
@@ -205,6 +319,7 @@
         fetchGeoJson('/static/data/wep_lake_county_nss_car_access.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_resilience.geojson'),
         fetchGeoJson('/static/data/fema_nri_v1_20_lake_county_social_vulnerability.geojson'),
+        fetchGeoJson('/static/data/lake_county_acs2023_tract_demographics.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_boundary.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_water.geojson'),
         fetchGeoJson('/static/data/tiger2020_lake_county_primary_secondary_roads.geojson'),
@@ -212,10 +327,115 @@
         fetchGeoJson('/static/data/wep_lake_county_candidate_buildings.geojson')
       ]);
 
+      const numberFormat = new Intl.NumberFormat('en-US');
+      const demographicFeatures = demographicsData.features || [];
+      const accessByTract = new Map((accessData.features || []).map((feature) => {
+        const properties = feature.properties || {};
+        return [String(properties.GEOID || properties.TRACTFIPS || properties.tract_geoid || ''), properties];
+      }));
+      const demographicByTract = new Map(demographicFeatures.map((feature) => {
+        const properties = feature.properties || {};
+        return [String(properties.tract_geoid || properties.GEOID || properties.TRACTFIPS || ''), properties];
+      }));
+      const tractKey = (properties) => String(properties.GEOID || properties.TRACTFIPS || properties.tract_geoid || '').replace(/[^0-9]/g, '');
+      const totalPopulation = demographicFeatures.reduce((sum, feature) => sum + Number((feature.properties || {}).total_population || 0), 0);
+      const highRiskLowAccess = (tractsData.features || []).reduce((sum, feature) => {
+        const properties = feature.properties || {};
+        const risk = String(properties.WFIR_RISKR || '');
+        const access = accessByTract.get(tractKey(properties)) || {};
+        const demographic = demographicByTract.get(tractKey(properties)) || {};
+        return sum + (risk === 'Very High' && Number(access.nss_facilities_within_30min_car || 0) <= 3 ? Number(demographic.total_population || 0) : 0);
+      }, 0);
+      const shelterFeatures = sheltersData.features || [];
+      const shelterNumberFormat = new Intl.NumberFormat('en-US');
+      const capacityValue = (raw) => {
+        const value = Number(raw);
+        return raw === null || raw === '' || !Number.isFinite(value) || value === 99999 ? null : value;
+      };
+      const capacityTotal = (key) => shelterFeatures.reduce((sum, feature) => sum + (capacityValue((feature.properties || {})[key]) || 0), 0);
+      const formatCapacity = (raw) => {
+        const value = capacityValue(raw);
+        return value === null ? 'NA' : shelterNumberFormat.format(value);
+      };
+      const shelterCapacity = capacityTotal('evacuation_capacity');
+      let displayedAccessData = accessData;
+      const accessByNormalizedTract = new Map((accessData.features || []).flatMap((feature) => {
+        const properties = feature.properties || {};
+        return [properties.GEOID, properties.TRACTFIPS, properties.tract_geoid]
+          .filter(Boolean)
+          .map((value) => [String(value).replace(/[^0-9]/g, ''), properties]);
+      }));
+      const accessPropertiesFor = (properties) => {
+        const key = tractKey(properties);
+        return (displayedAccessData.features || []).find((feature) => tractKey(feature.properties || {}) === key)?.properties || accessByNormalizedTract.get(key) || {};
+      };
+      const demographicPropertiesFor = (properties) => demographicByTract.get(tractKey(properties)) || {};
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>\"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[character]));
+      const usageLabels = { EVAC: 'Evacuation', BOTH: 'Evacuation and post-impact', POST: 'Post-impact' };
+      const shelterTableBody = document.getElementById('shelter-table-body');
+      const shelterEmpty = document.getElementById('shelter-empty');
+      const shelterSearch = document.getElementById('shelter-search');
+      const shelterTypeFilter = document.getElementById('shelter-type-filter');
+      const shelterStatusFilter = document.getElementById('shelter-status-filter');
+      const shelterTypes = [...new Set(shelterFeatures.map((feature) => (feature.properties || {}).building_type).filter(Boolean))].sort();
+      const shelterStatuses = [...new Set(shelterFeatures.map((feature) => (feature.properties || {}).shelter_status_code).filter(Boolean))].sort();
+      shelterTypes.forEach((type) => shelterTypeFilter.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`));
+      shelterStatuses.forEach((status) => shelterStatusFilter.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`));
+      document.getElementById('shelter-count').textContent = shelterNumberFormat.format(shelterFeatures.length);
+      document.getElementById('shelter-evac-capacity').textContent = shelterNumberFormat.format(shelterCapacity);
+      document.getElementById('shelter-post-capacity').textContent = shelterNumberFormat.format(capacityTotal('post_impact_capacity'));
+      const renderShelterTable = () => {
+        const search = shelterSearch.value.trim().toLowerCase();
+        const type = shelterTypeFilter.value;
+        const status = shelterStatusFilter.value;
+        const filtered = shelterFeatures.filter((feature) => {
+          const properties = feature.properties || {};
+          const searchable = [properties.shelter_name, properties.city, properties.address_1].filter(Boolean).join(' ').toLowerCase();
+          return (!search || searchable.includes(search)) && (!type || properties.building_type === type) && (!status || properties.shelter_status_code === status);
+        });
+        shelterTableBody.innerHTML = filtered.map((feature) => {
+          const properties = feature.properties || {};
+          const rawStatus = String(properties.shelter_status_code || 'Unknown');
+          const statusClass = rawStatus.toLowerCase() === 'active' ? 'active' : rawStatus.toLowerCase() === 'closed' ? 'closed' : 'unknown';
+          return `<tr><td><strong>${escapeHtml(properties.shelter_name || 'Unnamed facility')}</strong><br/><small>${escapeHtml(properties.address_1 || 'Address not listed')}</small></td><td>${escapeHtml(properties.building_type || 'Other')}</td><td>${escapeHtml(properties.city || 'Not listed')}</td><td><span class="shelter-status ${statusClass}">${escapeHtml(rawStatus)}</span></td><td>${escapeHtml(usageLabels[properties.facility_usage_code] || properties.facility_usage_code || 'Not listed')}</td><td class="capacity">${formatCapacity(properties.evacuation_capacity)}</td><td class="capacity">${formatCapacity(properties.post_impact_capacity)}</td></tr>`;
+        }).join('');
+        shelterEmpty.hidden = filtered.length > 0;
+      };
+      shelterSearch.addEventListener('input', renderShelterTable);
+      shelterTypeFilter.addEventListener('change', renderShelterTable);
+      shelterStatusFilter.addEventListener('change', renderShelterTable);
+      renderShelterTable();
+      document.getElementById('overview-population').textContent = numberFormat.format(totalPopulation);
+      document.getElementById('overview-population-note').textContent = `${demographicFeatures.length} census tracts`;
+      document.getElementById('overview-risk-population').textContent = numberFormat.format(highRiskLowAccess);
+      document.getElementById('overview-risk-note').textContent = `${(tractsData.features || []).filter((feature) => { const p = feature.properties || {}; const a = accessByTract.get(tractKey(p)) || {}; return p.WFIR_RISKR === 'Very High' && Number(a.nss_facilities_within_30min_car || 0) <= 3; }).length} tracts with 3 or fewer facilities within 30 min`;
+      document.getElementById('overview-capacity').textContent = numberFormat.format(shelterCapacity);
+      document.getElementById('overview-capacity-note').textContent = `${(sheltersData.features || []).length} FEMA facilities`;
+      document.getElementById('overview-tracts').textContent = numberFormat.format(demographicFeatures.length);
+
+      const closeOverview = () => document.body.classList.remove('overview-active');
+      const openShelters = () => {
+        document.body.classList.remove('overview-active');
+        document.body.classList.add('shelter-active');
+      };
+      const closeShelters = () => document.body.classList.remove('shelter-active');
+      document.getElementById('overview-open-map').addEventListener('click', closeOverview);
+      document.getElementById('overview-open-scenario').addEventListener('click', () => {
+        closeOverview();
+        document.querySelector('.scenario-builder').open = true;
+        document.querySelector('.scenario-builder').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      document.getElementById('overview-open-shelters').addEventListener('click', openShelters);
+      document.getElementById('shelter-show').addEventListener('click', openShelters);
+      document.getElementById('shelter-close').addEventListener('click', closeShelters);
+      document.getElementById('overview-show').addEventListener('click', () => document.body.classList.add('overview-active'));
+
       let scenarioRoads = roadsData;
       let candidateShelters = [];
       try { scenarioRoads = JSON.parse(localStorage.getItem(roadScenarioStorageKey)) || roadsData; } catch (_error) { scenarioRoads = roadsData; }
       try { candidateShelters = JSON.parse(localStorage.getItem(candidateShelterStorageKey)) || []; } catch (_error) { candidateShelters = []; }
+      let fireIncidents = [];
+      try { fireIncidents = JSON.parse(localStorage.getItem(fireScenarioStorageKey)) || []; } catch (_error) { fireIncidents = []; }
 
       map.addSource('us-states', { type: 'geojson', data: usStatesData });
       map.addSource('california-counties', { type: 'geojson', data: californiaCountiesData });
@@ -223,25 +443,92 @@
       map.addSource('lake-tracts-access', { type: 'geojson', data: accessData });
       map.addSource('lake-tracts-resilience', { type: 'geojson', data: resilienceData });
       map.addSource('lake-tracts-social-vulnerability', { type: 'geojson', data: socialVulnerabilityData });
+      map.addSource('lake-tracts-demographics', { type: 'geojson', data: demographicsData });
       map.addSource('lake-county-boundary', { type: 'geojson', data: countyData });
       map.addSource('lake-water', { type: 'geojson', data: waterData });
       map.addSource('lake-roads', { type: 'geojson', data: scenarioRoads });
       map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
       map.addSource('lake-candidate-shelters', { type: 'geojson', data: { type: 'FeatureCollection', features: candidateShelters } });
       map.addSource('lake-candidate-buildings', { type: 'geojson', data: candidateBuildingsData });
+      map.addSource('lake-fire-incidents', { type: 'geojson', data: { type: 'FeatureCollection', features: fireIncidents } });
 
       const scenarioCounts = document.getElementById('scenario-counts');
       const roadScenarioList = document.getElementById('road-scenario-list');
       const candidateList = document.getElementById('candidate-list');
+      const fireList = document.getElementById('fire-list');
       const buildingList = document.getElementById('building-list');
       let addingCandidate = false;
+      let addingFire = false;
+      let mapAction = null;
+      const mapActionButtons = {
+        blockRoad: document.getElementById('map-block-road'),
+        closeShelter: document.getElementById('map-close-shelter')
+      };
       const openRoads = () => (scenarioRoads.features || []).filter((feature) => !(feature.properties || {}).blocked);
       const blockedRoads = () => (scenarioRoads.features || []).filter((feature) => (feature.properties || {}).blocked);
+      const speedChanges = () => (scenarioRoads.features || []).filter((feature) => Number(feature.properties && feature.properties.speed_mph) !== (feature.properties && feature.properties.road_class === 'primary' ? 55 : 35));
       const updateScenarioCounts = () => {
         const shelterInputs = document.querySelectorAll('#shelter-list input');
         const closedShelters = Array.from(shelterInputs).filter((input) => !input.checked).length;
-        scenarioCounts.textContent = `${closedShelters} FEMA shelters closed · ${blockedRoads().length} roads blocked · ${(scenarioRoads.features || []).filter((feature) => Number(feature.properties && feature.properties.speed_mph) !== (feature.properties && feature.properties.road_class === 'primary' ? 55 : 35)).length} speed changes · ${candidateShelters.length} candidate shelters`;
+        const pending = [
+          `${candidateShelters.length} candidate shelter${candidateShelters.length === 1 ? '' : 's'} added`,
+          `${closedShelters} existing shelter${closedShelters === 1 ? '' : 's'} closed`,
+          `${blockedRoads().length} road${blockedRoads().length === 1 ? '' : 's'} blocked`,
+          `${speedChanges().length} speed change${speedChanges().length === 1 ? '' : 's'}`
+        ];
+        if (fireIncidents.length) pending.push(`${fireIncidents.length} fire${fireIncidents.length === 1 ? '' : 's'} · ${fireIncidents.reduce((sum, feature) => sum + Number(feature.properties?.acres || 0), 0).toFixed(1)} acres`);
+        scenarioCounts.textContent = pending.join(' · ');
+        document.getElementById('scenario-pending').textContent = mapAction
+          ? `Pending changes: ${pending.join(' · ')}. Map mode: ${mapAction === 'block-road' ? 'click a road to block it' : 'click a shelter to close it'}.`
+          : `Pending changes: ${pending.join(' · ')}. Choose a map action to edit the temporary scenario.`;
       };
+      const setMapAction = (action) => {
+        mapAction = mapAction === action ? null : action;
+        Object.entries(mapActionButtons).forEach(([key, button]) => button.classList.toggle('active', key === {
+          'block-road': 'blockRoad',
+          'close-shelter': 'closeShelter'
+        }[mapAction]));
+        map.getCanvas().style.cursor = mapAction ? 'crosshair' : '';
+        updateScenarioCounts();
+      };
+      mapActionButtons.blockRoad.addEventListener('click', () => setMapAction('block-road'));
+      mapActionButtons.closeShelter.addEventListener('click', () => setMapAction('close-shelter'));
+      const fireCircle = (longitude, latitude, acres) => {
+        const radiusMeters = Math.sqrt(acres * 4046.8564224 / Math.PI);
+        const latitudeDegrees = radiusMeters / 111320;
+        const longitudeDegrees = radiusMeters / (111320 * Math.cos(latitude * Math.PI / 180));
+        const coordinates = [];
+        for (let index = 0; index <= 64; index += 1) {
+          const angle = (index / 64) * Math.PI * 2;
+          coordinates.push([longitude + Math.cos(angle) * longitudeDegrees, latitude + Math.sin(angle) * latitudeDegrees]);
+        }
+        return coordinates;
+      };
+      const renderFireList = () => {
+        fireList.innerHTML = fireIncidents.length
+          ? fireIncidents.map((feature, index) => `<div class="candidate-row"><span>Fire ${index + 1}: ${Number(feature.properties?.acres || 0).toFixed(1)} acres</span><button type="button" data-remove-fire="${index}">Remove</button></div>`).join('')
+          : '<span>No temporary fires added.</span>';
+        fireList.querySelectorAll('[data-remove-fire]').forEach((button) => button.addEventListener('click', () => {
+          fireIncidents.splice(Number(button.dataset.removeFire), 1);
+          localStorage.setItem(fireScenarioStorageKey, JSON.stringify(fireIncidents));
+          map.getSource('lake-fire-incidents').setData({ type: 'FeatureCollection', features: fireIncidents });
+          renderFireList();
+          updateScenarioCounts();
+        }));
+      };
+      document.getElementById('add-fire').addEventListener('click', () => {
+        const acres = Number(document.getElementById('fire-acres').value);
+        if (!Number.isFinite(acres) || acres <= 0) {
+          document.getElementById('fire-status').textContent = 'Enter a positive estimated acreage first.';
+          return;
+        }
+        setMapAction(null);
+        addingCandidate = false;
+        addingFire = true;
+        map.getCanvas().style.cursor = 'crosshair';
+        document.getElementById('fire-status').textContent = `Click the map to place a ${acres.toFixed(1)}-acre fire.`;
+      });
+      renderFireList();
       const renderRoadScenarioList = () => {
         roadScenarioList.innerHTML = '';
         (scenarioRoads.features || []).forEach((feature, index) => {
@@ -263,6 +550,87 @@
         }));
       };
       const candidateBuildingFeatures = candidateBuildingsData.features || [];
+      const activateBuilding = (building) => {
+        const properties = building.properties || {};
+        if (candidateShelters.some((feature) => feature.properties && feature.properties.source_building_id === properties.building_id)) return;
+        candidateShelters.push({
+          type: 'Feature',
+          geometry: building.geometry,
+          properties: { shelter_id: `candidate-${properties.building_id}`, shelter_name: properties.building_name, building_type: 'Candidate facility', source_building_id: properties.building_id }
+        });
+        const input = buildingList.querySelector(`[data-building-id="${CSS.escape(properties.building_id)}"]`);
+        if (input) input.checked = true;
+        localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
+        map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
+        renderCandidateList();
+        updateScenarioCounts();
+      };
+      const coordinateFor = (feature) => {
+        const coordinates = feature && feature.geometry && feature.geometry.coordinates;
+        return Array.isArray(coordinates) && coordinates.length >= 2 ? [Number(coordinates[0]), Number(coordinates[1])] : null;
+      };
+      const distanceMiles = (first, second) => {
+        const latitudeScale = 69.0;
+        const longitudeScale = 69.0 * Math.cos(((first[1] + second[1]) / 2) * Math.PI / 180);
+        return Math.hypot((first[0] - second[0]) * longitudeScale, (first[1] - second[1]) * latitudeScale);
+      };
+      const tractScreeningData = (tractsData.features || []).map((feature) => {
+        const properties = feature.properties || {};
+        const demographic = demographicPropertiesFor(properties);
+        const geometry = feature.geometry || {};
+        const coordinates = geometry.type === 'Polygon' ? geometry.coordinates?.[0]?.[0] : geometry.type === 'MultiPolygon' ? geometry.coordinates?.[0]?.[0]?.[0] : null;
+        if (!coordinates) return null;
+        const vulnerability = Number(demographic.total_population || 0) * (
+          Number(demographic.no_car_household_share_pct || 0) * 0.45
+          + Number(demographic.age_75_plus_share_pct || 0) * 0.25
+          + Number(demographic.disabled_pop_share_pct || 0) * 0.2
+          + Number(demographic.poverty_household_share_pct || 0) * 0.1
+        );
+        return { coordinate: coordinates, population: Number(demographic.total_population || 0), vulnerability };
+      }).filter(Boolean);
+      let optimizerRecommendations = [];
+      const renderOptimizerResults = () => {
+        const results = document.getElementById('optimizer-results');
+        results.innerHTML = optimizerRecommendations.length
+          ? optimizerRecommendations.map((recommendation, index) => `<div class="optimizer-result"><span>${index + 1}. ${escapeHtml(recommendation.name)}<br/><small>Score ${recommendation.score.toFixed(1)} · ${recommendation.strategyLabel}</small></span><button type="button" class="candidate-add" data-optimize-building="${recommendation.index}">${candidateShelters.some((feature) => feature.properties && feature.properties.source_building_id === recommendation.id) ? 'Added' : 'Add'}</button></div>`).join('')
+          : 'Recommendations weigh tract reach, population, and vulnerability.';
+        results.querySelectorAll('[data-optimize-building]').forEach((button) => button.addEventListener('click', () => {
+          const recommendation = optimizerRecommendations.find((item) => item.index === Number(button.dataset.optimizeBuilding));
+          const building = candidateBuildingFeatures[recommendation.index];
+          if (building) activateBuilding(building);
+          renderOptimizerResults();
+        }));
+      };
+      document.getElementById('run-optimizer').addEventListener('click', () => {
+        const strategy = document.getElementById('optimizer-strategy').value;
+        const strategyLabel = strategy.charAt(0).toUpperCase() + strategy.slice(1);
+        const requestedCount = Math.max(1, Math.min(10, Number(document.getElementById('optimizer-count').value) || 3));
+        const activeIds = new Set(candidateShelters.map((feature) => feature.properties && feature.properties.source_building_id));
+        const scored = candidateBuildingFeatures.map((building, index) => {
+          const coordinate = coordinateFor(building);
+          if (!coordinate) return null;
+          let populationCoverage = 0;
+          let vulnerabilityCoverage = 0;
+          for (const tract of tractScreeningData) {
+            const distance = distanceMiles(coordinate, tract.coordinate);
+            if (distance > 25) continue;
+            const reachWeight = Math.max(0, 1 - distance / 25);
+            populationCoverage += tract.population * reachWeight;
+            vulnerabilityCoverage += tract.vulnerability * reachWeight;
+          }
+          return { index, id: building.properties?.building_id, name: building.properties?.building_name || 'Unnamed public building', populationCoverage, vulnerabilityCoverage, active: activeIds.has(building.properties?.building_id) };
+        }).filter(Boolean).filter((candidate) => !candidate.active);
+        const maxPopulation = Math.max(...scored.map((candidate) => candidate.populationCoverage), 1);
+        const maxVulnerability = Math.max(...scored.map((candidate) => candidate.vulnerabilityCoverage), 1);
+        optimizerRecommendations = scored.map((candidate) => {
+          const efficiency = candidate.populationCoverage / maxPopulation * 100;
+          const equity = candidate.vulnerabilityCoverage / maxVulnerability * 100;
+          return { ...candidate, score: strategy === 'efficiency' ? efficiency : strategy === 'equity' ? equity : (efficiency + equity) / 2, strategyLabel };
+        }).sort((first, second) => second.score - first.score).slice(0, requestedCount);
+        renderOptimizerResults();
+        document.getElementById('candidate-status').textContent = `${optimizerRecommendations.length} ${strategyLabel.toLowerCase()} candidate site recommendations ready.`;
+      });
+      renderOptimizerResults();
       const activatedBuildingIds = new Set(candidateShelters.map((feature) => feature.properties && feature.properties.source_building_id));
       for (const building of candidateBuildingFeatures) {
         const properties = building.properties || {};
@@ -276,12 +644,7 @@
         const building = candidateBuildingFeatures.find((feature) => feature.properties && feature.properties.building_id === event.target.value);
         if (!building) return;
         if (event.target.checked) {
-          const properties = building.properties || {};
-          candidateShelters.push({
-            type: 'Feature',
-            geometry: building.geometry,
-            properties: { shelter_id: `candidate-${properties.building_id}`, shelter_name: properties.building_name, building_type: 'Candidate facility', source_building_id: properties.building_id }
-          });
+          activateBuilding(building);
         } else {
           candidateShelters = candidateShelters.filter((feature) => feature.properties && feature.properties.source_building_id !== event.target.value);
         }
@@ -339,6 +702,7 @@
         updateScenarioCounts();
       });
       document.getElementById('add-candidate-shelter').addEventListener('click', () => {
+        setMapAction(null);
         addingCandidate = true;
         document.getElementById('candidate-status').textContent = 'Click a location on the map to place the candidate shelter.';
         map.getCanvas().style.cursor = 'crosshair';
@@ -408,6 +772,29 @@
         33, '#fee08b',
         66, '#1a9850'
       ];
+      const ACCESS_LEGEND_COLORS = [
+        '#d73027',
+        '#f46d43',
+        '#fdae61',
+        '#fee08b',
+        '#1a9850'
+      ];
+      const ACCESS_LEGEND_LABELS = ['0', '1-3', '4-8', '9-15', '16+'];
+      const renderAccessLegend = (minutes) => {
+        const legendRows = document.getElementById('access-legend-rows');
+        if (!legendRows) return;
+        legendRows.innerHTML = '';
+        const thresholdLabel = `${minutes}-minute access`;
+        ACCESS_LEGEND_COLORS.forEach((color, index) => {
+          const row = document.createElement('div');
+          row.className = 'access-legend-row';
+          row.innerHTML = `<span class="access-legend-swatch" style="background:${color}"></span><span>${ACCESS_LEGEND_LABELS[index]} ${index === ACCESS_LEGEND_LABELS.length - 1 ? 'reachable' : 'facilities'}${index === 0 ? ' (few)' : index === ACCESS_LEGEND_COLORS.length - 1 ? ' (many)' : ''}</span>`;
+          legendRows.appendChild(row);
+        });
+        const title = document.querySelector('.access-legend-header');
+        if (title) title.textContent = `${thresholdLabel} access legend`;
+      };
+      renderAccessLegend(30);
       map.addLayer({
         id: 'lake-tracts-access-fill',
         type: 'fill',
@@ -427,6 +814,13 @@
       map.addLayer({
         id: 'lake-tracts-social-vulnerability-fill', type: 'fill', source: 'lake-tracts-social-vulnerability', layout: { visibility: 'none' },
         paint: { 'fill-color': ['match', ['coalesce', ['get', 'SOVI_RATNG'], 'Insufficient Data'], 'Very High', '#762a83', 'Relatively High', '#af8dc3', 'Relatively Moderate', '#d8daeb', 'Relatively Low', '#b2df8a', 'Very Low', '#33a02c', '#9e9e0f'], 'fill-opacity': 0.68 }
+      });
+      map.addLayer({
+        id: 'lake-tracts-demographics-fill', type: 'fill', source: 'lake-tracts-demographics', layout: { visibility: 'none' },
+        paint: {
+          'fill-color': ['interpolate', ['linear'], ['coalesce', ['to-number', ['get', 'total_population']], 0], 0, '#edf8fb', 1000, '#b2e2e2', 3000, '#66c2a4', 6000, '#2ca25f', 12000, '#006d2c'],
+          'fill-opacity': 0.72
+        }
       });
 
       map.addLayer({
@@ -535,13 +929,75 @@
         paint: { 'circle-color': '#fbbf24', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 }
       });
       map.addLayer({
-        id: 'lake-candidate-buildings-circle',
-        type: 'circle',
-        source: 'lake-candidate-buildings',
-        paint: { 'circle-color': '#facc15', 'circle-radius': 3, 'circle-stroke-color': '#111827', 'circle-stroke-width': 1, 'circle-opacity': 0.75 }
+        id: 'lake-fire-incidents-fill',
+        type: 'fill',
+        source: 'lake-fire-incidents',
+        paint: { 'fill-color': '#ef4444', 'fill-opacity': 0.34, 'fill-outline-color': '#f97316' }
       });
-
+      map.addLayer({
+        id: 'lake-fire-incidents-line',
+        type: 'line',
+        source: 'lake-fire-incidents',
+        paint: { 'line-color': '#fb923c', 'line-width': 2.5, 'line-dasharray': [2, 1] }
+      });
+      map.on('click', 'lake-fire-incidents-fill', (event) => {
+        const feature = event.features && event.features[0];
+        const acres = feature && feature.properties && Number(feature.properties.acres);
+        if (!feature || !Number.isFinite(acres)) return;
+        new maplibregl.Popup().setLngLat(event.lngLat).setHTML(`<div style="color:#000000"><strong>Temporary fire incident</strong><br/>Estimated area: ${acres.toFixed(1)} acres</div>`).addTo(map);
+      });
+      const scenarioRoadIndex = (feature) => {
+        const featureId = feature && feature.id;
+        if (featureId !== undefined) {
+          const byId = scenarioRoads.features.findIndex((road) => String(road.id) === String(featureId));
+          if (byId >= 0) return byId;
+        }
+        const properties = (feature && feature.properties) || {};
+        return scenarioRoads.features.findIndex((road) => {
+          const roadProperties = road.properties || {};
+          return roadProperties.NAME === properties.NAME && roadProperties.BASENAME === properties.BASENAME;
+        });
+      };
+      const blockRoadFromMap = (event) => {
+        if (mapAction !== 'block-road') return;
+        const index = scenarioRoadIndex(event.features && event.features[0]);
+        if (index < 0) return;
+        scenarioRoads.features[index].properties = { ...(scenarioRoads.features[index].properties || {}), blocked: true };
+        localStorage.setItem(roadScenarioStorageKey, JSON.stringify(scenarioRoads));
+        map.getSource('lake-roads').setData(scenarioRoads);
+        renderRoadScenarioList();
+        setMapAction(null);
+      };
+      map.on('click', 'lake-roads-primary', blockRoadFromMap);
+      map.on('click', 'lake-roads-secondary', blockRoadFromMap);
+      map.on('click', 'lake-shelters-circle', (event) => {
+        if (mapAction !== 'close-shelter') return;
+        const feature = event.features && event.features[0];
+        const shelterId = String(feature && feature.properties && feature.properties.shelter_id || '');
+        const input = Array.from(shelterList.querySelectorAll('input')).find((item) => String(item.value) === shelterId);
+        if (!input) return;
+        input.checked = false;
+        updateShelterScenario();
+        setMapAction(null);
+      });
       map.on('click', (event) => {
+        if (addingFire) {
+          const acres = Number(document.getElementById('fire-acres').value);
+          const coordinates = event.lngLat;
+          fireIncidents.push({
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [fireCircle(coordinates.lng, coordinates.lat, acres)] },
+            properties: { incident_id: `fire-${Date.now()}`, acres, latitude: coordinates.lat, longitude: coordinates.lng }
+          });
+          localStorage.setItem(fireScenarioStorageKey, JSON.stringify(fireIncidents));
+          map.getSource('lake-fire-incidents').setData({ type: 'FeatureCollection', features: fireIncidents });
+          renderFireList();
+          updateScenarioCounts();
+          addingFire = false;
+          map.getCanvas().style.cursor = '';
+          document.getElementById('fire-status').textContent = `${acres.toFixed(1)}-acre fire added to the temporary scenario.`;
+          return;
+        }
         if (!addingCandidate) return;
         const id = `candidate-${Date.now()}`;
         candidateShelters.push({
@@ -560,13 +1016,10 @@
 
       map.on('click', 'lake-tracts-risk-fill', (e) => {
         const props = (e.features && e.features[0] && e.features[0].properties) || {};
-        const geoid = props.GEOID || 'Unknown';
-        const rating = props.WFIR_RISKR || 'No Rating';
-        const score = props.WFIR_RISKS || 'n/a';
-        const value = props.WFIR_RISKV || 'n/a';
-        const eal = props.WFIR_EALT || 'n/a';
-        const access30 = props.shelters_within_30min_car ?? 'n/a';
-        const html = `<div style="color:#000000"><strong>Tract ${geoid}</strong><br/>Wildfire rating: ${rating}<br/>Wildfire score: ${score}<br/>Wildfire value: ${value}<br/>Wildfire expected annual loss total: ${eal}<br/>Shelters reachable by car in 30 min: ${access30}</div>`;
+        const access = accessPropertiesFor(props);
+        const demographic = demographicPropertiesFor(props);
+        const geoid = props.GEOID || props.TRACTFIPS || 'Unknown';
+        const html = `<div style="color:#000000"><strong>Tract ${geoid}</strong><br/>Wildfire rating: ${props.WFIR_RISKR || 'No Rating'}<br/><br/><strong>Shelter access</strong><br/>Closest shelter: ${access.nearest_nss_facility_name || 'Not available'}<br/>Travel time to closest shelter: ${access.nearest_nss_facility_minutes_car ?? 'n/a'} min<br/>Shelters reachable in 30 min: ${access.nss_facilities_within_30min_car ?? 'n/a'}<br/>Shelters reachable in 60 min: ${access.nss_facilities_within_60min_car ?? 'n/a'}<br/>Shelters reachable in 90 min: ${access.nss_facilities_within_90min_car ?? 'n/a'}<br/><br/><strong>Population and households</strong><br/>Total population: ${demographic.total_population ?? 'n/a'}<br/>Total households: ${demographic.total_households ?? 'n/a'}<br/>Carless households: ${demographic.no_car_household_share_pct ?? 'n/a'}%<br/>Age 75 and older: ${demographic.age_75_plus_share_pct ?? 'n/a'}%<br/>People with a disability: ${demographic.disabled_pop_share_pct ?? 'n/a'}%</div>`;
         new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
       });
 
@@ -580,9 +1033,10 @@
 
       map.on('click', 'lake-tracts-access-fill', (e) => {
         const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const access = accessPropertiesFor(props);
         const threshold = document.getElementById('access-threshold').value;
-        const selected = props[accessField(threshold)] ?? 'n/a';
-        const html = `<div style="color:#000000"><strong>Tract ${props.GEOID || 'Unknown'}</strong><br/>FEMA NSS facilities reachable by car in ${threshold} min: ${selected}<br/>Within 30 min: ${props.nss_facilities_within_30min_car ?? 'n/a'}<br/>Within 60 min: ${props.nss_facilities_within_60min_car ?? 'n/a'}<br/>Within 90 min: ${props.nss_facilities_within_90min_car ?? 'n/a'}<br/>Nearest FEMA NSS facility: ${props.nearest_nss_facility_minutes_car ?? 'n/a'} min<br/><br/>OSM/OSRM car routing uses mapped speed limits and road-class defaults. Normal routing only; no traffic, closures, or evacuation controls. FEMA NSS registry status does not indicate an open shelter.</div>`;
+        const selected = access[accessField(threshold)] ?? 'n/a';
+        const html = `<div style="color:#000000"><strong>Tract ${props.GEOID || props.TRACTFIPS || 'Unknown'}</strong><br/>FEMA NSS facilities reachable by car in ${threshold} min: ${selected}<br/>Within 30 min: ${access.nss_facilities_within_30min_car ?? 'n/a'}<br/>Within 60 min: ${access.nss_facilities_within_60min_car ?? 'n/a'}<br/>Within 90 min: ${access.nss_facilities_within_90min_car ?? 'n/a'}<br/>Closest shelter: ${access.nearest_nss_facility_name || 'Not available'}<br/>Travel time to closest shelter: ${access.nearest_nss_facility_minutes_car ?? 'n/a'} min<br/><br/>OSM/OSRM car routing uses mapped speed limits and road-class defaults. Scenario edits are temporary and browser-local.</div>`;
         new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
       });
 
@@ -594,14 +1048,23 @@
         map.getCanvas().style.cursor = '';
       });
 
+      map.on('click', 'lake-tracts-demographics-fill', (e) => {
+        const props = (e.features && e.features[0] && e.features[0].properties) || {};
+        const html = `<div style="color:#000000"><strong>Tract ${props.tract_geoid || props.TRACTFIPS || 'Unknown'}</strong><br/>Population: ${props.total_population ?? 'n/a'}<br/>Households: ${props.total_households ?? 'n/a'}<br/>Age 75+: ${props.age_75_plus_pop ?? 'n/a'} (${props.age_75_plus_share_pct ?? 'n/a'}%)<br/>No-vehicle households: ${props.no_car_households ?? 'n/a'} (${props.no_car_household_share_pct ?? 'n/a'}%)<br/>Below-poverty households: ${props.poverty_households ?? 'n/a'} (${props.poverty_household_share_pct ?? 'n/a'}%)<br/>Hispanic or Latino: ${props.hispanic_pop ?? 'n/a'} (${props.hispanic_share_pct ?? 'n/a'}%)<br/><br/>Source: 2023 ACS 5-year estimates</div>`;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+      });
+
+      map.on('mouseenter', 'lake-tracts-demographics-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'lake-tracts-demographics-fill', () => { map.getCanvas().style.cursor = ''; });
+
       map.on('click', 'lake-shelters-circle', (e) => {
         const props = (e.features && e.features[0] && e.features[0].properties) || {};
         const name = props.shelter_name || 'Shelter facility';
         const address = props.address_1 || 'Address not listed';
         const city = props.city || '';
         const status = props.shelter_status_code || 'Unknown';
-        const evac = props.evacuation_capacity || 'n/a';
-        const post = props.post_impact_capacity || 'n/a';
+        const evac = formatCapacity(props.evacuation_capacity);
+        const post = formatCapacity(props.post_impact_capacity);
         const usage = props.facility_usage_code || 'n/a';
         const buildingType = props.building_type || 'Other facility';
         const usageLabel = { EVAC: 'Evacuation facility', BOTH: 'Evacuation and post-impact facility', POST: 'Post-impact facility' }[usage] || usage;
@@ -629,7 +1092,9 @@
         });
       }
       document.getElementById('access-threshold').addEventListener('change', (event) => {
-        map.setPaintProperty('lake-tracts-access-fill', 'fill-color', accessColor(event.target.value));
+        const value = Number(event.target.value);
+        map.setPaintProperty('lake-tracts-access-fill', 'fill-color', accessColor(value));
+        renderAccessLegend(value);
       });
       document.getElementById('recalculate-access').addEventListener('click', async () => {
         const status = document.getElementById('scenario-status');
@@ -644,7 +1109,19 @@
           try { currentCandidates = JSON.parse(localStorage.getItem(candidateShelterStorageKey)) || []; } catch (_error) { currentCandidates = []; }
           const result = await postMsgpack('/api/wep/accessibility', { geojson: currentScenarioRoads, open_shelter_ids: Array.from(selectedShelterIds()).concat(currentCandidates.map((feature) => feature.properties.shelter_id)), candidate_shelters: currentCandidates });
           map.getSource('lake-tracts-access').setData(result.geojson);
-          status.textContent = 'Temporary road and shelter scenario recalculated. Baseline data was not changed.';
+          displayedAccessData = result.geojson;
+          const changedTracts = (result.geojson.features || []).filter((feature) => {
+            const properties = feature.properties || {};
+            const id = String(properties.GEOID || properties.TRACTFIPS || '');
+            const previous = (accessData.features || []).find((baseline) => String((baseline.properties || {}).GEOID || (baseline.properties || {}).TRACTFIPS || '') === id)?.properties || {};
+            return [30, 60, 90].some((minutes) => Number(properties[`nss_facilities_within_${minutes}min_car`]) !== Number(previous[`nss_facilities_within_${minutes}min_car`])) || Number(properties.nearest_nss_facility_minutes_car) !== Number(previous.nearest_nss_facility_minutes_car);
+          }).length;
+          const accessControl = document.querySelector('[data-layer="lake-tracts-access-fill"]');
+          if (accessControl) {
+            accessControl.checked = true;
+            map.setLayoutProperty('lake-tracts-access-fill', 'visibility', 'visible');
+          }
+          status.textContent = `Scenario recalculated: ${changedTracts} of ${(result.geojson.features || []).length} tracts changed. Temporary road and shelter edits were applied; baseline data was not changed.`;
         } catch (error) {
           status.textContent = `Recalculation failed: ${error.message}`;
         } finally {
@@ -655,6 +1132,7 @@
         localStorage.removeItem(roadScenarioStorageKey);
         localStorage.removeItem(shelterScenarioStorageKey);
         localStorage.removeItem(candidateShelterStorageKey);
+        localStorage.removeItem(fireScenarioStorageKey);
         window.location.reload();
       });
 

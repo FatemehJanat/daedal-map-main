@@ -112,17 +112,20 @@ def compute_accessibility_from_road_geojson(
     origin_points = [tract_centroid(feature) for feature in tracts.get("features", [])]
     destination_points = [point_coordinates(feature) for feature in facility_features]
     destination_nodes = [nearest_node(point) for point in destination_points]
+    destination_names = [str((feature.get("properties") or {}).get("shelter_name") or "Unnamed shelter") for feature in facility_features]
     result = json.loads(json.dumps(tracts))
     for feature, point in zip(result.get("features", []), origin_points):
         properties = feature.setdefault("properties", {})
         durations = [shortest_minutes(nearest_node(point), destination) for destination in destination_nodes]
-        valid = [duration for duration in durations if duration is not None]
+        valid = [(duration, destination_names[index]) for index, duration in enumerate(durations) if duration is not None]
+        nearest = min(valid, key=lambda item: item[0]) if valid else None
         properties.update({
             "GEOID": str(properties.get("TRACTFIPS") or properties.get("NRI_ID") or ""),
-            "nss_facilities_within_30min_car": sum(duration <= 30 for duration in valid),
-            "nss_facilities_within_60min_car": sum(duration <= 60 for duration in valid),
-            "nss_facilities_within_90min_car": sum(duration <= 90 for duration in valid),
-            "nearest_nss_facility_minutes_car": round(min(valid), 1) if valid else None,
+            "nss_facilities_within_30min_car": sum(duration <= 30 for duration, _name in valid),
+            "nss_facilities_within_60min_car": sum(duration <= 60 for duration, _name in valid),
+            "nss_facilities_within_90min_car": sum(duration <= 90 for duration, _name in valid),
+            "nearest_nss_facility_minutes_car": round(nearest[0], 1) if nearest else None,
+            "nearest_nss_facility_name": nearest[1] if nearest else None,
             "access_method": "local_edited_road_graph",
             "access_network_source": "DaedalMap WEP road editor",
             "access_speed_model": "speed_mph per road feature; class defaults when blank",
@@ -185,8 +188,10 @@ def main() -> None:
 
     origins = [tract_centroid(feature) for feature in tract_features]
     destinations = [point_coordinates(feature) for feature in facility_features]
+    destination_names = [str((feature.get("properties") or {}).get("shelter_name") or "Unnamed shelter") for feature in facility_features]
     counts = [{threshold: 0 for threshold in THRESHOLDS_MINUTES} for _ in origins]
     nearest_minutes: list[float | None] = [None] * len(origins)
+    nearest_names: list[str | None] = [None] * len(origins)
     routed_destinations = 0
 
     for batch_start in range(0, len(destinations), DESTINATION_BATCH_SIZE):
@@ -202,13 +207,14 @@ def main() -> None:
         for origin_index, duration_row in enumerate(durations):
             if len(duration_row) != len(destination_batch):
                 raise RuntimeError("OSRM returned a matrix row with an unexpected length")
-            for duration_seconds in duration_row:
+            for destination_offset, duration_seconds in enumerate(duration_row):
                 if duration_seconds is None:
                     continue
                 duration_minutes = float(duration_seconds) / 60.0
                 previous_nearest = nearest_minutes[origin_index]
                 if previous_nearest is None or duration_minutes < previous_nearest:
                     nearest_minutes[origin_index] = duration_minutes
+                    nearest_names[origin_index] = destination_names[batch_start + destination_offset]
                 for threshold in THRESHOLDS_MINUTES:
                     if duration_minutes <= threshold:
                         counts[origin_index][threshold] += 1
@@ -230,6 +236,7 @@ def main() -> None:
                 "nss_facilities_within_60min_car": counts[index][60],
                 "nss_facilities_within_90min_car": counts[index][90],
                 "nearest_nss_facility_minutes_car": round(nearest_minutes[index], 1) if nearest_minutes[index] is not None else None,
+                "nearest_nss_facility_name": nearest_names[index],
                 "access_method": "osrm_osm_car_profile",
                 "access_network_source": "OpenStreetMap via OSRM public demo service",
                 "access_speed_model": "OSRM car profile using OSM maxspeed tags and road-class defaults",
