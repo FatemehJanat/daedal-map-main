@@ -166,6 +166,11 @@
       <div class="optimizer-controls"><input id="fire-acres" type="number" min="0.1" step="0.1" value="10" aria-label="Estimated fire acres" /><button id="add-fire" class="candidate-add" type="button">Add fire on map</button></div>
       <div id="fire-list" class="candidate-list"><span>No temporary fires added.</span></div>
       <span id="fire-status" class="scenario-status">Enter estimated acres, then click a location on the map.</span>
+      <label class="scenario-status" for="fire-warning-buffer-km">Potential-warning buffer from fire edge (km)
+        <input id="fire-warning-buffer-km" type="number" min="0" max="25" step="0.1" value="1.2" />
+      </label>
+      <div class="scenario-status">The 1.2 km default is the median distance in 9 local historical warning polygons. It is an exploratory buffer, not a trained prediction or official trigger.</div>
+      <div id="fire-impact-status" class="scenario-status" role="status">Add a fire to screen potentially affected tracts. This is a planning estimate, not an evacuation order.</div>
       <div class="scenario-subhead">Shelter optimization</div>
       <div class="optimizer-controls"><select id="optimizer-strategy" aria-label="Optimization strategy"><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="equity">Equity</option></select><input id="optimizer-count" type="number" min="1" max="10" value="3" aria-label="Number of recommendations" /></div>
       <button id="run-optimizer" class="candidate-add" type="button">Find best candidate sites</button>
@@ -198,6 +203,14 @@
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-tracts-demographics-fill" />
       <span><strong>Population and demographics</strong><span>2023 ACS 5-year estimates joined to 2020 tract boundaries</span></span>
+    </label>
+    <label class="layer-control">
+      <input type="checkbox" data-layer="lake-fire-impact-fill" checked />
+      <span><strong>Potential fire impact</strong><span>Footprint overlap and adjustable advisory buffer</span></span>
+    </label>
+    <label class="layer-control">
+      <input type="checkbox" data-layer="lake-fire-analog-fill" />
+      <span><strong>Historical analog probability</strong><span>Experimental event similarity; not an evacuation order</span></span>
     </label>
     <label class="layer-control">
       <input type="checkbox" data-layer="lake-shelters-circle" checked />
@@ -329,7 +342,7 @@
 
       const numberFormat = new Intl.NumberFormat('en-US');
       const demographicFeatures = demographicsData.features || [];
-      const accessByTract = new Map((accessData.features || []).map((feature) => {
+      let accessByTract = new Map((accessData.features || []).map((feature) => {
         const properties = feature.properties || {};
         return [String(properties.GEOID || properties.TRACTFIPS || properties.tract_geoid || ''), properties];
       }));
@@ -450,7 +463,10 @@
       map.addSource('lake-shelters', { type: 'geojson', data: sheltersData });
       map.addSource('lake-candidate-shelters', { type: 'geojson', data: { type: 'FeatureCollection', features: candidateShelters } });
       map.addSource('lake-candidate-buildings', { type: 'geojson', data: candidateBuildingsData });
+      map.addSource('lake-optimizer-recommendations', { type: 'geojson', data: emptyFeatureCollection });
       map.addSource('lake-fire-incidents', { type: 'geojson', data: { type: 'FeatureCollection', features: fireIncidents } });
+      map.addSource('lake-fire-impact-tracts', { type: 'geojson', data: emptyFeatureCollection });
+      map.addSource('lake-fire-analog-tracts', { type: 'geojson', data: emptyFeatureCollection });
 
       const scenarioCounts = document.getElementById('scenario-counts');
       const roadScenarioList = document.getElementById('road-scenario-list');
@@ -508,12 +524,13 @@
         fireList.innerHTML = fireIncidents.length
           ? fireIncidents.map((feature, index) => `<div class="candidate-row"><span>Fire ${index + 1}: ${Number(feature.properties?.acres || 0).toFixed(1)} acres</span><button type="button" data-remove-fire="${index}">Remove</button></div>`).join('')
           : '<span>No temporary fires added.</span>';
-        fireList.querySelectorAll('[data-remove-fire]').forEach((button) => button.addEventListener('click', () => {
+        fireList.querySelectorAll('[data-remove-fire]').forEach((button) => button.addEventListener('click', async () => {
           fireIncidents.splice(Number(button.dataset.removeFire), 1);
           localStorage.setItem(fireScenarioStorageKey, JSON.stringify(fireIncidents));
           map.getSource('lake-fire-incidents').setData({ type: 'FeatureCollection', features: fireIncidents });
           renderFireList();
           updateScenarioCounts();
+          await screenCurrentFires();
         }));
       };
       document.getElementById('add-fire').addEventListener('click', () => {
@@ -550,8 +567,41 @@
         }));
       };
       const candidateBuildingFeatures = candidateBuildingsData.features || [];
+      let fireImpactTracts = new Map();
+      let excludedCandidateIds = new Set();
+      let fireImpactReady = !fireIncidents.length;
+      const applyCandidateExclusions = (ids) => {
+        excludedCandidateIds = new Set((ids || []).map(String));
+        for (const input of buildingList.querySelectorAll('[data-building-id]')) {
+          const excluded = excludedCandidateIds.has(String(input.value));
+          input.disabled = excluded;
+          if (excluded) input.checked = false;
+          const label = input.closest('label');
+          if (label) label.title = excluded ? 'Unavailable: inside the current potential evacuation or warning area.' : '';
+        }
+        const remaining = candidateShelters.filter((feature) => {
+          const properties = feature.properties || {};
+          const sourceId = properties.source_building_id || properties.building_id || properties.shelter_id;
+          return !excludedCandidateIds.has(String(sourceId || ''));
+        });
+        if (remaining.length !== candidateShelters.length) {
+          candidateShelters = remaining;
+          localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
+          map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
+          renderCandidateList();
+          updateScenarioCounts();
+        }
+      };
       const activateBuilding = (building) => {
         const properties = building.properties || {};
+        if (fireIncidents.length && !fireImpactReady) {
+          document.getElementById('candidate-status').textContent = 'Wait for the fire impact screen to finish before adding candidates.';
+          return false;
+        }
+        if (excludedCandidateIds.has(String(properties.building_id || ''))) {
+          document.getElementById('candidate-status').textContent = 'This site is inside a potential evacuation or warning area and cannot be selected.';
+          return false;
+        }
         if (candidateShelters.some((feature) => feature.properties && feature.properties.source_building_id === properties.building_id)) return;
         candidateShelters.push({
           type: 'Feature',
@@ -564,6 +614,7 @@
         map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
         renderCandidateList();
         updateScenarioCounts();
+        return true;
       };
       const coordinateFor = (feature) => {
         const coordinates = feature && feature.geometry && feature.geometry.coordinates;
@@ -586,14 +637,123 @@
           + Number(demographic.disabled_pop_share_pct || 0) * 0.2
           + Number(demographic.poverty_household_share_pct || 0) * 0.1
         );
-        return { coordinate: coordinates, population: Number(demographic.total_population || 0), vulnerability };
+        const access = accessByTract.get(tractKey(properties)) || {};
+        const reachableShelters = Number(access.nss_facilities_within_30min_car);
+        const accessNeedWeight = Number.isFinite(reachableShelters) ? 1 / (1 + Math.max(0, reachableShelters)) : 0.5;
+        return { id: tractKey(properties), coordinate: coordinates, population: Number(demographic.total_population || 0), vulnerability, accessNeedWeight };
       }).filter(Boolean);
+      const screenCurrentFires = async () => {
+        const status = document.getElementById('fire-impact-status');
+        if (!fireIncidents.length) {
+          fireImpactReady = true;
+          fireImpactTracts = new Map();
+          applyCandidateExclusions([]);
+          map.getSource('lake-fire-impact-tracts').setData(emptyFeatureCollection);
+          map.getSource('lake-fire-analog-tracts').setData(emptyFeatureCollection);
+          status.textContent = 'Add a fire to screen potentially affected tracts. This is a planning estimate, not an evacuation order.';
+          return;
+        }
+        const bufferKm = Number(document.getElementById('fire-warning-buffer-km').value);
+        if (!Number.isFinite(bufferKm) || bufferKm < 0 || bufferKm > 25) {
+          fireImpactReady = false;
+          status.textContent = 'Enter a warning buffer between 0 and 25 km.';
+          return;
+        }
+        fireImpactReady = false;
+        status.textContent = 'Screening tracts around the temporary fire footprint...';
+        try {
+          const result = await postMsgpack('/api/wep/fire-impact', {
+            fires: fireIncidents,
+            tracts: tractsData,
+            warning_buffer_km: bufferKm,
+            candidate_sites: candidateBuildingFeatures.concat(candidateShelters.map((feature) => ({
+              ...feature,
+              properties: {
+                ...(feature.properties || {}),
+                building_id: feature.properties?.source_building_id || feature.properties?.building_id || feature.properties?.shelter_id
+              }
+            })))
+          });
+          fireImpactTracts = new Map(result.tracts.map((item) => [item.tract_id, item]));
+          applyCandidateExclusions(result.excluded_candidate_ids);
+          fireImpactReady = true;
+          const impactedFeatures = (tractsData.features || []).filter((feature) => fireImpactTracts.has(tractKey(feature.properties || {}))).map((feature) => ({
+            ...feature,
+            properties: {
+              ...(feature.properties || {}),
+              fire_impact_tier: fireImpactTracts.get(tractKey(feature.properties || {})).tier
+            }
+          }));
+          map.getSource('lake-fire-impact-tracts').setData({ type: 'FeatureCollection', features: impactedFeatures });
+          const historicalAnalog = result.historical_analog || {};
+          if (historicalAnalog.available) {
+            const analogByTract = new Map(historicalAnalog.tracts.map((item) => [item.tract_id, item]));
+            const analogFeatures = (tractsData.features || []).map((feature) => {
+              const properties = feature.properties || {};
+              const analog = analogByTract.get(tractKey(properties)) || {};
+              return {
+                ...feature,
+                properties: {
+                  ...properties,
+                  historical_analog_probability: Number(analog.probability || 0),
+                  historical_analog_warning_probability: Number(analog.warning_probability || 0),
+                  historical_analog_mandatory_probability: Number(analog.mandatory_probability || 0),
+                  historical_analog_effective_count: Number(analog.effective_analog_count || 0),
+                  historical_analog_nearest_km: Number(analog.nearest_analog_distance_km || 0)
+                }
+              };
+            });
+            map.getSource('lake-fire-analog-tracts').setData({ type: 'FeatureCollection', features: analogFeatures });
+          } else {
+            map.getSource('lake-fire-analog-tracts').setData(emptyFeatureCollection);
+          }
+          const priorityCount = result.tracts.filter((item) => item.tier === 'potential_evacuation').length;
+          const warningCount = result.tracts.filter((item) => item.tier === 'potential_warning').length;
+          const population = tractScreeningData.reduce((sum, tract) => sum + (fireImpactTracts.has(tract.id) ? tract.population : 0), 0);
+          const validation = historicalAnalog.validation || {};
+          const validationThreshold = Math.round(Number(validation.probability_threshold || 0.2) * 100);
+          const analogNote = historicalAnalog.available
+            ? ` Experimental historical analog: ${historicalAnalog.event_count} incidents; nested holdout Brier ${Number(validation.analog_brier_score || 0).toFixed(3)} vs ${Number(validation.tract_base_rate_brier_score || 0).toFixed(3)} base rate. At ${validationThreshold}% cutoff: precision ${Math.round(Number(validation.precision || 0) * 100)}%, recall ${Math.round(Number(validation.recall || 0) * 100)}%. Toggle its layer for tract scores; not an order prediction.`
+            : ' Historical analog unavailable on this installation.';
+          status.textContent = `${priorityCount} potential evacuation-priority tracts; ${warningCount} potential warning tracts within ${bufferKm.toFixed(1)} km. ACS population represented by screened tracts: ${numberFormat.format(population)}; not an estimate of evacuees. Authorities determine actual orders.${analogNote}`;
+        } catch (error) {
+          fireImpactReady = false;
+          fireImpactTracts = new Map();
+          map.getSource('lake-fire-impact-tracts').setData(emptyFeatureCollection);
+          map.getSource('lake-fire-analog-tracts').setData(emptyFeatureCollection);
+          status.textContent = `Fire impact screen failed: ${error.message}`;
+        }
+      };
+      document.getElementById('fire-warning-buffer-km').addEventListener('change', () => { void screenCurrentFires(); });
+      void screenCurrentFires();
       let optimizerRecommendations = [];
       const renderOptimizerResults = () => {
         const results = document.getElementById('optimizer-results');
+        map.getSource('lake-optimizer-recommendations').setData({
+          type: 'FeatureCollection',
+          features: optimizerRecommendations.map((recommendation, index) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: recommendation.coordinate },
+            properties: {
+              rank: index + 1,
+              name: recommendation.name,
+              score: recommendation.score.toFixed(1),
+              strategy: recommendation.strategyLabel
+            }
+          }))
+        });
         results.innerHTML = optimizerRecommendations.length
-          ? optimizerRecommendations.map((recommendation, index) => `<div class="optimizer-result"><span>${index + 1}. ${escapeHtml(recommendation.name)}<br/><small>Score ${recommendation.score.toFixed(1)} · ${recommendation.strategyLabel}</small></span><button type="button" class="candidate-add" data-optimize-building="${recommendation.index}">${candidateShelters.some((feature) => feature.properties && feature.properties.source_building_id === recommendation.id) ? 'Added' : 'Add'}</button></div>`).join('')
+          ? optimizerRecommendations.map((recommendation, index) => `<div class="optimizer-result"><span>${index + 1}. ${escapeHtml(recommendation.name)}<br/><small>Score ${recommendation.score.toFixed(1)} · ${recommendation.strategyLabel}</small></span><button type="button" class="candidate-add" data-show-building="${recommendation.index}" aria-label="Show ${escapeHtml(recommendation.name)} on map">Show on map</button><button type="button" class="candidate-add" data-optimize-building="${recommendation.index}">${candidateShelters.some((feature) => feature.properties && feature.properties.source_building_id === recommendation.id) ? 'Added' : 'Add'}</button></div>`).join('')
           : 'Recommendations weigh tract reach, population, and vulnerability.';
+        results.querySelectorAll('[data-show-building]').forEach((button) => button.addEventListener('click', () => {
+          const recommendation = optimizerRecommendations.find((item) => item.index === Number(button.dataset.showBuilding));
+          if (!recommendation) return;
+          map.flyTo({ center: recommendation.coordinate, zoom: Math.max(map.getZoom(), 12), essential: true });
+          new maplibregl.Popup()
+            .setLngLat(recommendation.coordinate)
+            .setHTML(`<div style="color:#000000"><strong>${escapeHtml(recommendation.name)}</strong><br/>Rank ${optimizerRecommendations.indexOf(recommendation) + 1} · Score ${recommendation.score.toFixed(1)} · ${escapeHtml(recommendation.strategyLabel)}</div>`)
+            .addTo(map);
+        }));
         results.querySelectorAll('[data-optimize-building]').forEach((button) => button.addEventListener('click', () => {
           const recommendation = optimizerRecommendations.find((item) => item.index === Number(button.dataset.optimizeBuilding));
           const building = candidateBuildingFeatures[recommendation.index];
@@ -605,30 +765,54 @@
         const strategy = document.getElementById('optimizer-strategy').value;
         const strategyLabel = strategy.charAt(0).toUpperCase() + strategy.slice(1);
         const requestedCount = Math.max(1, Math.min(10, Number(document.getElementById('optimizer-count').value) || 3));
+        if (fireIncidents.length && !fireImpactReady) {
+          document.getElementById('optimizer-results').textContent = 'Wait for the fire impact screen to finish before recommending sites.';
+          return;
+        }
+        const demandTracts = fireIncidents.length
+          ? tractScreeningData.filter((tract) => fireImpactTracts.has(tract.id))
+          : tractScreeningData;
+        if (fireIncidents.length && !demandTracts.length) {
+          document.getElementById('optimizer-results').textContent = 'No tracts are inside the current fire footprint or warning buffer.';
+          return;
+        }
         const activeIds = new Set(candidateShelters.map((feature) => feature.properties && feature.properties.source_building_id));
         const scored = candidateBuildingFeatures.map((building, index) => {
           const coordinate = coordinateFor(building);
           if (!coordinate) return null;
           let populationCoverage = 0;
           let vulnerabilityCoverage = 0;
-          for (const tract of tractScreeningData) {
+          let accessNeedCoverage = 0;
+          for (const tract of demandTracts) {
             const distance = distanceMiles(coordinate, tract.coordinate);
             if (distance > 25) continue;
             const reachWeight = Math.max(0, 1 - distance / 25);
             populationCoverage += tract.population * reachWeight;
             vulnerabilityCoverage += tract.vulnerability * reachWeight;
+            accessNeedCoverage += tract.population * tract.accessNeedWeight * reachWeight;
           }
-          return { index, id: building.properties?.building_id, name: building.properties?.building_name || 'Unnamed public building', populationCoverage, vulnerabilityCoverage, active: activeIds.has(building.properties?.building_id) };
-        }).filter(Boolean).filter((candidate) => !candidate.active);
-        const maxPopulation = Math.max(...scored.map((candidate) => candidate.populationCoverage), 1);
-        const maxVulnerability = Math.max(...scored.map((candidate) => candidate.vulnerabilityCoverage), 1);
-        optimizerRecommendations = scored.map((candidate) => {
+          return { index, id: building.properties?.building_id, name: building.properties?.building_name || 'Unnamed public building', coordinate, populationCoverage, vulnerabilityCoverage, accessNeedCoverage, active: activeIds.has(building.properties?.building_id) };
+        }).filter(Boolean).filter((candidate) => !candidate.active && !excludedCandidateIds.has(String(candidate.id || '')));
+        const uniqueScored = scored.filter((candidate, index) => !scored.slice(0, index).some((previous) =>
+          previous.name.trim().replace(/\s+/g, ' ').toLowerCase() === candidate.name.trim().replace(/\s+/g, ' ').toLowerCase()
+          && distanceMiles(previous.coordinate, candidate.coordinate) <= 0.2
+        ));
+        const maxPopulation = Math.max(...uniqueScored.map((candidate) => candidate.populationCoverage), 1);
+        const maxVulnerability = Math.max(...uniqueScored.map((candidate) => candidate.vulnerabilityCoverage), 1);
+        const maxAccessNeed = Math.max(...uniqueScored.map((candidate) => candidate.accessNeedCoverage), 1);
+        optimizerRecommendations = uniqueScored.map((candidate) => {
           const efficiency = candidate.populationCoverage / maxPopulation * 100;
           const equity = candidate.vulnerabilityCoverage / maxVulnerability * 100;
-          return { ...candidate, score: strategy === 'efficiency' ? efficiency : strategy === 'equity' ? equity : (efficiency + equity) / 2, strategyLabel };
+          const accessNeed = candidate.accessNeedCoverage / maxAccessNeed * 100;
+          const score = strategy === 'efficiency'
+            ? (efficiency + accessNeed) / 2
+            : strategy === 'equity'
+              ? (equity + accessNeed) / 2
+              : (efficiency + equity + accessNeed) / 3;
+          return { ...candidate, score, strategyLabel };
         }).sort((first, second) => second.score - first.score).slice(0, requestedCount);
         renderOptimizerResults();
-        document.getElementById('candidate-status').textContent = `${optimizerRecommendations.length} ${strategyLabel.toLowerCase()} candidate site recommendations ready.`;
+        document.getElementById('candidate-status').textContent = `${optimizerRecommendations.length} ${strategyLabel.toLowerCase()} sites for ${demandTracts.length} ${fireIncidents.length ? 'screened' : 'countywide'} tracts. Scores combine ACS population reach, 30-minute shelter-access gaps, and vulnerability; they are not evacuee counts or capacity assignments.`;
       });
       renderOptimizerResults();
       const activatedBuildingIds = new Set(candidateShelters.map((feature) => feature.properties && feature.properties.source_building_id));
@@ -640,6 +824,7 @@
         label.innerHTML = `<input type="checkbox" value="${properties.building_id}"${checked} data-building-id="${properties.building_id}" /><span>${properties.building_name || 'Unnamed public building'}<br/>${properties.amenity || 'public use'}</span>`;
         buildingList.appendChild(label);
       }
+      applyCandidateExclusions(Array.from(excludedCandidateIds));
       buildingList.addEventListener('change', (event) => {
         const building = candidateBuildingFeatures.find((feature) => feature.properties && feature.properties.building_id === event.target.value);
         if (!building) return;
@@ -822,6 +1007,39 @@
           'fill-opacity': 0.72
         }
       });
+      map.addLayer({
+        id: 'lake-fire-impact-fill',
+        type: 'fill',
+        source: 'lake-fire-impact-tracts',
+        paint: {
+          'fill-color': ['match', ['get', 'fire_impact_tier'], 'potential_evacuation', '#e34a33', 'potential_warning', '#f2c14e', '#777777'],
+          'fill-opacity': 0.48
+        }
+      });
+      map.addLayer({
+        id: 'lake-fire-analog-fill',
+        type: 'fill',
+        source: 'lake-fire-analog-tracts',
+        layout: { visibility: 'none' },
+        paint: {
+          'fill-color': ['interpolate', ['linear'], ['coalesce', ['to-number', ['get', 'historical_analog_probability']], 0], 0, '#e5e7eb', 0.05, '#fde68a', 0.1, '#fb923c', 0.25, '#ef4444', 0.5, '#7f1d1d'],
+          'fill-opacity': 0.65
+        }
+      });
+      map.on('click', 'lake-fire-analog-fill', (event) => {
+        const feature = event.features && event.features[0];
+        if (!feature) return;
+        const properties = feature.properties || {};
+        const probability = Math.round(Number(properties.historical_analog_probability || 0) * 100);
+        const warningProbability = Math.round(Number(properties.historical_analog_warning_probability || 0) * 100);
+        const mandatoryProbability = Math.round(Number(properties.historical_analog_mandatory_probability || 0) * 100);
+        const effectiveCount = Number(properties.historical_analog_effective_count || 0).toFixed(1);
+        const nearestKm = Number(properties.historical_analog_nearest_km || 0).toFixed(1);
+        new maplibregl.Popup()
+          .setLngLat(event.lngLat)
+          .setHTML(`<div style="color:#000000"><strong>Experimental historical analog</strong><br/>Tract ${escapeHtml(tractKey(properties))}<br/>Any recorded zone frequency: ${probability}%<br/>Warning-zone frequency: ${warningProbability}%<br/>Mandatory-zone frequency: ${mandatoryProbability}%<br/>Effective analog sample: ${effectiveCount}<br/>Nearest analog fire: ${nearestKm} km<br/>Warning history is sparse (5 local tract labels). Not a forecast or evacuation order.</div>`)
+          .addTo(map);
+      });
 
       map.addLayer({
         id: 'lake-water-fill',
@@ -929,6 +1147,34 @@
         paint: { 'circle-color': '#fbbf24', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 }
       });
       map.addLayer({
+        id: 'lake-optimizer-recommendations-circle',
+        type: 'circle',
+        source: 'lake-optimizer-recommendations',
+        paint: { 'circle-color': '#eab308', 'circle-radius': 15, 'circle-stroke-color': '#111827', 'circle-stroke-width': 2.5 }
+      });
+      map.addLayer({
+        id: 'lake-optimizer-recommendations-label',
+        type: 'symbol',
+        source: 'lake-optimizer-recommendations',
+        layout: {
+          'text-field': ['to-string', ['get', 'rank']],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-size': 15,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true
+        },
+        paint: { 'text-color': '#111827', 'text-halo-color': '#ffffff', 'text-halo-width': 0.5 }
+      });
+      map.on('click', 'lake-optimizer-recommendations-circle', (event) => {
+        const feature = event.features && event.features[0];
+        if (!feature) return;
+        const properties = feature.properties || {};
+        new maplibregl.Popup()
+          .setLngLat(event.lngLat)
+          .setHTML(`<div style="color:#000000"><strong>${properties.rank}. ${escapeHtml(properties.name || 'Candidate site')}</strong><br/>Score ${escapeHtml(properties.score || '')} · ${escapeHtml(properties.strategy || '')}</div>`)
+          .addTo(map);
+      });
+      map.addLayer({
         id: 'lake-fire-incidents-fill',
         type: 'fill',
         source: 'lake-fire-incidents',
@@ -980,7 +1226,7 @@
         updateShelterScenario();
         setMapAction(null);
       });
-      map.on('click', (event) => {
+      map.on('click', async (event) => {
         if (addingFire) {
           const acres = Number(document.getElementById('fire-acres').value);
           const coordinates = event.lngLat;
@@ -996,15 +1242,38 @@
           addingFire = false;
           map.getCanvas().style.cursor = '';
           document.getElementById('fire-status').textContent = `${acres.toFixed(1)}-acre fire added to the temporary scenario.`;
+          void screenCurrentFires();
           return;
         }
         if (!addingCandidate) return;
         const id = `candidate-${Date.now()}`;
-        candidateShelters.push({
+        const candidate = {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [event.lngLat.lng, event.lngLat.lat] },
-          properties: { shelter_id: id, shelter_name: `Candidate shelter ${candidateShelters.length + 1}`, building_type: 'Candidate facility' }
-        });
+          properties: { shelter_id: id, building_id: id, shelter_name: `Candidate shelter ${candidateShelters.length + 1}`, building_type: 'Candidate facility' }
+        };
+        if (fireIncidents.length) {
+          if (!fireImpactReady) {
+            document.getElementById('candidate-status').textContent = 'Wait for the fire impact screen to finish before placing candidates.';
+            return;
+          }
+          try {
+            const result = await postMsgpack('/api/wep/fire-impact', {
+              fires: fireIncidents,
+              tracts: tractsData,
+              warning_buffer_km: Number(document.getElementById('fire-warning-buffer-km').value),
+              candidate_sites: [candidate]
+            });
+            if ((result.excluded_candidate_ids || []).includes(id)) {
+              document.getElementById('candidate-status').textContent = 'That location is inside a potential evacuation or warning area. Choose a site outside the screened area.';
+              return;
+            }
+          } catch (error) {
+            document.getElementById('candidate-status').textContent = `Could not verify that candidate location: ${error.message}`;
+            return;
+          }
+        }
+        candidateShelters.push(candidate);
         localStorage.setItem(candidateShelterStorageKey, JSON.stringify(candidateShelters));
         map.getSource('lake-candidate-shelters').setData({ type: 'FeatureCollection', features: candidateShelters });
         renderCandidateList();
@@ -1110,6 +1379,15 @@
           const result = await postMsgpack('/api/wep/accessibility', { geojson: currentScenarioRoads, open_shelter_ids: Array.from(selectedShelterIds()).concat(currentCandidates.map((feature) => feature.properties.shelter_id)), candidate_shelters: currentCandidates });
           map.getSource('lake-tracts-access').setData(result.geojson);
           displayedAccessData = result.geojson;
+          accessByTract = new Map((result.geojson.features || []).map((feature) => {
+            const properties = feature.properties || {};
+            return [String(properties.GEOID || properties.TRACTFIPS || properties.tract_geoid || '').replace(/[^0-9]/g, ''), properties];
+          }));
+          for (const tract of tractScreeningData) {
+            const access = accessByTract.get(tract.id) || {};
+            const reachableShelters = Number(access.nss_facilities_within_30min_car);
+            tract.accessNeedWeight = Number.isFinite(reachableShelters) ? 1 / (1 + Math.max(0, reachableShelters)) : 0.5;
+          }
           const changedTracts = (result.geojson.features || []).filter((feature) => {
             const properties = feature.properties || {};
             const id = String(properties.GEOID || properties.TRACTFIPS || '');

@@ -77,6 +77,8 @@ from mapmover.routes.system import _require_local_or_admin
 from mapmover.routes.weather import router as weather_router
 from mapmover.runtime_build_info import runtime_build_info
 from mapmover.routes.disasters.helpers import msgpack_error, msgpack_response
+from mapmover.paths import DATA_ROOT
+from mapmover.wep_fire_impact import historical_analog_probabilities, screen_fire_impact
 
 
 if sys.stdout.encoding != "utf-8":
@@ -538,6 +540,42 @@ async def compute_wep_accessibility(req: Request):
     except Exception as exc:
         logger.error("Failed to compute WEP accessibility scenario: %s", exc)
         return msgpack_error("Failed to compute WEP accessibility scenario", 500)
+
+
+@app.post("/api/wep/fire-impact", include_in_schema=False)
+async def compute_wep_fire_impact(req: Request):
+    _context, error = _require_local_or_admin(req)
+    if error:
+        return error
+    try:
+        payload = msgpack.unpackb(await req.body(), raw=False)
+        fires = payload.get("fires") if isinstance(payload, dict) else None
+        tract_collection = payload.get("tracts") if isinstance(payload, dict) else None
+        candidate_sites = payload.get("candidate_sites", []) if isinstance(payload, dict) else []
+        if not isinstance(tract_collection, dict) or tract_collection.get("type") != "FeatureCollection":
+            return msgpack_error("Missing tract FeatureCollection", 400)
+        results = screen_fire_impact(
+            fires,
+            tract_collection.get("features"),
+            payload.get("warning_buffer_km", 1.2),
+            candidate_sites,
+        )
+        training_path = DATA_ROOT / "wep" / "lake_county_historical_evacuation_training.json"
+        if training_path.exists():
+            try:
+                training_data = json.loads(training_path.read_text(encoding="utf-8"))
+                results["historical_analog"] = historical_analog_probabilities(fires, training_data)
+            except Exception as exc:
+                logger.warning("Historical WEP analog model unavailable: %s", exc)
+                results["historical_analog"] = {"available": False, "tracts": []}
+        else:
+            results["historical_analog"] = {"available": False, "tracts": []}
+        return msgpack_response(results)
+    except ValueError as exc:
+        return msgpack_error(str(exc), 400)
+    except Exception as exc:
+        logger.error("Failed to screen WEP fire impact: %s", exc)
+        return msgpack_error("Failed to screen WEP fire impact", 500)
 
 
 @app.post("/api/road-network", include_in_schema=False)
